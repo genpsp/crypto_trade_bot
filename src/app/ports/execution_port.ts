@@ -25,4 +25,5 @@ export interface SwapConfirmation {
 export interface ExecutionPort {
   submitSwap(request: SubmitSwapRequest): Promise<SwapSubmission>;
   confirmSwap(txSignature: string, timeoutMs: number): Promise<SwapConfirmation>;
+  getMarkPrice?(pair: string): Promise<number>;
 }

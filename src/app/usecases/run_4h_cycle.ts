@@ -6,6 +6,7 @@ import type { PersistencePort } from '../ports/persistence_port';
 import { evaluateEmaTrendPullbackV0 } from '../../domain/strategy/ema_trend_pullback_v0';
 import type { RunRecord } from '../../domain/model/types';
 import { buildRunId, getLastClosed4hBarClose, getUtcDayRange } from '../../domain/utils/time';
+import { roundTo } from '../../domain/utils/math';
 import { closePosition } from './close_position';
 import { openPosition } from './open_position';
 import { toErrorMessage } from './usecase_utils';
@@ -77,8 +78,29 @@ export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<
 
     if (openTrade) {
       run.trade_id = openTrade.trade_id;
+      const fallbackMarkPrice = bars.at(-1)?.close;
+      if (fallbackMarkPrice === undefined) {
+        run.result = 'FAILED';
+        run.summary = 'FAILED: no bars available for mark price';
+        return run;
+      }
+      const markPrice = execution.getMarkPrice
+        ? await execution.getMarkPrice(config.pair)
+        : fallbackMarkPrice;
+      const triggerReason =
+        markPrice >= openTrade.position.take_profit_price
+          ? 'TAKE_PROFIT'
+          : markPrice <= openTrade.position.stop_price
+            ? 'STOP_LOSS'
+            : 'NONE';
+      logger.info('exit check', {
+        markPrice: roundTo(markPrice, 6),
+        stop: roundTo(openTrade.position.stop_price, 6),
+        tp: roundTo(openTrade.position.take_profit_price, 6),
+        triggerReason
+      });
 
-      if (latestClosedBar.close >= openTrade.position.take_profit_price) {
+      if (triggerReason === 'TAKE_PROFIT') {
         const closed = await closePosition(
           {
             execution,
@@ -90,7 +112,7 @@ export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<
             config,
             trade: openTrade,
             closeReason: 'TAKE_PROFIT',
-            closePrice: latestClosedBar.close
+            closePrice: markPrice
           }
         );
 
@@ -99,7 +121,7 @@ export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<
         return run;
       }
 
-      if (latestClosedBar.close <= openTrade.position.stop_price) {
+      if (triggerReason === 'STOP_LOSS') {
         const closed = await closePosition(
           {
             execution,
@@ -111,7 +133,7 @@ export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<
             config,
             trade: openTrade,
             closeReason: 'STOP_LOSS',
-            closePrice: latestClosedBar.close
+            closePrice: markPrice
           }
         );
 
