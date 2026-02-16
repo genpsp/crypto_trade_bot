@@ -5,14 +5,20 @@ import type {
   ExitConfig,
   NoSignalDecision,
   OhlcvBar,
+  RiskConfig,
   StrategyConfig,
   StrategyDecision
 } from '../model/types';
-import { calculateSwingLow, calculateTakeProfitPrice } from '../risk/swing_low_stop';
+import {
+  calculateSwingLow,
+  calculateTakeProfitPrice,
+  tightenStopForLong
+} from '../risk/swing_low_stop';
 
 interface EvaluateInput {
   bars: OhlcvBar[];
   strategy: StrategyConfig;
+  risk: RiskConfig;
   exit: ExitConfig;
   execution: ExecutionConfig;
 }
@@ -52,7 +58,7 @@ function entrySignal(
 }
 
 export function evaluateEmaTrendPullbackV0(input: EvaluateInput): StrategyDecision {
-  const { bars, strategy, exit, execution } = input;
+  const { bars, strategy, risk, exit, execution } = input;
   const minimumBars = Math.max(
     strategy.ema_fast_period,
     strategy.ema_slow_period,
@@ -95,14 +101,17 @@ export function evaluateEmaTrendPullbackV0(input: EvaluateInput): StrategyDecisi
 
   if (emaFast <= emaSlow) {
     return noSignal(
-      'NO_SIGNAL: trend filter failed (EMA20 <= EMA50)',
+      `NO_SIGNAL: trend filter failed (EMA${strategy.ema_fast_period}=${emaFast.toFixed(
+        4
+      )} <= EMA${strategy.ema_slow_period}=${emaSlow.toFixed(4)})`,
       'EMA_TREND_FILTER_FAILED',
       emaFast,
       emaSlow
     );
   }
 
-  const stopPrice = calculateSwingLow(lows, strategy.swing_low_lookback_bars);
+  const swingLowStop = calculateSwingLow(lows, strategy.swing_low_lookback_bars);
+  const stopPrice = tightenStopForLong(entryPrice, swingLowStop, risk.max_loss_per_trade_pct);
   if (stopPrice >= entryPrice) {
     return noSignal(
       'NO_SIGNAL: stop is not below entry',

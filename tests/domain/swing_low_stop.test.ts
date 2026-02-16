@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { calculateSwingLow, calculateTakeProfitPrice } from '../../src/domain/risk/swing_low_stop';
+import {
+  calculateMaxLossStopPrice,
+  calculateSwingLow,
+  calculateTakeProfitPrice,
+  tightenStopForLong
+} from '../../src/domain/risk/swing_low_stop';
 
 describe('swing low and tp', () => {
   it('calculates swing low from lookback bars', () => {
@@ -12,6 +17,15 @@ describe('swing low and tp', () => {
     const stop = 95;
     const tp = calculateTakeProfitPrice(entry, stop, 2);
     expect(tp).toBe(110);
+  });
+
+  it('calculates max-loss stop as percentage', () => {
+    expect(calculateMaxLossStopPrice(100, 0.5)).toBe(99.5);
+  });
+
+  it('tightens swing stop toward entry for long position', () => {
+    const tightened = tightenStopForLong(100, 92, 0.5);
+    expect(tightened).toBe(99.5);
   });
 
   it('throws when entry is not above stop', () => {

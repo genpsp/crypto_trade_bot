@@ -19,6 +19,7 @@ export interface RiskConfig {
 }
 
 export interface ExecutionConfig {
+  mode: 'PAPER' | 'LIVE';
   swap_provider: 'JUPITER';
   slippage_bps: number;
   min_notional_usdc: number;
@@ -97,8 +98,24 @@ export interface TradePlanSnapshot {
 export interface TradeExecutionSnapshot {
   entry_tx_signature?: string;
   exit_tx_signature?: string;
+  exit_submission_state?: 'SUBMITTED' | 'CONFIRMED' | 'FAILED';
   entry_error?: string;
   exit_error?: string;
+  order?: TradeOrderSnapshot;
+  result?: TradeResultSnapshot;
+  exit_order?: TradeOrderSnapshot;
+  exit_result?: TradeResultSnapshot;
+}
+
+export interface TradeOrderSnapshot {
+  tx_signature: string;
+}
+
+export interface TradeResultSnapshot {
+  status: 'SIMULATED';
+  avg_fill_price: number;
+  spent_quote_usdc: number;
+  filled_base_sol: number;
 }
 
 export interface TradePositionSnapshot {
@@ -109,6 +126,7 @@ export interface TradePositionSnapshot {
   take_profit_price: number;
   entry_time_iso?: string;
   exit_price?: number;
+  exit_trigger_price?: number;
   exit_time_iso?: string;
 }
 
@@ -130,7 +148,14 @@ export interface TradeRecord {
   updated_at: string;
 }
 
-export type RunResult = 'OPENED' | 'CLOSED' | 'NO_SIGNAL' | 'HOLD' | 'SKIPPED' | 'FAILED';
+export type RunResult =
+  | 'OPENED'
+  | 'CLOSED'
+  | 'NO_SIGNAL'
+  | 'HOLD'
+  | 'SKIPPED'
+  | 'SKIPPED_ENTRY'
+  | 'FAILED';
 
 export interface RunRecord {
   run_id: string;

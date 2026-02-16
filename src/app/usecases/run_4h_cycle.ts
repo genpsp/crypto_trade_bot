@@ -11,7 +11,7 @@ import { openPosition } from './open_position';
 import { toErrorMessage } from './usecase_utils';
 
 const RUN_LOCK_TTL_SECONDS = 240;
-const BAR_IDEM_TTL_SECONDS = 12 * 60 * 60;
+const ENTRY_IDEM_TTL_SECONDS = 12 * 60 * 60;
 const OHLCV_LIMIT = 300;
 
 export interface Run4hCycleDependencies {
@@ -47,13 +47,6 @@ export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<
   }
 
   try {
-    const marked = await lock.markBarProcessed(barCloseTimeIso, BAR_IDEM_TTL_SECONDS);
-    if (!marked) {
-      run.result = 'SKIPPED';
-      run.summary = 'SKIPPED: idem key already exists for this bar';
-      return run;
-    }
-
     const config = await persistence.getCurrentConfig();
     run.config_version = config.meta.config_version;
 
@@ -62,6 +55,8 @@ export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<
       run.summary = 'SKIPPED: config/current.enabled is false';
       return run;
     }
+
+    const openTrade = await persistence.findOpenTrade(config.pair);
 
     const bars = await marketData.fetch4hBars(config.pair, OHLCV_LIMIT);
     const closedBars = bars.filter((bar) => bar.closeTime.getTime() <= barCloseTime.getTime());
@@ -80,7 +75,6 @@ export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<
       return run;
     }
 
-    const openTrade = await persistence.findOpenTrade(config.pair);
     if (openTrade) {
       run.trade_id = openTrade.trade_id;
 
@@ -143,6 +137,7 @@ export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<
     const decision = evaluateEmaTrendPullbackV0({
       bars: closedBars,
       strategy: config.strategy,
+      risk: config.risk,
       exit: config.exit,
       execution: config.execution
     });
@@ -151,6 +146,13 @@ export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<
       run.result = 'NO_SIGNAL';
       run.summary = decision.summary;
       run.reason = decision.reason;
+      return run;
+    }
+
+    const marked = await lock.markEntryAttempt(barCloseTimeIso, ENTRY_IDEM_TTL_SECONDS);
+    if (!marked) {
+      run.result = 'SKIPPED_ENTRY';
+      run.summary = 'SKIPPED_ENTRY: idem entry key already exists for this bar';
       return run;
     }
 

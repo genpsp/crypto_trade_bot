@@ -48,8 +48,8 @@ export class RedisLockAdapter implements LockPort {
     this.runnerLockToken = null;
   }
 
-  async markBarProcessed(barCloseTimeIso: string, ttlSeconds: number): Promise<boolean> {
-    const key = `idem:signal:${barCloseTimeIso}`;
+  async markEntryAttempt(barCloseTimeIso: string, ttlSeconds: number): Promise<boolean> {
+    const key = `idem:entry:${barCloseTimeIso}`;
     const result = await this.redis.set(key, '1', {
       NX: true,
       EX: ttlSeconds

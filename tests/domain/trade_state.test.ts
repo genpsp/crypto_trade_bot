@@ -8,6 +8,7 @@ describe('trade state transitions', () => {
   it('allows valid transitions', () => {
     expect(canTransitionTradeState('CREATED', 'SUBMITTED')).toBe(true);
     expect(canTransitionTradeState('SUBMITTED', 'CONFIRMED')).toBe(true);
+    expect(canTransitionTradeState('CONFIRMED', 'CLOSED')).toBe(true);
     expect(canTransitionTradeState('CONFIRMED', 'SUBMITTED')).toBe(true);
     expect(canTransitionTradeState('SUBMITTED', 'FAILED')).toBe(true);
   });

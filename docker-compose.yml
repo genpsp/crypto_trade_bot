@@ -12,10 +12,16 @@ services:
     restart: unless-stopped
     environment:
       SOLANA_RPC_URL: ${SOLANA_RPC_URL}
-      REDIS_URL: ${REDIS_URL}
-      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}
-      WALLET_KEY_PATH: ${WALLET_KEY_PATH}
+      REDIS_URL: redis://redis:6379
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-service-account.json
+      WALLET_KEY_PATH: /run/secrets/wallet.enc.json
       WALLET_KEY_PASSPHRASE: ${WALLET_KEY_PASSPHRASE}
     volumes:
-      - ${GOOGLE_APPLICATION_CREDENTIALS}:${GOOGLE_APPLICATION_CREDENTIALS}:ro
-      - ${WALLET_KEY_PATH}:${WALLET_KEY_PATH}:ro
+      - type: bind
+        source: ${GOOGLE_APPLICATION_CREDENTIALS}
+        target: /run/secrets/firebase-service-account.json
+        read_only: true
+      - type: bind
+        source: ${WALLET_KEY_PATH}
+        target: /run/secrets/wallet.enc.json
+        read_only: true

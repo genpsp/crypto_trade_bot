@@ -2,56 +2,35 @@ import type {
   ExecutionPort,
   SubmitSwapRequest,
   SwapConfirmation,
-  SwapSubmission,
-  SwapSide
+  SwapSubmission
 } from '../../app/ports/execution_port';
 import type { LoggerPort } from '../../app/ports/logger_port';
+import type { JupiterQuoteClient } from './jupiter_quote_client';
 import type { SolanaSender } from './solana_sender';
 
-const QUOTE_API_BASE = 'https://quote-api.jup.ag/v6';
-const SOL_MINT = 'So11111111111111111111111111111111111111112';
-const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
-
-interface JupiterQuoteResponse {
-  inAmount: string;
-  outAmount: string;
-}
+const SWAP_API_URL = 'https://lite-api.jup.ag/swap/v1/swap';
 
 interface JupiterSwapResponse {
   swapTransaction: string;
 }
 
-function getMints(side: SwapSide): { inputMint: string; outputMint: string } {
-  if (side === 'BUY_SOL_WITH_USDC') {
-    return {
-      inputMint: USDC_MINT,
-      outputMint: SOL_MINT
-    };
-  }
-
-  return {
-    inputMint: SOL_MINT,
-    outputMint: USDC_MINT
-  };
-}
-
 export class JupiterSwapAdapter implements ExecutionPort {
   constructor(
+    private readonly quoteClient: JupiterQuoteClient,
     private readonly solanaSender: SolanaSender,
     private readonly logger: LoggerPort
   ) {}
 
   async submitSwap(request: SubmitSwapRequest): Promise<SwapSubmission> {
-    const { inputMint, outputMint } = getMints(request.side);
-    const quoteResponse = await this.fetchQuote(request, inputMint, outputMint);
-    const swapTransaction = await this.fetchSwapTransaction(quoteResponse);
+    const quote = await this.quoteClient.fetchQuote(request);
+    const swapTransaction = await this.fetchSwapTransaction(quote.raw);
 
     const txSignature = await this.solanaSender.sendVersionedTransactionBase64(swapTransaction);
 
     return {
       txSignature,
-      inAmountAtomic: BigInt(quoteResponse.inAmount),
-      outAmountAtomic: BigInt(quoteResponse.outAmount)
+      inAmountAtomic: quote.inAmountAtomic,
+      outAmountAtomic: quote.outAmountAtomic
     };
   }
 
@@ -59,46 +38,24 @@ export class JupiterSwapAdapter implements ExecutionPort {
     return this.solanaSender.confirmSignature(txSignature, timeoutMs);
   }
 
-  private async fetchQuote(
-    request: SubmitSwapRequest,
-    inputMint: string,
-    outputMint: string
-  ): Promise<JupiterQuoteResponse> {
-    const url = new URL(`${QUOTE_API_BASE}/quote`);
-    url.searchParams.set('inputMint', inputMint);
-    url.searchParams.set('outputMint', outputMint);
-    url.searchParams.set('amount', request.amountAtomic.toString());
-    url.searchParams.set('slippageBps', String(request.slippageBps));
-    url.searchParams.set('onlyDirectRoutes', String(request.onlyDirectRoutes));
-
-    const response = await fetch(url.toString());
-    if (!response.ok) {
-      throw new Error(`Jupiter quote failed: HTTP ${response.status}`);
+  private async fetchSwapTransaction(quoteResponse: Record<string, unknown>): Promise<string> {
+    let response: Response;
+    try {
+      response = await fetch(SWAP_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          quoteResponse,
+          userPublicKey: this.solanaSender.getPublicKey().toBase58(),
+          wrapAndUnwrapSol: true
+        })
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Jupiter swap request failed: ${errorMessage}`);
     }
-
-    const payload = (await response.json()) as Partial<JupiterQuoteResponse>;
-    if (!payload.inAmount || !payload.outAmount) {
-      throw new Error('Jupiter quote payload is missing inAmount/outAmount');
-    }
-
-    return {
-      inAmount: payload.inAmount,
-      outAmount: payload.outAmount
-    };
-  }
-
-  private async fetchSwapTransaction(quoteResponse: JupiterQuoteResponse): Promise<string> {
-    const response = await fetch(`${QUOTE_API_BASE}/swap`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        quoteResponse,
-        userPublicKey: this.solanaSender.getPublicKey().toBase58(),
-        wrapAndUnwrapSol: true
-      })
-    });
 
     if (!response.ok) {
       throw new Error(`Jupiter swap failed: HTTP ${response.status}`);

@@ -13,6 +13,28 @@ export function calculateSwingLow(lows: number[], lookbackBars: number): number 
   return Math.min(...recentLows);
 }
 
+export function calculateMaxLossStopPrice(entryPrice: number, maxLossPct: number): number {
+  if (entryPrice <= 0) {
+    throw new Error('entryPrice must be greater than 0');
+  }
+
+  if (maxLossPct <= 0) {
+    throw new Error('maxLossPct must be greater than 0');
+  }
+
+  const maxLossRatio = maxLossPct / 100;
+  return entryPrice * (1 - maxLossRatio);
+}
+
+export function tightenStopForLong(
+  entryPrice: number,
+  swingLowStop: number,
+  maxLossPct: number
+): number {
+  const pctStop = calculateMaxLossStopPrice(entryPrice, maxLossPct);
+  return Math.max(swingLowStop, pctStop);
+}
+
 export function calculateTakeProfitPrice(
   entryPrice: number,
   stopPrice: number,

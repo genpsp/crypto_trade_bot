@@ -1,7 +1,6 @@
 import { z } from 'zod';
-import type { BotConfig } from '../../domain/model/types';
 
-export const configSchema: z.ZodType<BotConfig> = z
+export const configSchema = z
   .object({
     enabled: z.boolean(),
     network: z.literal('mainnet-beta'),
@@ -20,6 +19,7 @@ export const configSchema: z.ZodType<BotConfig> = z
       max_trades_per_day: z.number().int().positive()
     }),
     execution: z.object({
+      mode: z.enum(['PAPER', 'LIVE']).default('PAPER'),
       swap_provider: z.literal('JUPITER'),
       slippage_bps: z.number().int().positive(),
       min_notional_usdc: z.number().positive(),

@@ -11,7 +11,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "encrypt-wallet": "tsx scripts/encrypt-wallet.ts"
+    "encrypt-wallet": "tsx scripts/encrypt-wallet.ts",
+    "seed-config": "tsx scripts/seed-firestore-config.ts"
   },
   "dependencies": {
     "@google-cloud/firestore": "^7.11.0",

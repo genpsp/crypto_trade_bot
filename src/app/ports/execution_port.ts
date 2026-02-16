@@ -1,3 +1,5 @@
+import type { TradeOrderSnapshot, TradeResultSnapshot } from '../../domain/model/types';
+
 export type SwapSide = 'BUY_SOL_WITH_USDC' | 'SELL_SOL_FOR_USDC';
 
 export interface SubmitSwapRequest {
@@ -11,6 +13,8 @@ export interface SwapSubmission {
   txSignature: string;
   inAmountAtomic: bigint;
   outAmountAtomic: bigint;
+  order?: TradeOrderSnapshot;
+  result?: TradeResultSnapshot;
 }
 
 export interface SwapConfirmation {

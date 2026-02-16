@@ -7,7 +7,7 @@ Solana 現物自動売買Bot（`SOL/USDC`、`LONG_ONLY`、`4h`）の v0 実装�
 - 利確: `2R` 全決済
 - 実行: Jupiter API で swap tx 生成、Solana 署名送信
 - 永続化: Firestore（`config/current`, `trades`, `runs`）
-- 同時実行/重複防止: Redis（`lock:runner`, `idem:signal:*`, `tx:inflight:*`）
+- 同時実行/重複防止: Redis（`lock:runner`, `idem:entry:*`, `tx:inflight:*`）
 
 ## 1. 前提
 
@@ -25,6 +25,9 @@ Solana 現物自動売買Bot（`SOL/USDC`、`LONG_ONLY`、`4h`）の v0 実装�
 - `GOOGLE_APPLICATION_CREDENTIALS`
 - `WALLET_KEY_PATH`
 - `WALLET_KEY_PASSPHRASE`
+
+`GOOGLE_APPLICATION_CREDENTIALS` と `WALLET_KEY_PATH` は相対パス/絶対パスどちらでも利用できます。
+相対パスの場合は `docker-compose.yml` があるプロジェクトルート基準です。
 
 ## 3. Firestore 事前準備
 
@@ -57,6 +60,7 @@ Solana 現物自動売買Bot（`SOL/USDC`、`LONG_ONLY`、`4h`）の v0 実装�
     "max_trades_per_day": 3
   },
   "execution": {
+    "mode": "PAPER",
     "swap_provider": "JUPITER",
     "slippage_bps": 100,
     "min_notional_usdc": 50,
@@ -71,6 +75,18 @@ Solana 現物自動売買Bot（`SOL/USDC`、`LONG_ONLY`、`4h`）の v0 実装�
     "note": "v0: spot swap only, long only, 4h close entry, TP=2R all, notify=none"
   }
 }
+```
+
+または seeder を使って投入:
+
+```bash
+npm run seed-config
+```
+
+`LIVE` で投入したい場合:
+
+```bash
+npm run seed-config -- --mode LIVE
 ```
 
 ## 4. Wallet 準備（Phantom 連携前提）
@@ -91,7 +107,32 @@ npm run encrypt-wallet -- --base58 "PHANTOM_BASE58_PRIVATE_KEY" --output /path/t
 3. `WALLET_KEY_PATH` に暗号化ファイル、`WALLET_KEY_PASSPHRASE` に同じパスフレーズを設定
 4. 同じ秘密鍵を Phantom に import して監視/入出金を行う
 
-## 5. ローカル起動（Node実行）
+## 5. PAPER運用（推奨）
+
+`execution.mode = "PAPER"` のとき、実売買は行いません。
+
+- 記録先: `paper_trades`, `paper_runs`
+- Tx送信: なし（Jupiter quoteベースのシミュレーション）
+- `tx_signature`: `PAPER_<UUID>`
+
+起動:
+
+```bash
+docker compose up --build
+```
+
+確認:
+
+- `paper_runs/{run_id}` に4h判定結果が残る
+- `paper_trades/{trade_id}` に state遷移と `execution.order` / `execution.result` が残る
+
+## 6. LIVE移行手順
+
+1. `config/current.execution.mode` を `LIVE` に変更
+2. Botを再起動（`docker compose up -d --build`）
+3. 記録先が `trades`, `runs` に切り替わることを確認
+
+## 7. ローカル起動（Node実行）
 
 ```bash
 npm install
@@ -100,7 +141,7 @@ npm run build
 npm run dev
 ```
 
-## 6. Docker 起動
+## 8. Docker 起動
 
 ```bash
 docker compose up --build
@@ -108,16 +149,17 @@ docker compose up --build
 
 `bot` と `redis` の 2 サービスのみ起動します。
 
-`GOOGLE_APPLICATION_CREDENTIALS` と `WALLET_KEY_PATH` はホスト上の実ファイルを volume mount で bot に渡します。
+`GOOGLE_APPLICATION_CREDENTIALS` と `WALLET_KEY_PATH` はホスト上の実ファイルを
+bind mount で bot に渡します（相対パス可）。
 
-## 7. 動作確認ポイント
+## 9. 動作確認ポイント
 
 - `runs/{run_id}` に 5分ごとの実行結果が記録される
 - シグナル成立時に `trades/{trade_id}` が `CREATED -> SUBMITTED -> CONFIRMED` へ遷移
 - エグジット時に `CONFIRMED -> SUBMITTED -> CLOSED` へ遷移
 - 失敗時は `FAILED` と `execution.entry_error` / `execution.exit_error` が記録される
 
-## 8. VPS 移植（docker compose）
+## 10. VPS 移植（docker compose）
 
 1. このリポジトリを VPS に配置
 2. VPS に Docker / Docker Compose を導入

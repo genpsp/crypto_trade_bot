@@ -3,6 +3,16 @@ import type { PersistencePort } from '../../app/ports/persistence_port';
 import type { BotConfig, Pair, RunRecord, TradeRecord } from '../../domain/model/types';
 import type { FirestoreConfigRepository } from '../../infra/config/firestore_config_repo';
 
+interface RepositoryCollections {
+  trades: string;
+  runs: string;
+}
+
+const DEFAULT_COLLECTIONS: RepositoryCollections = {
+  trades: 'trades',
+  runs: 'runs'
+};
+
 function sanitizeFirestoreValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => sanitizeFirestoreValue(item));
@@ -24,7 +34,8 @@ function sanitizeFirestoreValue(value: unknown): unknown {
 export class FirestoreRepository implements PersistencePort {
   constructor(
     private readonly firestore: Firestore,
-    private readonly configRepo: FirestoreConfigRepository
+    private readonly configRepo: FirestoreConfigRepository,
+    private readonly collections: RepositoryCollections = DEFAULT_COLLECTIONS
   ) {}
 
   async getCurrentConfig(): Promise<BotConfig> {
@@ -33,53 +44,55 @@ export class FirestoreRepository implements PersistencePort {
 
   async createTrade(trade: TradeRecord): Promise<void> {
     await this.firestore
-      .collection('trades')
+      .collection(this.collections.trades)
       .doc(trade.trade_id)
       .set(sanitizeFirestoreValue(trade) as Record<string, unknown>);
   }
 
   async updateTrade(tradeId: string, updates: Partial<TradeRecord>): Promise<void> {
     await this.firestore
-      .collection('trades')
+      .collection(this.collections.trades)
       .doc(tradeId)
       .set(sanitizeFirestoreValue(updates) as Record<string, unknown>, { merge: true });
   }
 
   async findOpenTrade(pair: Pair): Promise<TradeRecord | null> {
     const snapshot = await this.firestore
-      .collection('trades')
-      .where('pair', '==', pair)
+      .collection(this.collections.trades)
       .where('state', '==', 'CONFIRMED')
-      .orderBy('created_at', 'desc')
-      .limit(1)
       .get();
 
     if (snapshot.empty) {
       return null;
     }
 
-    const doc = snapshot.docs[0];
-    if (!doc) {
-      return null;
-    }
+    const candidates = snapshot.docs
+      .map((doc) => doc.data() as TradeRecord)
+      .filter((trade) => trade.pair === pair)
+      .sort((a, b) => {
+        const aTime = Date.parse(a.created_at);
+        const bTime = Date.parse(b.created_at);
+        return bTime - aTime;
+      });
 
-    return doc.data() as TradeRecord;
+    return candidates[0] ?? null;
   }
 
   async countTradesForUtcDay(pair: Pair, dayStartIso: string, dayEndIso: string): Promise<number> {
     const snapshot = await this.firestore
-      .collection('trades')
-      .where('pair', '==', pair)
+      .collection(this.collections.trades)
       .where('created_at', '>=', dayStartIso)
       .where('created_at', '<=', dayEndIso)
       .get();
 
-    return snapshot.size;
+    return snapshot.docs
+      .map((doc) => doc.data() as TradeRecord)
+      .filter((trade) => trade.pair === pair).length;
   }
 
   async saveRun(run: RunRecord): Promise<void> {
     await this.firestore
-      .collection('runs')
+      .collection(this.collections.runs)
       .doc(run.run_id)
       .set(sanitizeFirestoreValue(run) as Record<string, unknown>);
   }

@@ -1,7 +1,10 @@
 import { Firestore } from '@google-cloud/firestore';
 import { createClient } from 'redis';
+import type { ExecutionPort } from '../app/ports/execution_port';
 import { run4hCycle } from '../app/usecases/run_4h_cycle';
+import { JupiterQuoteClient } from '../adapters/execution/jupiter_quote_client';
 import { JupiterSwapAdapter } from '../adapters/execution/jupiter_swap';
+import { PaperExecutionAdapter } from '../adapters/execution/paper_execution';
 import { SolanaSender } from '../adapters/execution/solana_sender';
 import { RedisLockAdapter } from '../adapters/lock/redis_lock';
 import { OhlcvProvider } from '../adapters/market_data/ohlcv_provider';
@@ -37,16 +40,42 @@ export async function bootstrap(): Promise<AppRuntime> {
   await redis.connect();
 
   const configRepo = new FirestoreConfigRepository(firestore);
-  const persistence = new FirestoreRepository(firestore, configRepo);
+  const startupConfig = await configRepo.getCurrentConfig();
+  const mode = startupConfig.execution.mode;
+  const collections =
+    mode === 'PAPER'
+      ? {
+          trades: 'paper_trades',
+          runs: 'paper_runs'
+        }
+      : {
+          trades: 'trades',
+          runs: 'runs'
+        };
+
+  const persistence = new FirestoreRepository(firestore, configRepo, collections);
   const lock = new RedisLockAdapter(redis, logger);
   const marketData = new OhlcvProvider();
-  const sender = new SolanaSender(
-    env.SOLANA_RPC_URL,
-    env.WALLET_KEY_PATH,
-    env.WALLET_KEY_PASSPHRASE,
-    logger
-  );
-  const execution = new JupiterSwapAdapter(sender, logger);
+  const quoteClient = new JupiterQuoteClient();
+
+  let execution: ExecutionPort;
+  if (mode === 'PAPER') {
+    execution = new PaperExecutionAdapter(quoteClient, logger);
+  } else {
+    const sender = new SolanaSender(
+      env.SOLANA_RPC_URL,
+      env.WALLET_KEY_PATH,
+      env.WALLET_KEY_PASSPHRASE,
+      logger
+    );
+    execution = new JupiterSwapAdapter(quoteClient, sender, logger);
+  }
+
+  logger.info('runtime mode selected', {
+    mode,
+    trades_collection: collections.trades,
+    runs_collection: collections.runs
+  });
 
   const runCycle = async (): Promise<void> => {
     const result = await run4hCycle({

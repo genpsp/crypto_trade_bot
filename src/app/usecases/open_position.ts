@@ -1,7 +1,3 @@
-import type { ExecutionPort } from '../ports/execution_port';
-import type { LockPort } from '../ports/lock_port';
-import type { LoggerPort } from '../ports/logger_port';
-import type { PersistencePort } from '../ports/persistence_port';
 import { assertTradeStateTransition, type TradeState } from '../../domain/model/trade_state';
 import type {
   BotConfig,
@@ -10,8 +6,17 @@ import type {
   TradePositionSnapshot,
   TradeRecord
 } from '../../domain/model/types';
-import { buildTradeId } from '../../domain/utils/time';
+import {
+  calculateMaxLossStopPrice,
+  calculateTakeProfitPrice,
+  tightenStopForLong
+} from '../../domain/risk/swing_low_stop';
 import { roundTo } from '../../domain/utils/math';
+import { buildTradeId } from '../../domain/utils/time';
+import type { ExecutionPort } from '../ports/execution_port';
+import type { LockPort } from '../ports/lock_port';
+import type { LoggerPort } from '../ports/logger_port';
+import type { PersistencePort } from '../ports/persistence_port';
 import { nowIso, stripUndefined, toErrorMessage } from './usecase_utils';
 
 const USDC_ATOMIC_MULTIPLIER = 1_000_000;
@@ -100,6 +105,7 @@ export async function openPosition(
       trade.trade_id,
       stripUndefined({
         state: trade.state,
+        plan: trade.plan,
         execution: trade.execution,
         position: trade.position,
         updated_at: trade.updated_at
@@ -129,6 +135,12 @@ export async function openPosition(
     });
 
     trade.execution.entry_tx_signature = submission.txSignature;
+    if (submission.order) {
+      trade.execution.order = submission.order;
+    }
+    if (submission.result) {
+      trade.execution.result = submission.result;
+    }
     await moveState('SUBMITTED');
 
     await lock.setInflightTx(submission.txSignature, TX_INFLIGHT_TTL_SECONDS);
@@ -147,14 +159,70 @@ export async function openPosition(
       };
     }
 
-    const receivedSol = Number(submission.outAmountAtomic) / SOL_ATOMIC_MULTIPLIER;
-    const resolvedEntryPrice = receivedSol > 0 ? notionalUsdc / receivedSol : signal.entry_price;
+    const fallbackReceivedSol = Number(submission.outAmountAtomic) / SOL_ATOMIC_MULTIPLIER;
+    const receivedSol = submission.result?.filled_base_sol ?? fallbackReceivedSol;
+    if (!Number.isFinite(receivedSol) || receivedSol <= 0) {
+      const quantityError = `filled quantity is 0: filled_base_sol=${
+        submission.result?.filled_base_sol ?? 'n/a'
+      }, out_amount_atomic=${submission.outAmountAtomic.toString()}`;
+      trade.execution.entry_error = quantityError;
+      logger.error('open_position failed: invalid filled quantity', {
+        tradeId,
+        txSignature: submission.txSignature,
+        filled_base_sol: submission.result?.filled_base_sol,
+        out_amount_atomic: submission.outAmountAtomic.toString()
+      });
+      await moveState('FAILED');
+
+      return {
+        status: 'FAILED',
+        tradeId,
+        summary: `FAILED: ${quantityError}`
+      };
+    }
+
+    const fallbackEntryPrice = notionalUsdc / receivedSol;
+    const resolvedEntryPrice = submission.result?.avg_fill_price ?? fallbackEntryPrice;
+    const swingStop = signal.stop_price;
+    const pctStop = calculateMaxLossStopPrice(resolvedEntryPrice, config.risk.max_loss_per_trade_pct);
+    let finalStop = tightenStopForLong(
+      resolvedEntryPrice,
+      swingStop,
+      config.risk.max_loss_per_trade_pct
+    );
+    if (finalStop >= resolvedEntryPrice) {
+      finalStop = pctStop;
+    }
+
+    const recalculatedTakeProfit = calculateTakeProfitPrice(
+      resolvedEntryPrice,
+      finalStop,
+      config.exit.take_profit_r_multiple
+    );
 
     trade.position.quantity_sol = roundTo(receivedSol, 9);
     trade.position.entry_price = roundTo(resolvedEntryPrice, 6);
+    trade.position.stop_price = roundTo(finalStop, 6);
+    trade.position.take_profit_price = roundTo(recalculatedTakeProfit, 6);
     trade.position.entry_time_iso = nowIso();
+    trade.plan.entry_price = trade.position.entry_price;
+    trade.plan.stop_price = trade.position.stop_price;
+    trade.plan.take_profit_price = trade.position.take_profit_price;
+    trade.plan.summary = `Buy SOL with ${config.execution.min_notional_usdc} USDC, entry=${roundTo(
+      trade.position.entry_price,
+      4
+    )}, stop=${roundTo(trade.position.stop_price, 4)}, tp=${roundTo(
+      trade.position.take_profit_price,
+      4
+    )}`;
 
     await moveState('CONFIRMED');
+    logger.info('trade risk levels aligned and persisted', {
+      trade_id: trade.trade_id,
+      entry_price: trade.position.entry_price,
+      stop_price: trade.position.stop_price,
+      take_profit_price: trade.position.take_profit_price
+    });
 
     return {
       status: 'OPENED',

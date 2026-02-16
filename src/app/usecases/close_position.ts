@@ -2,11 +2,13 @@ import type { ExecutionPort } from '../ports/execution_port';
 import type { LockPort } from '../ports/lock_port';
 import type { LoggerPort } from '../ports/logger_port';
 import type { PersistencePort } from '../ports/persistence_port';
+import { roundTo } from '../../domain/utils/math';
 import { assertTradeStateTransition, type TradeState } from '../../domain/model/trade_state';
 import type { BotConfig, CloseReason, TradeRecord } from '../../domain/model/types';
 import { nowIso, stripUndefined, toErrorMessage } from './usecase_utils';
 
 const SOL_ATOMIC_MULTIPLIER = 1_000_000_000;
+const USDC_ATOMIC_MULTIPLIER = 1_000_000;
 const TX_CONFIRM_TIMEOUT_MS = 75_000;
 const TX_INFLIGHT_TTL_SECONDS = 180;
 
@@ -49,24 +51,27 @@ export async function closePosition(
 
   const moveState = async (nextState: TradeState): Promise<void> => {
     assertTradeStateTransition(currentState, nextState);
-    currentState = nextState;
-    trade.state = nextState;
-    trade.updated_at = nowIso();
+    const nextUpdatedAt = nowIso();
 
     await persistence.updateTrade(
       trade.trade_id,
       stripUndefined({
-        state: trade.state,
+        state: nextState,
         execution: trade.execution,
         position: trade.position,
         close_reason: trade.close_reason,
-        updated_at: trade.updated_at
+        updated_at: nextUpdatedAt
       })
     );
+
+    currentState = nextState;
+    trade.state = nextState;
+    trade.updated_at = nextUpdatedAt;
   };
 
-  const amountAtomic = BigInt(Math.round(trade.position.quantity_sol * SOL_ATOMIC_MULTIPLIER));
+  const amountAtomic = BigInt(Math.floor(trade.position.quantity_sol * SOL_ATOMIC_MULTIPLIER));
   if (amountAtomic <= 0n) {
+    trade.execution.exit_submission_state = 'FAILED';
     trade.execution.exit_error = 'position quantity is 0';
     await moveState('FAILED');
 
@@ -86,7 +91,21 @@ export async function closePosition(
     });
 
     trade.execution.exit_tx_signature = submission.txSignature;
-    await moveState('SUBMITTED');
+    if (submission.order) {
+      trade.execution.exit_order = submission.order;
+    }
+    if (submission.result) {
+      trade.execution.exit_result = submission.result;
+    }
+    trade.execution.exit_submission_state = 'SUBMITTED';
+    trade.updated_at = nowIso();
+    await persistence.updateTrade(
+      trade.trade_id,
+      stripUndefined({
+        execution: trade.execution,
+        updated_at: trade.updated_at
+      })
+    );
 
     await lock.setInflightTx(submission.txSignature, TX_INFLIGHT_TTL_SECONDS);
 
@@ -94,6 +113,7 @@ export async function closePosition(
     await lock.clearInflightTx(submission.txSignature);
 
     if (!confirmation.confirmed) {
+      trade.execution.exit_submission_state = 'FAILED';
       trade.execution.exit_error = confirmation.error ?? 'unknown confirmation error';
       await moveState('FAILED');
 
@@ -104,22 +124,40 @@ export async function closePosition(
       };
     }
 
+    const inputSol = Number(submission.inAmountAtomic) / SOL_ATOMIC_MULTIPLIER;
+    const outputUsdc = Number(submission.outAmountAtomic) / USDC_ATOMIC_MULTIPLIER;
+    const fallbackExitPrice = inputSol > 0 ? outputUsdc / inputSol : closePrice;
+    const resolvedExitPrice = submission.result?.avg_fill_price ?? fallbackExitPrice;
+
+    const previousPositionSnapshot = { ...trade.position };
+    const previousCloseReason = trade.close_reason;
+    trade.execution.exit_submission_state = 'CONFIRMED';
     trade.position.status = 'CLOSED';
-    trade.position.exit_price = closePrice;
+    trade.position.exit_price = roundTo(resolvedExitPrice, 6);
+    trade.position.exit_trigger_price = roundTo(closePrice, 6);
     trade.position.exit_time_iso = nowIso();
     trade.close_reason = closeReason;
-
-    await moveState('CLOSED');
+    try {
+      await moveState('CLOSED');
+    } catch (closeCommitError) {
+      trade.position = previousPositionSnapshot;
+      trade.close_reason = previousCloseReason;
+      throw closeCommitError;
+    }
 
     return {
       status: 'CLOSED',
       tradeId: trade.trade_id,
-      summary: `CLOSED: reason=${closeReason}, tx=${submission.txSignature}`
+      summary: `CLOSED: reason=${closeReason}, tx=${submission.txSignature}, fill=${roundTo(
+        trade.position.exit_price,
+        4
+      )}, trigger=${roundTo(closePrice, 4)}`
     };
   } catch (error) {
     const errorMessage = toErrorMessage(error);
     logger.error('close_position failed', { tradeId: trade.trade_id, error: errorMessage });
 
+    trade.execution.exit_submission_state = 'FAILED';
     trade.execution.exit_error = errorMessage;
 
     try {
