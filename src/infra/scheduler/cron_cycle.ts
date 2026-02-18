@@ -6,8 +6,8 @@ export interface CronController {
   stop(): void;
 }
 
-export function createCron4h(task: () => Promise<void>, logger: LoggerPort): CronController {
-  const schedule = '*/5 * * * *';
+export function createCronCycle(task: () => Promise<void>, logger: LoggerPort): CronController {
+  const schedule = '* * * * *';
 
   const cronTask: ScheduledTask = cron.schedule(
     schedule,
@@ -26,7 +26,7 @@ export function createCron4h(task: () => Promise<void>, logger: LoggerPort): Cro
 
   return {
     start() {
-      logger.info('scheduler started (every 5 minutes, UTC)', { schedule });
+      logger.info('scheduler started (every 1 minute, UTC)', { schedule });
       cronTask.start();
     },
     stop() {

@@ -38,32 +38,32 @@ function buildDefaultConfig(mode: Mode): unknown {
     network: 'mainnet-beta',
     pair: 'SOL/USDC',
     direction: 'LONG_ONLY',
-    signal_timeframe: '4h',
+    signal_timeframe: '2h',
     strategy: {
       name: 'ema_trend_pullback_v0',
-      ema_fast_period: 20,
-      ema_slow_period: 50,
+      ema_fast_period: 12,
+      ema_slow_period: 34,
       swing_low_lookback_bars: 12,
-      entry: 'ON_4H_CLOSE'
+      entry: 'ON_BAR_CLOSE'
     },
     risk: {
       max_loss_per_trade_pct: 0.5,
-      max_trades_per_day: 3
+      max_trades_per_day: 1
     },
     execution: {
       mode,
       swap_provider: 'JUPITER',
-      slippage_bps: 100,
-      min_notional_usdc: 50,
+      slippage_bps: 50,
+      min_notional_usdc: 30,
       only_direct_routes: false
     },
     exit: {
       stop: 'SWING_LOW',
-      take_profit_r_multiple: 2
+      take_profit_r_multiple: 1.5
     },
     meta: {
-      config_version: 1,
-      note: 'v0: spot swap only, long only, 4h close entry, TP=2R all, notify=none'
+      config_version: 2,
+      note: 'v0: spot swap only, long only, 2h close entry, TP=1.5R, small live test'
     }
   };
 }

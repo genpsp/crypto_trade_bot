@@ -7,7 +7,8 @@ import type {
   OhlcvBar,
   RiskConfig,
   StrategyConfig,
-  StrategyDecision
+  StrategyDecision,
+  StrategyDiagnostics
 } from '../model/types';
 import {
   calculateSwingLow,
@@ -24,7 +25,7 @@ interface EvaluateInput {
 }
 
 const PULLBACK_LOOKBACK_BARS = 4;
-const MAX_DISTANCE_FROM_EMA_FAST_PCT = 0.8;
+const MAX_DISTANCE_FROM_EMA_FAST_PCT = 1.2;
 const MIN_STOP_DISTANCE_PCT = 0.4;
 const RSI_PERIOD = 14;
 const RSI_LOWER_BOUND = 45;
@@ -36,14 +37,16 @@ function noSignal(
   summary: string,
   reason: string,
   emaFast?: number,
-  emaSlow?: number
+  emaSlow?: number,
+  diagnostics?: StrategyDiagnostics
 ): NoSignalDecision {
   return {
     type: 'NO_SIGNAL',
     summary,
     reason,
     ema_fast: emaFast,
-    ema_slow: emaSlow
+    ema_slow: emaSlow,
+    diagnostics
   };
 }
 
@@ -53,7 +56,8 @@ function entrySignal(
   emaSlow: number,
   entryPrice: number,
   stopPrice: number,
-  takeProfitPrice: number
+  takeProfitPrice: number,
+  diagnostics?: StrategyDiagnostics
 ): EntrySignalDecision {
   return {
     type: 'ENTER',
@@ -62,7 +66,8 @@ function entrySignal(
     ema_slow: emaSlow,
     entry_price: entryPrice,
     stop_price: stopPrice,
-    take_profit_price: takeProfitPrice
+    take_profit_price: takeProfitPrice,
+    diagnostics
   };
 }
 
@@ -76,18 +81,28 @@ export function evaluateEmaTrendPullbackV0(input: EvaluateInput): StrategyDecisi
     RSI_PERIOD + 1,
     ATR_PERIOD + 1
   );
+  const diagnostics: StrategyDiagnostics = {
+    bars_count: bars.length,
+    minimum_bars_required: minimumBars
+  };
 
   if (bars.length < minimumBars) {
     return noSignal(
       'NO_SIGNAL: not enough bars for strategy calculation',
-      `INSUFFICIENT_BARS_${bars.length}_OF_${minimumBars}`
+      `INSUFFICIENT_BARS_${bars.length}_OF_${minimumBars}`,
+      undefined,
+      undefined,
+      diagnostics
     );
   }
 
   if (execution.min_notional_usdc <= 0) {
     return noSignal(
       'NO_SIGNAL: min_notional_usdc is invalid',
-      'INVALID_MIN_NOTIONAL_USDC'
+      'INVALID_MIN_NOTIONAL_USDC',
+      undefined,
+      undefined,
+      diagnostics
     );
   }
 
@@ -108,6 +123,10 @@ export function evaluateEmaTrendPullbackV0(input: EvaluateInput): StrategyDecisi
   const entryPrice = closes.at(-1);
   const previousClose = closes.at(-2);
   const previousEmaFast = emaFastByBar.at(-2);
+  diagnostics.ema_fast = emaFast;
+  diagnostics.ema_slow = emaSlow;
+  diagnostics.previous_close = previousClose;
+  diagnostics.previous_ema_fast = previousEmaFast;
 
   if (
     emaFast === undefined ||
@@ -116,7 +135,13 @@ export function evaluateEmaTrendPullbackV0(input: EvaluateInput): StrategyDecisi
     Number.isNaN(emaFast) ||
     Number.isNaN(emaSlow)
   ) {
-    return noSignal('NO_SIGNAL: EMA is not stable yet', 'EMA_NOT_STABLE');
+    return noSignal(
+      'NO_SIGNAL: EMA is not stable yet',
+      'EMA_NOT_STABLE',
+      undefined,
+      undefined,
+      diagnostics
+    );
   }
 
   if (emaFast <= emaSlow) {
@@ -126,7 +151,8 @@ export function evaluateEmaTrendPullbackV0(input: EvaluateInput): StrategyDecisi
       )} <= EMA${strategy.ema_slow_period}=${emaSlow.toFixed(4)})`,
       'EMA_TREND_FILTER_FAILED',
       emaFast,
-      emaSlow
+      emaSlow,
+      diagnostics
     );
   }
 
@@ -149,54 +175,67 @@ export function evaluateEmaTrendPullbackV0(input: EvaluateInput): StrategyDecisi
       break;
     }
   }
+  diagnostics.pullback_found = hasPullback;
   if (!hasPullback) {
     return noSignal(
       'NO_SIGNAL: pullback condition not found',
       'PULLBACK_NOT_FOUND',
       emaFast,
-      emaSlow
+      emaSlow,
+      diagnostics
     );
   }
 
-  const hasReclaim =
-    previousClose !== undefined &&
-    previousEmaFast !== undefined &&
-    !Number.isNaN(previousEmaFast) &&
-    entryPrice > emaFast &&
-    previousClose <= previousEmaFast;
+  const hasReclaim = entryPrice > emaFast;
+  diagnostics.reclaim_found = hasReclaim;
   if (!hasReclaim) {
     return noSignal(
-      'NO_SIGNAL: reclaim condition not found',
+      `NO_SIGNAL: reclaim condition not found (close=${entryPrice.toFixed(4)} <= EMA${
+        strategy.ema_fast_period
+      }=${emaFast.toFixed(4)})`,
       'RECLAIM_NOT_FOUND',
       emaFast,
-      emaSlow
+      emaSlow,
+      diagnostics
     );
   }
 
   const distanceFromEmaFastPct = ((entryPrice - emaFast) / entryPrice) * 100;
+  diagnostics.distance_from_ema_fast_pct = distanceFromEmaFastPct;
   if (distanceFromEmaFastPct > MAX_DISTANCE_FROM_EMA_FAST_PCT) {
     return noSignal(
       'NO_SIGNAL: entry is too far from EMA fast',
       'CHASE_ENTRY_TOO_FAR_FROM_EMA',
       emaFast,
-      emaSlow
+      emaSlow,
+      diagnostics
     );
   }
 
   const rsiValue = rsiSeries(closes, RSI_PERIOD).at(-1);
+  diagnostics.rsi = rsiValue;
   if (rsiValue === undefined || Number.isNaN(rsiValue)) {
-    return noSignal('NO_SIGNAL: RSI is not stable yet', 'RSI_NOT_STABLE', emaFast, emaSlow);
+    return noSignal(
+      'NO_SIGNAL: RSI is not stable yet',
+      'RSI_NOT_STABLE',
+      emaFast,
+      emaSlow,
+      diagnostics
+    );
   }
   if (rsiValue < RSI_LOWER_BOUND) {
-    return noSignal('NO_SIGNAL: RSI is too low', 'RSI_TOO_LOW', emaFast, emaSlow);
+    return noSignal('NO_SIGNAL: RSI is too low', 'RSI_TOO_LOW', emaFast, emaSlow, diagnostics);
   }
   if (rsiValue > RSI_UPPER_BOUND) {
-    return noSignal('NO_SIGNAL: RSI is too high', 'RSI_TOO_HIGH', emaFast, emaSlow);
+    return noSignal('NO_SIGNAL: RSI is too high', 'RSI_TOO_HIGH', emaFast, emaSlow, diagnostics);
   }
 
   const swingLowStop = calculateSwingLow(lows, strategy.swing_low_lookback_bars);
   const stopCandidate = tightenStopForLong(entryPrice, swingLowStop, risk.max_loss_per_trade_pct);
   const latestAtr = atrSeries(highs, lows, closes, ATR_PERIOD).at(-1);
+  diagnostics.swing_low_stop = swingLowStop;
+  diagnostics.stop_candidate = stopCandidate;
+  diagnostics.atr = latestAtr;
   if (latestAtr !== undefined && Number.isFinite(latestAtr) && latestAtr > 0) {
     const atrStop = entryPrice - latestAtr * ATR_STOP_MULTIPLIER;
     if (atrStop < stopCandidate) {
@@ -204,24 +243,34 @@ export function evaluateEmaTrendPullbackV0(input: EvaluateInput): StrategyDecisi
         'NO_SIGNAL: ATR stop conflicts with max loss cap',
         'ATR_STOP_CONFLICT_MAX_LOSS',
         emaFast,
-        emaSlow
+        emaSlow,
+        diagnostics
       );
     }
   }
   const finalStop = stopCandidate;
+  diagnostics.final_stop = finalStop;
 
   if (finalStop >= entryPrice) {
     return noSignal(
       'NO_SIGNAL: stop is not below entry',
       'INVALID_RISK_STRUCTURE',
       emaFast,
-      emaSlow
+      emaSlow,
+      diagnostics
     );
   }
 
   const stopDistancePct = ((entryPrice - finalStop) / entryPrice) * 100;
+  diagnostics.stop_distance_pct = stopDistancePct;
   if (stopDistancePct < MIN_STOP_DISTANCE_PCT) {
-    return noSignal('NO_SIGNAL: stop is too tight', 'STOP_TOO_TIGHT', emaFast, emaSlow);
+    return noSignal(
+      'NO_SIGNAL: stop is too tight',
+      'STOP_TOO_TIGHT',
+      emaFast,
+      emaSlow,
+      diagnostics
+    );
   }
 
   const takeProfitPrice = calculateTakeProfitPrice(
@@ -229,6 +278,7 @@ export function evaluateEmaTrendPullbackV0(input: EvaluateInput): StrategyDecisi
     finalStop,
     exit.take_profit_r_multiple
   );
+  diagnostics.take_profit_price = takeProfitPrice;
 
   return entrySignal(
     `ENTER: trend ok + pullback/reclaim, entry=${entryPrice.toFixed(4)}, stop=${finalStop.toFixed(
@@ -238,6 +288,7 @@ export function evaluateEmaTrendPullbackV0(input: EvaluateInput): StrategyDecisi
     emaSlow,
     entryPrice,
     finalStop,
-    takeProfitPrice
+    takeProfitPrice,
+    diagnostics
   );
 }

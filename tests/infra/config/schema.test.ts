@@ -6,13 +6,13 @@ const baseConfig = {
   network: 'mainnet-beta',
   pair: 'SOL/USDC',
   direction: 'LONG_ONLY',
-  signal_timeframe: '4h',
+  signal_timeframe: '2h',
   strategy: {
     name: 'ema_trend_pullback_v0',
     ema_fast_period: 20,
     ema_slow_period: 50,
     swing_low_lookback_bars: 12,
-    entry: 'ON_4H_CLOSE'
+    entry: 'ON_BAR_CLOSE'
   },
   risk: {
     max_loss_per_trade_pct: 0.5,
@@ -62,5 +62,14 @@ describe('configSchema execution.mode', () => {
     });
 
     expect(parsed.execution.mode).toBe('LIVE');
+  });
+
+  it('accepts 4h timeframe for backward compatibility', () => {
+    const parsed = configSchema.parse({
+      ...baseConfig,
+      signal_timeframe: '4h'
+    });
+
+    expect(parsed.signal_timeframe).toBe('4h');
   });
 });

@@ -1,5 +1,5 @@
-import type { OhlcvBar, Pair } from '../../domain/model/types';
+import type { OhlcvBar, Pair, SignalTimeframe } from '../../domain/model/types';
 
 export interface MarketDataPort {
-  fetch4hBars(pair: Pair, limit: number): Promise<OhlcvBar[]>;
+  fetchBars(pair: Pair, timeframe: SignalTimeframe, limit: number): Promise<OhlcvBar[]>;
 }

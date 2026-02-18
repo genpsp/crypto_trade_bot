@@ -1,8 +1,18 @@
-const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
+import type { SignalTimeframe } from '../model/types';
 
-export function getLastClosed4hBarClose(now: Date): Date {
+const TIMEFRAME_TO_MS: Record<SignalTimeframe, number> = {
+  '2h': 2 * 60 * 60 * 1000,
+  '4h': 4 * 60 * 60 * 1000
+};
+
+export function getBarDurationMs(timeframe: SignalTimeframe): number {
+  return TIMEFRAME_TO_MS[timeframe];
+}
+
+export function getLastClosedBarClose(now: Date, timeframe: SignalTimeframe): Date {
   const ms = now.getTime();
-  const closeMs = Math.floor(ms / FOUR_HOURS_MS) * FOUR_HOURS_MS;
+  const durationMs = getBarDurationMs(timeframe);
+  const closeMs = Math.floor(ms / durationMs) * durationMs;
   return new Date(closeMs);
 }
 

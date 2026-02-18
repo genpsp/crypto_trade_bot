@@ -58,6 +58,12 @@ export class RedisLockAdapter implements LockPort {
     return result === 'OK';
   }
 
+  async hasEntryAttempt(barCloseTimeIso: string): Promise<boolean> {
+    const key = `idem:entry:${barCloseTimeIso}`;
+    const result = await this.redis.get(key);
+    return result !== null;
+  }
+
   async setInflightTx(signature: string, ttlSeconds: number): Promise<void> {
     await this.redis.set(`tx:inflight:${signature}`, '1', {
       EX: ttlSeconds

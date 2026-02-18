@@ -1,7 +1,7 @@
 import { Firestore } from '@google-cloud/firestore';
 import { createClient } from 'redis';
 import type { ExecutionPort } from '../app/ports/execution_port';
-import { run4hCycle } from '../app/usecases/run_4h_cycle';
+import { runCycle as runCycleUsecase } from '../app/usecases/run_cycle';
 import { JupiterQuoteClient } from '../adapters/execution/jupiter_quote_client';
 import { JupiterSwapAdapter } from '../adapters/execution/jupiter_swap';
 import { PaperExecutionAdapter } from '../adapters/execution/paper_execution';
@@ -12,7 +12,7 @@ import { FirestoreRepository } from '../adapters/persistence/firestore_repo';
 import { FirestoreConfigRepository } from './config/firestore_config_repo';
 import { loadEnv } from './config/env';
 import { createLogger } from './logging/logger';
-import { createCron4h, type CronController } from './scheduler/cron_4h';
+import { createCronCycle, type CronController } from './scheduler/cron_cycle';
 
 export interface AppRuntime {
   start(): Promise<void>;
@@ -77,8 +77,16 @@ export async function bootstrap(): Promise<AppRuntime> {
     runs_collection: collections.runs
   });
 
-  const runCycle = async (): Promise<void> => {
-    const result = await run4hCycle({
+  const shouldSuppressRunCycleLog = (result: {
+    result: string;
+    summary: string;
+  }): boolean =>
+    result.result === 'SKIPPED_ENTRY' &&
+    (result.summary === 'SKIPPED_ENTRY: entry already evaluated for this bar' ||
+      result.summary === 'SKIPPED_ENTRY: idem entry key already exists for this bar');
+
+  const executeCycle = async (): Promise<void> => {
+    const result = await runCycleUsecase({
       execution,
       lock,
       logger,
@@ -86,7 +94,11 @@ export async function bootstrap(): Promise<AppRuntime> {
       persistence
     });
 
-    logger.info('run_4h_cycle finished', {
+    if (shouldSuppressRunCycleLog(result)) {
+      return;
+    }
+
+    logger.info('run_cycle finished', {
       run_id: result.run_id,
       result: result.result,
       summary: result.summary,
@@ -94,14 +106,27 @@ export async function bootstrap(): Promise<AppRuntime> {
     });
   };
 
+  const executeScheduledCycle = async (): Promise<void> => {
+    const now = new Date();
+    const isFiveMinuteWindow = now.getUTCMinutes() % 5 === 0;
+    if (!isFiveMinuteWindow) {
+      const openTrade = await persistence.findOpenTrade(startupConfig.pair);
+      if (!openTrade) {
+        return;
+      }
+    }
+
+    await executeCycle();
+  };
+
   let scheduler: CronController | null = null;
 
   return {
     async start() {
       logger.info('bot startup: run first cycle immediately');
-      await runCycle();
+      await executeCycle();
 
-      scheduler = createCron4h(runCycle, logger);
+      scheduler = createCronCycle(executeScheduledCycle, logger);
       scheduler.start();
     },
     async stop() {

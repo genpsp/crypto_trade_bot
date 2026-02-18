@@ -5,7 +5,7 @@ import type { MarketDataPort } from '../ports/market_data_port';
 import type { PersistencePort } from '../ports/persistence_port';
 import { evaluateEmaTrendPullbackV0 } from '../../domain/strategy/ema_trend_pullback_v0';
 import type { RunRecord } from '../../domain/model/types';
-import { buildRunId, getLastClosed4hBarClose, getUtcDayRange } from '../../domain/utils/time';
+import { buildRunId, getLastClosedBarClose, getUtcDayRange } from '../../domain/utils/time';
 import { roundTo } from '../../domain/utils/math';
 import { closePosition } from './close_position';
 import { openPosition } from './open_position';
@@ -15,7 +15,7 @@ const RUN_LOCK_TTL_SECONDS = 240;
 const ENTRY_IDEM_TTL_SECONDS = 12 * 60 * 60;
 const OHLCV_LIMIT = 300;
 
-export interface Run4hCycleDependencies {
+export interface RunCycleDependencies {
   execution: ExecutionPort;
   lock: LockPort;
   logger: LoggerPort;
@@ -24,17 +24,17 @@ export interface Run4hCycleDependencies {
   nowProvider?: () => Date;
 }
 
-export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<RunRecord> {
+export async function runCycle(dependencies: RunCycleDependencies): Promise<RunRecord> {
   const { execution, lock, logger, marketData, persistence, nowProvider } = dependencies;
 
   const runAt = nowProvider?.() ?? new Date();
-  const barCloseTime = getLastClosed4hBarClose(runAt);
-  const barCloseTimeIso = barCloseTime.toISOString();
+  const runAtIso = runAt.toISOString();
+  const provisionalBarCloseTimeIso = runAtIso;
 
   const run: RunRecord = {
-    run_id: buildRunId(barCloseTimeIso, runAt),
-    bar_close_time_iso: barCloseTimeIso,
-    executed_at_iso: runAt.toISOString(),
+    run_id: buildRunId(provisionalBarCloseTimeIso, runAt),
+    bar_close_time_iso: provisionalBarCloseTimeIso,
+    executed_at_iso: runAtIso,
     result: 'FAILED',
     summary: 'FAILED: run initialization'
   };
@@ -49,6 +49,11 @@ export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<
 
   try {
     const config = await persistence.getCurrentConfig();
+    const timeframe = config.signal_timeframe;
+    const barCloseTime = getLastClosedBarClose(runAt, timeframe);
+    const barCloseTimeIso = barCloseTime.toISOString();
+    run.run_id = buildRunId(barCloseTimeIso, runAt);
+    run.bar_close_time_iso = barCloseTimeIso;
     run.config_version = config.meta.config_version;
 
     if (!config.enabled) {
@@ -59,34 +64,21 @@ export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<
 
     const openTrade = await persistence.findOpenTrade(config.pair);
 
-    const bars = await marketData.fetch4hBars(config.pair, OHLCV_LIMIT);
-    const closedBars = bars.filter((bar) => bar.closeTime.getTime() <= barCloseTime.getTime());
-    const latestClosedBar = closedBars.at(-1);
-
-    if (!latestClosedBar) {
-      run.result = 'FAILED';
-      run.summary = 'FAILED: no closed bars available';
-      return run;
-    }
-
-    if (latestClosedBar.closeTime.getTime() !== barCloseTime.getTime()) {
-      run.result = 'FAILED';
-      run.summary = 'FAILED: market bar close does not match expected 4h close';
-      run.reason = `EXPECTED_${barCloseTimeIso}_GOT_${latestClosedBar.closeTime.toISOString()}`;
-      return run;
-    }
-
     if (openTrade) {
       run.trade_id = openTrade.trade_id;
-      const fallbackMarkPrice = bars.at(-1)?.close;
-      if (fallbackMarkPrice === undefined) {
+      const markPriceFromExecution = execution.getMarkPrice
+        ? await execution.getMarkPrice(config.pair)
+        : undefined;
+      const markPriceFromBars =
+        markPriceFromExecution === undefined
+          ? (await marketData.fetchBars(config.pair, timeframe, 1)).at(-1)?.close
+          : undefined;
+      const markPrice = markPriceFromExecution ?? markPriceFromBars;
+      if (markPrice === undefined) {
         run.result = 'FAILED';
-        run.summary = 'FAILED: no bars available for mark price';
+        run.summary = 'FAILED: no mark price available';
         return run;
       }
-      const markPrice = execution.getMarkPrice
-        ? await execution.getMarkPrice(config.pair)
-        : fallbackMarkPrice;
       const triggerReason =
         markPrice >= openTrade.position.take_profit_price
           ? 'TAKE_PROFIT'
@@ -147,6 +139,30 @@ export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<
       return run;
     }
 
+    const alreadyJudged = await lock.hasEntryAttempt(barCloseTimeIso);
+    if (alreadyJudged) {
+      run.result = 'SKIPPED_ENTRY';
+      run.summary = 'SKIPPED_ENTRY: entry already evaluated for this bar';
+      return run;
+    }
+
+    const bars = await marketData.fetchBars(config.pair, timeframe, OHLCV_LIMIT);
+    const closedBars = bars.filter((bar) => bar.closeTime.getTime() <= barCloseTime.getTime());
+    const latestClosedBar = closedBars.at(-1);
+
+    if (!latestClosedBar) {
+      run.result = 'FAILED';
+      run.summary = 'FAILED: no closed bars available';
+      return run;
+    }
+
+    if (latestClosedBar.closeTime.getTime() !== barCloseTime.getTime()) {
+      run.result = 'FAILED';
+      run.summary = `FAILED: market bar close does not match expected ${timeframe} close`;
+      run.reason = `EXPECTED_${barCloseTimeIso}_GOT_${latestClosedBar.closeTime.toISOString()}`;
+      return run;
+    }
+
     const { dayStartIso, dayEndIso } = getUtcDayRange(barCloseTime);
     const tradesToday = await persistence.countTradesForUtcDay(config.pair, dayStartIso, dayEndIso);
     if (tradesToday >= config.risk.max_trades_per_day) {
@@ -163,8 +179,21 @@ export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<
       exit: config.exit,
       execution: config.execution
     });
+    logger.info('strategy evaluation', {
+      bar_close_time_iso: barCloseTimeIso,
+      decision_type: decision.type,
+      summary: decision.summary,
+      reason: decision.type === 'NO_SIGNAL' ? decision.reason : undefined,
+      ema_fast: decision.ema_fast,
+      ema_slow: decision.ema_slow,
+      entry_price: decision.type === 'ENTER' ? decision.entry_price : undefined,
+      stop_price: decision.type === 'ENTER' ? decision.stop_price : undefined,
+      take_profit_price: decision.type === 'ENTER' ? decision.take_profit_price : undefined,
+      diagnostics: decision.diagnostics
+    });
 
     if (decision.type === 'NO_SIGNAL') {
+      await lock.markEntryAttempt(barCloseTimeIso, ENTRY_IDEM_TTL_SECONDS);
       run.result = 'NO_SIGNAL';
       run.summary = decision.summary;
       run.reason = decision.reason;
@@ -200,9 +229,9 @@ export async function run4hCycle(dependencies: Run4hCycleDependencies): Promise<
   } catch (error) {
     const errorMessage = toErrorMessage(error);
     run.result = 'FAILED';
-    run.summary = 'FAILED: unhandled run_4h_cycle error';
+    run.summary = 'FAILED: unhandled run_cycle error';
     run.reason = errorMessage;
-    logger.error('run_4h_cycle unhandled error', { error: errorMessage });
+    logger.error('run_cycle unhandled error', { error: errorMessage });
 
     return run;
   } finally {

@@ -3,14 +3,14 @@ import type { TradeState } from './trade_state';
 export type Network = 'mainnet-beta';
 export type Pair = 'SOL/USDC';
 export type Direction = 'LONG_ONLY';
-export type SignalTimeframe = '4h';
+export type SignalTimeframe = '2h' | '4h';
 
 export interface StrategyConfig {
   name: 'ema_trend_pullback_v0';
   ema_fast_period: number;
   ema_slow_period: number;
   swing_low_lookback_bars: number;
-  entry: 'ON_4H_CLOSE';
+  entry: 'ON_BAR_CLOSE';
 }
 
 export interface RiskConfig {
@@ -67,6 +67,7 @@ export interface EntrySignalDecision {
   entry_price: number;
   stop_price: number;
   take_profit_price: number;
+  diagnostics?: StrategyDiagnostics;
 }
 
 export interface NoSignalDecision {
@@ -75,9 +76,29 @@ export interface NoSignalDecision {
   reason: string;
   ema_fast?: number;
   ema_slow?: number;
+  diagnostics?: StrategyDiagnostics;
 }
 
 export type StrategyDecision = EntrySignalDecision | NoSignalDecision;
+
+export interface StrategyDiagnostics {
+  bars_count?: number;
+  minimum_bars_required?: number;
+  ema_fast?: number;
+  ema_slow?: number;
+  previous_close?: number;
+  previous_ema_fast?: number;
+  pullback_found?: boolean;
+  reclaim_found?: boolean;
+  distance_from_ema_fast_pct?: number;
+  rsi?: number;
+  atr?: number;
+  swing_low_stop?: number;
+  stop_candidate?: number;
+  final_stop?: number;
+  stop_distance_pct?: number;
+  take_profit_price?: number;
+}
 
 export interface TradeSignalSnapshot {
   summary: string;

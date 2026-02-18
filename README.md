@@ -1,8 +1,8 @@
 # crypto_trade_bot (v0)
 
-Solana 現物自動売買Bot（`SOL/USDC`、`LONG_ONLY`、`4h`）の v0 実装です。
+Solana 現物自動売買Bot（`SOL/USDC`、`LONG_ONLY`、`2h` デフォルト）の v0 実装です。
 
-- エントリー: 4h クローズ時に `EMA20 > EMA50`
+- エントリー: 設定タイムフレーム（`2h` / `4h`）のクローズ時に `EMA20 > EMA50`
 - 損切り: 直近 `N` 本のスイング安値
 - 利確: `2R` 全決済
 - 実行: Jupiter API で swap tx 生成、Solana 署名送信
@@ -47,13 +47,13 @@ Solana 現物自動売買Bot（`SOL/USDC`、`LONG_ONLY`、`4h`）の v0 実装�
   "network": "mainnet-beta",
   "pair": "SOL/USDC",
   "direction": "LONG_ONLY",
-  "signal_timeframe": "4h",
+  "signal_timeframe": "2h",
   "strategy": {
     "name": "ema_trend_pullback_v0",
     "ema_fast_period": 20,
     "ema_slow_period": 50,
     "swing_low_lookback_bars": 12,
-    "entry": "ON_4H_CLOSE"
+    "entry": "ON_BAR_CLOSE"
   },
   "risk": {
     "max_loss_per_trade_pct": 0.5,
@@ -72,7 +72,7 @@ Solana 現物自動売買Bot（`SOL/USDC`、`LONG_ONLY`、`4h`）の v0 実装�
   },
   "meta": {
     "config_version": 1,
-    "note": "v0: spot swap only, long only, 4h close entry, TP=2R all, notify=none"
+    "note": "v0: spot swap only, long only, 2h close entry, TP=2R all, notify=none"
   }
 }
 ```
@@ -123,7 +123,7 @@ docker compose up --build
 
 確認:
 
-- `paper_runs/{run_id}` に4h判定結果が残る
+- `paper_runs/{run_id}` にタイムフレーム判定結果が残る
 - `paper_trades/{trade_id}` に state遷移と `execution.order` / `execution.result` が残る
 
 ## 6. LIVE移行手順
@@ -156,7 +156,7 @@ bind mount で bot に渡します（相対パス可）。
 
 - `runs/{run_id}` に 5分ごとの実行結果が記録される
 - シグナル成立時に `trades/{trade_id}` が `CREATED -> SUBMITTED -> CONFIRMED` へ遷移
-- エグジット時に `CONFIRMED -> SUBMITTED -> CLOSED` へ遷移
+- エグジット時に `CONFIRMED -> CLOSED` へ遷移
 - 失敗時は `FAILED` と `execution.entry_error` / `execution.exit_error` が記録される
 
 ## 10. VPS 移植（docker compose）
