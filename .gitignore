@@ -5,3 +5,10 @@ npm-debug.log*
 coverage
 credentials/
 wallet.enc.json
+.venv/
+__pycache__/
+*.pyc
+research/data/raw/*.csv
+research/data/processed/*.json
+research/data/processed/*.csv
+research/notebooks/.ipynb_checkpoints/

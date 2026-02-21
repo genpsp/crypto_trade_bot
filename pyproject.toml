@@ -1,0 +1,6 @@
+[project]
+name = "crypto-trade-bot"
+version = "1.0.0"
+description = "Solana spot trading bot (Python migration)"
+requires-python = ">=3.12"
+
