@@ -141,6 +141,10 @@ class FakeSolanaSender:
         self.confirmed.append(signature)
         return SignatureConfirmation(confirmed=True)
 
+    def get_spl_token_balance_ui_amount(self, mint: str) -> float:
+        _ = mint
+        return 50.0
+
 
 @dataclass
 class MockServer:
@@ -320,6 +324,10 @@ class TradeExecutionApiTest(unittest.TestCase):
                 self.assertEqual(1, len(sender.sent))
 
                 trade = persistence.trades[opened.trade_id]
+                self.assertIn("entry_trigger_price", trade["position"])
+                self.assertIn("entry_price", trade["position"])
+                self.assertIn("result", trade["execution"])
+                self.assertEqual("ESTIMATED", trade["execution"]["result"]["status"])
                 close_price = float(trade["position"]["take_profit_price"])
                 closed = close_position(
                     ClosePositionDependencies(
@@ -338,6 +346,11 @@ class TradeExecutionApiTest(unittest.TestCase):
                 self.assertEqual("CLOSED", closed.status)
                 self.assertEqual("CLOSED", persistence.trades[opened.trade_id]["state"])
                 self.assertEqual(2, len(sender.sent))
+                closed_trade = persistence.trades[opened.trade_id]
+                self.assertIn("exit_trigger_price", closed_trade["position"])
+                self.assertIn("exit_price", closed_trade["position"])
+                self.assertIn("exit_result", closed_trade["execution"])
+                self.assertEqual("ESTIMATED", closed_trade["execution"]["exit_result"]["status"])
 
                 assert server.requests is not None
                 quote_calls = [

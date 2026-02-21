@@ -72,6 +72,53 @@ class SolanaSender:
     def get_public_key_base58(self) -> str:
         return str(self.keypair.pubkey())
 
+    def get_spl_token_balance_ui_amount(self, mint: str) -> float:
+        owner = self.get_public_key_base58()
+        result = self._rpc(
+            "getTokenAccountsByOwner",
+            [owner, {"mint": mint}, {"encoding": "jsonParsed"}],
+        )
+        if not isinstance(result, dict):
+            return 0.0
+        value = result.get("value")
+        if not isinstance(value, list):
+            return 0.0
+
+        total_ui_amount = 0.0
+        for account in value:
+            if not isinstance(account, dict):
+                continue
+            account_obj = account.get("account")
+            if not isinstance(account_obj, dict):
+                continue
+            data = account_obj.get("data")
+            if not isinstance(data, dict):
+                continue
+            parsed = data.get("parsed")
+            if not isinstance(parsed, dict):
+                continue
+            info = parsed.get("info")
+            if not isinstance(info, dict):
+                continue
+            token_amount = info.get("tokenAmount")
+            if not isinstance(token_amount, dict):
+                continue
+
+            ui_amount = token_amount.get("uiAmount")
+            if isinstance(ui_amount, (int, float)):
+                total_ui_amount += float(ui_amount)
+                continue
+
+            raw_amount = token_amount.get("amount")
+            decimals = token_amount.get("decimals")
+            if isinstance(raw_amount, str) and isinstance(decimals, int) and decimals >= 0:
+                try:
+                    total_ui_amount += int(raw_amount) / (10**decimals)
+                except Exception:
+                    continue
+
+        return total_ui_amount
+
     def _rpc(self, method: str, params: list[Any]) -> Any:
         payload = {
             "jsonrpc": "2.0",

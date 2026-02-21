@@ -73,3 +73,8 @@ class PaperExecutionAdapter(ExecutionPort):
         )
         return quote.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
 
+    def get_available_quote_usdc(self, pair: str) -> float:
+        if pair != "SOL/USDC":
+            raise ValueError(f"Unsupported pair for quote balance: {pair}")
+        # Paper mode uses virtual capital baseline for all-in sizing simulation.
+        return 100.0

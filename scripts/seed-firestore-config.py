@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -17,6 +18,11 @@ from pybot.infra.config.schema import parse_config
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Seed Firestore config/current")
     parser.add_argument("--mode", choices=["PAPER", "LIVE"], default="LIVE")
+    parser.add_argument(
+        "--config-path",
+        type=Path,
+        help="Path to JSON config to seed instead of built-in defaults",
+    )
     return parser.parse_args()
 
 
@@ -45,7 +51,7 @@ def build_default_config(mode: str) -> dict:
         "execution": {
             "mode": mode,
             "swap_provider": "JUPITER",
-            "slippage_bps": 100,
+            "slippage_bps": 15,
             "min_notional_usdc": 20,
             "only_direct_routes": False,
         },
@@ -66,10 +72,19 @@ def main() -> int:
     if not credentials_path:
         raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS is required")
 
-    config = parse_config(build_default_config(args.mode))
+    if args.config_path:
+        raw = json.loads(args.config_path.read_text(encoding="utf-8"))
+        config = parse_config(raw)
+    else:
+        config = parse_config(build_default_config(args.mode))
+
     firestore = Client.from_service_account_json(credentials_path)
     firestore.document("config/current").set(config)
-    print(f"Seeded config/current with execution.mode={config['execution']['mode']}")
+    source = str(args.config_path) if args.config_path else "built-in defaults"
+    print(
+        "Seeded config/current "
+        f"with execution.mode={config['execution']['mode']} from {source}"
+    )
     return 0
 
 

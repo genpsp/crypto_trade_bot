@@ -22,7 +22,6 @@ USDC_ATOMIC_MULTIPLIER = 1_000_000
 SOL_ATOMIC_MULTIPLIER = 1_000_000_000
 TX_CONFIRM_TIMEOUT_MS = 75_000
 TX_INFLIGHT_TTL_SECONDS = 180
-MIN_EFFECTIVE_NOTIONAL_USDC = 10.0
 
 
 @dataclass
@@ -58,7 +57,18 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
 
     trade_id = build_trade_id(bar_close_time_iso)
     now = now_iso()
-    base_notional_usdc = float(config["execution"]["min_notional_usdc"])
+    configured_min_notional_usdc = float(config["execution"]["min_notional_usdc"])
+    quote_balance_error: str | None = None
+    try:
+        available_quote_usdc = float(execution.get_available_quote_usdc(config["pair"]))
+    except Exception as error:
+        quote_balance_error = f"failed to fetch quote balance: {to_error_message(error)}"
+        logger.error(
+            "failed to fetch quote balance",
+            {"pair": config["pair"], "error": to_error_message(error)},
+        )
+        available_quote_usdc = 0.0
+    base_notional_usdc = round_to(available_quote_usdc, 6)
     volatility_regime = "NORMAL"
     position_size_multiplier = 1.0
     diagnostics = signal.diagnostics or {}
@@ -69,10 +79,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
     if isinstance(raw_multiplier, (int, float)) and raw_multiplier > 0:
         position_size_multiplier = float(raw_multiplier)
 
-    effective_notional_usdc = min(
-        base_notional_usdc,
-        max(round_to(base_notional_usdc * position_size_multiplier, 2), MIN_EFFECTIVE_NOTIONAL_USDC),
-    )
+    effective_notional_usdc = round_to(base_notional_usdc * position_size_multiplier, 2)
 
     trade: TradeRecord = {
         "trade_id": trade_id,
@@ -103,6 +110,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
         "position": {
             "status": "OPEN",
             "quantity_sol": 0.0,
+            "entry_trigger_price": signal.entry_price,
             "entry_price": signal.entry_price,
             "stop_price": signal.stop_price,
             "take_profit_price": signal.take_profit_price,
@@ -133,10 +141,49 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             ),
         )
 
-    if base_notional_usdc <= 0:
+    if configured_min_notional_usdc <= 0:
         trade["execution"]["entry_error"] = "min_notional_usdc must be > 0"
         move_state("FAILED")
         return OpenPositionResult(status="FAILED", trade_id=trade_id, summary="FAILED: invalid min_notional_usdc")
+
+    if quote_balance_error:
+        trade["execution"]["entry_error"] = quote_balance_error
+        move_state("FAILED")
+        return OpenPositionResult(
+            status="FAILED",
+            trade_id=trade_id,
+            summary=f"FAILED: {trade['execution']['entry_error']}",
+        )
+
+    if base_notional_usdc <= 0:
+        trade["execution"]["entry_error"] = "quote balance is 0"
+        move_state("FAILED")
+        return OpenPositionResult(
+            status="FAILED",
+            trade_id=trade_id,
+            summary=f"FAILED: {trade['execution']['entry_error']}",
+        )
+
+    if base_notional_usdc < configured_min_notional_usdc:
+        trade["execution"]["entry_error"] = (
+            f"insufficient quote balance: {base_notional_usdc} < min_notional_usdc "
+            f"{configured_min_notional_usdc}"
+        )
+        move_state("FAILED")
+        return OpenPositionResult(
+            status="FAILED",
+            trade_id=trade_id,
+            summary=f"FAILED: {trade['execution']['entry_error']}",
+        )
+
+    if effective_notional_usdc <= 0:
+        trade["execution"]["entry_error"] = "effective_notional_usdc must be > 0"
+        move_state("FAILED")
+        return OpenPositionResult(
+            status="FAILED",
+            trade_id=trade_id,
+            summary=f"FAILED: {trade['execution']['entry_error']}",
+        )
 
     amount_atomic = int(round(effective_notional_usdc * USDC_ATOMIC_MULTIPLIER))
 
@@ -153,8 +200,22 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
         trade["execution"]["entry_tx_signature"] = submission.tx_signature
         if submission.order:
             trade["execution"]["order"] = submission.order
-        if submission.result:
-            trade["execution"]["result"] = submission.result
+        entry_result = submission.result
+        if entry_result is None:
+            estimated_spent_quote_usdc = submission.in_amount_atomic / USDC_ATOMIC_MULTIPLIER
+            estimated_filled_base_sol = submission.out_amount_atomic / SOL_ATOMIC_MULTIPLIER
+            estimated_avg_fill_price = (
+                estimated_spent_quote_usdc / estimated_filled_base_sol
+                if estimated_filled_base_sol > 0
+                else 0
+            )
+            entry_result = {
+                "status": "ESTIMATED",
+                "avg_fill_price": estimated_avg_fill_price,
+                "spent_quote_usdc": estimated_spent_quote_usdc,
+                "filled_base_sol": estimated_filled_base_sol,
+            }
+        trade["execution"]["result"] = entry_result
         move_state("SUBMITTED")
 
         lock.set_inflight_tx(submission.tx_signature, TX_INFLIGHT_TTL_SECONDS)
@@ -172,14 +233,14 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
 
         fallback_received_sol = submission.out_amount_atomic / SOL_ATOMIC_MULTIPLIER
         received_sol = (
-            float(submission.result["filled_base_sol"])
-            if submission.result and "filled_base_sol" in submission.result
+            float(entry_result["filled_base_sol"])
+            if "filled_base_sol" in entry_result
             else fallback_received_sol
         )
         if not isinstance(received_sol, (int, float)) or received_sol <= 0:
             quantity_error = (
                 "filled quantity is 0: "
-                f"filled_base_sol={submission.result.get('filled_base_sol') if submission.result else 'n/a'}, "
+                f"filled_base_sol={entry_result.get('filled_base_sol')}, "
                 f"out_amount_atomic={submission.out_amount_atomic}"
             )
             trade["execution"]["entry_error"] = quantity_error
@@ -188,7 +249,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 {
                     "trade_id": trade_id,
                     "tx_signature": submission.tx_signature,
-                    "filled_base_sol": submission.result.get("filled_base_sol") if submission.result else None,
+                    "filled_base_sol": entry_result.get("filled_base_sol"),
                     "out_amount_atomic": submission.out_amount_atomic,
                 },
             )
@@ -197,8 +258,8 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
 
         fallback_entry_price = effective_notional_usdc / received_sol
         resolved_entry_price = (
-            float(submission.result["avg_fill_price"])
-            if submission.result and "avg_fill_price" in submission.result
+            float(entry_result["avg_fill_price"])
+            if "avg_fill_price" in entry_result
             else fallback_entry_price
         )
         swing_stop = float(signal.stop_price)

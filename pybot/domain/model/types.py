@@ -140,7 +140,7 @@ class TradeOrderSnapshot(TypedDict):
 
 
 class TradeResultSnapshot(TypedDict):
-    status: Literal["SIMULATED"]
+    status: Literal["SIMULATED", "ESTIMATED"]
     avg_fill_price: float
     spent_quote_usdc: float
     filled_base_sol: float
@@ -161,6 +161,7 @@ class TradeExecutionSnapshot(TypedDict, total=False):
 class TradePositionSnapshot(TypedDict, total=False):
     status: Literal["OPEN", "CLOSED"]
     quantity_sol: float
+    entry_trigger_price: float
     entry_price: float
     stop_price: float
     take_profit_price: float

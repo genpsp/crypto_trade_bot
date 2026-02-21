@@ -110,8 +110,20 @@ def close_position(
         trade["execution"]["exit_tx_signature"] = submission.tx_signature
         if submission.order:
             trade["execution"]["exit_order"] = submission.order
-        if submission.result:
-            trade["execution"]["exit_result"] = submission.result
+        exit_result = submission.result
+        if exit_result is None:
+            estimated_input_sol = submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER
+            estimated_output_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
+            estimated_avg_fill_price = (
+                estimated_output_usdc / estimated_input_sol if estimated_input_sol > 0 else close_price
+            )
+            exit_result = {
+                "status": "ESTIMATED",
+                "avg_fill_price": estimated_avg_fill_price,
+                "spent_quote_usdc": estimated_output_usdc,
+                "filled_base_sol": estimated_input_sol,
+            }
+        trade["execution"]["exit_result"] = exit_result
         trade["execution"]["exit_submission_state"] = "SUBMITTED"
         trade["updated_at"] = now_iso()
         persistence.update_trade(
@@ -137,8 +149,8 @@ def close_position(
         output_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
         fallback_exit_price = output_usdc / input_sol if input_sol > 0 else close_price
         resolved_exit_price = (
-            float(submission.result["avg_fill_price"])
-            if submission.result and "avg_fill_price" in submission.result
+            float(exit_result["avg_fill_price"])
+            if "avg_fill_price" in exit_result
             else fallback_exit_price
         )
 
