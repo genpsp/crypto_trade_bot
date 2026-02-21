@@ -17,6 +17,11 @@ ALLOWED_TOP_LEVEL_KEYS = {
     "meta",
 }
 
+DEFAULT_VOLATILE_ATR_PCT_THRESHOLD = 1.30
+DEFAULT_STORM_ATR_PCT_THRESHOLD = 1.40
+DEFAULT_VOLATILE_SIZE_MULTIPLIER = 0.75
+DEFAULT_STORM_SIZE_MULTIPLIER = 0.50
+
 
 def _require(condition: bool, message: str) -> None:
     if not condition:
@@ -54,6 +59,36 @@ def parse_config(data: Any) -> BotConfig:
     _require(
         isinstance(risk.get("max_trades_per_day"), int) and risk["max_trades_per_day"] > 0,
         "risk.max_trades_per_day must be positive int",
+    )
+    volatile_atr_pct_threshold = risk.get(
+        "volatile_atr_pct_threshold", DEFAULT_VOLATILE_ATR_PCT_THRESHOLD
+    )
+    storm_atr_pct_threshold = risk.get("storm_atr_pct_threshold", DEFAULT_STORM_ATR_PCT_THRESHOLD)
+    volatile_size_multiplier = risk.get("volatile_size_multiplier", DEFAULT_VOLATILE_SIZE_MULTIPLIER)
+    storm_size_multiplier = risk.get("storm_size_multiplier", DEFAULT_STORM_SIZE_MULTIPLIER)
+    _require(
+        isinstance(volatile_atr_pct_threshold, (int, float)) and volatile_atr_pct_threshold > 0,
+        "risk.volatile_atr_pct_threshold must be positive",
+    )
+    _require(
+        isinstance(storm_atr_pct_threshold, (int, float)) and storm_atr_pct_threshold > 0,
+        "risk.storm_atr_pct_threshold must be positive",
+    )
+    _require(
+        storm_atr_pct_threshold >= volatile_atr_pct_threshold,
+        "risk.storm_atr_pct_threshold must be >= risk.volatile_atr_pct_threshold",
+    )
+    _require(
+        isinstance(volatile_size_multiplier, (int, float)) and 0 < volatile_size_multiplier <= 1,
+        "risk.volatile_size_multiplier must be > 0 and <= 1",
+    )
+    _require(
+        isinstance(storm_size_multiplier, (int, float)) and 0 < storm_size_multiplier <= 1,
+        "risk.storm_size_multiplier must be > 0 and <= 1",
+    )
+    _require(
+        storm_size_multiplier <= volatile_size_multiplier,
+        "risk.storm_size_multiplier must be <= risk.volatile_size_multiplier",
     )
 
     execution = data.get("execution")
@@ -108,6 +143,10 @@ def parse_config(data: Any) -> BotConfig:
         "risk": {
             "max_loss_per_trade_pct": float(risk["max_loss_per_trade_pct"]),
             "max_trades_per_day": risk["max_trades_per_day"],
+            "volatile_atr_pct_threshold": float(volatile_atr_pct_threshold),
+            "storm_atr_pct_threshold": float(storm_atr_pct_threshold),
+            "volatile_size_multiplier": float(volatile_size_multiplier),
+            "storm_size_multiplier": float(storm_size_multiplier),
         },
         "execution": {
             "mode": mode,
@@ -126,4 +165,3 @@ def parse_config(data: Any) -> BotConfig:
         },
     }
     return parsed
-

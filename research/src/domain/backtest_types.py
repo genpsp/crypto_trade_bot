@@ -16,7 +16,11 @@ class BacktestTrade:
     exit_price: float | None
     exit_reason: ExitReason
     pnl_pct: float | None
+    scaled_pnl_pct: float | None
     r_multiple: float | None
+    position_size_multiplier: float | None
+    base_notional_usdc: float | None
+    effective_notional_usdc: float | None
     holding_bars: int | None
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,6 +39,8 @@ class BacktestSummary:
     win_rate_pct: float
     average_pnl_pct: float
     total_pnl_pct: float
+    average_scaled_pnl_pct: float
+    total_scaled_pnl_pct: float
     average_r_multiple: float
     first_bar_close_time: str
     last_bar_close_time: str

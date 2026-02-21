@@ -20,14 +20,32 @@ from pybot.domain.risk.swing_low_stop import (
     tighten_stop_for_long,
 )
 
+# 押し目判定に使う過去バー本数、上げると押し目検知が増えやすくなり、エントリー機会が増える
 PULLBACK_LOOKBACK_BARS = 4
+# EMAからの乖離許容(%)、上げると高値追いエントリーが増え、下げると厳格になる
 MAX_DISTANCE_FROM_EMA_FAST_PCT = 1.2
+# 最低ストップ幅(%)、上げると近すぎるストップをより弾き、下げるとエントリーが増える
 MIN_STOP_DISTANCE_PCT = 0.4
+# RSI計算期間、上げると滑らかで遅く、下げると反応が速くノイズに敏感になる
 RSI_PERIOD = 14
+# RSI下限、上げると弱い局面をより弾いてエントリー減、下げるとエントリー増
 RSI_LOWER_BOUND = 45
+# RSI上限、上げると過熱局面の許容が広がりエントリー増、下げると過熱回避が強くなる
 RSI_UPPER_BOUND = 70
+# ATR計算期間、上げるとボラ判定が安定、下げると短期変動に敏感になる
 ATR_PERIOD = 14
+# ATRストップ係数、上げるとATR基準が遠くなりATR競合で見送りが増えやすく、下げると逆になる
 ATR_STOP_MULTIPLIER = 2
+
+
+def _resolve_position_size_multiplier(atr_pct: float | None, risk: RiskConfig) -> tuple[str, float]:
+    if atr_pct is None or not math.isfinite(atr_pct):
+        return "NORMAL", 1.0
+    if atr_pct >= risk["storm_atr_pct_threshold"]:
+        return "STORM", risk["storm_size_multiplier"]
+    if atr_pct >= risk["volatile_atr_pct_threshold"]:
+        return "VOLATILE", risk["volatile_size_multiplier"]
+    return "NORMAL", 1.0
 
 
 def _no_signal(
@@ -223,9 +241,14 @@ def evaluate_ema_trend_pullback_v0(
     stop_candidate = tighten_stop_for_long(entry_price, swing_low_stop, risk["max_loss_per_trade_pct"])
     atr_values = atr_series(highs, lows, closes, ATR_PERIOD)
     latest_atr = atr_values[-1] if atr_values else None
+    atr_pct = ((latest_atr / entry_price) * 100) if latest_atr is not None else None
+    volatility_regime, position_size_multiplier = _resolve_position_size_multiplier(atr_pct, risk)
     diagnostics["swing_low_stop"] = swing_low_stop
     diagnostics["stop_candidate"] = stop_candidate
     diagnostics["atr"] = latest_atr
+    diagnostics["atr_pct"] = atr_pct
+    diagnostics["volatility_regime"] = volatility_regime
+    diagnostics["position_size_multiplier"] = position_size_multiplier
     if latest_atr is not None and math.isfinite(latest_atr) and latest_atr > 0:
         atr_stop = entry_price - latest_atr * ATR_STOP_MULTIPLIER
         if atr_stop < stop_candidate:
@@ -265,7 +288,11 @@ def evaluate_ema_trend_pullback_v0(
     diagnostics["take_profit_price"] = take_profit_price
 
     return _entry_signal(
-        f"ENTER: trend ok + pullback/reclaim, entry={entry_price:.4f}, stop={final_stop:.4f}, tp={take_profit_price:.4f}, rsi={rsi_value:.2f}",
+        (
+            "ENTER: trend ok + pullback/reclaim, "
+            f"entry={entry_price:.4f}, stop={final_stop:.4f}, tp={take_profit_price:.4f}, "
+            f"rsi={rsi_value:.2f}, regime={volatility_regime}, size_x={position_size_multiplier:.2f}"
+        ),
         ema_fast=ema_fast,
         ema_slow=ema_slow,
         entry_price=entry_price,
@@ -273,4 +300,3 @@ def evaluate_ema_trend_pullback_v0(
         take_profit_price=take_profit_price,
         diagnostics=diagnostics,
     )
-

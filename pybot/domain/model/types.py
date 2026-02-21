@@ -21,6 +21,10 @@ class StrategyConfig(TypedDict):
 class RiskConfig(TypedDict):
     max_loss_per_trade_pct: float
     max_trades_per_day: int
+    volatile_atr_pct_threshold: float
+    storm_atr_pct_threshold: float
+    volatile_size_multiplier: float
+    storm_size_multiplier: float
 
 
 class ExecutionConfig(TypedDict):
@@ -65,6 +69,9 @@ class OhlcvBar:
     volume: float
 
 
+VolatilityRegime = Literal["NORMAL", "VOLATILE", "STORM"]
+
+
 class StrategyDiagnostics(TypedDict, total=False):
     bars_count: int
     minimum_bars_required: int
@@ -82,6 +89,9 @@ class StrategyDiagnostics(TypedDict, total=False):
     final_stop: float
     stop_distance_pct: float
     take_profit_price: float
+    atr_pct: float
+    volatility_regime: VolatilityRegime
+    position_size_multiplier: float
 
 
 @dataclass
@@ -205,6 +215,7 @@ class RunRecord(TypedDict, total=False):
     latest_run_id: str
     config_version: int
     trade_id: str
+    metrics: dict[str, Any]
 
 
 def decision_to_dict(decision: StrategyDecision) -> dict[str, Any]:

@@ -16,7 +16,7 @@ from pybot.infra.config.schema import parse_config
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Seed Firestore config/current")
-    parser.add_argument("--mode", choices=["PAPER", "LIVE"], default="PAPER")
+    parser.add_argument("--mode", choices=["PAPER", "LIVE"], default="LIVE")
     return parser.parse_args()
 
 
@@ -29,20 +29,24 @@ def build_default_config(mode: str) -> dict:
         "signal_timeframe": "2h",
         "strategy": {
             "name": "ema_trend_pullback_v0",
-            "ema_fast_period": 12,
-            "ema_slow_period": 34,
-            "swing_low_lookback_bars": 12,
+            "ema_fast_period": 5,
+            "ema_slow_period": 13,
+            "swing_low_lookback_bars": 6,
             "entry": "ON_BAR_CLOSE",
         },
         "risk": {
-            "max_loss_per_trade_pct": 0.5,
-            "max_trades_per_day": 1,
+            "max_loss_per_trade_pct": 3.0,
+            "max_trades_per_day": 2,
+            "volatile_atr_pct_threshold": 1.3,
+            "storm_atr_pct_threshold": 1.4,
+            "volatile_size_multiplier": 0.75,
+            "storm_size_multiplier": 0.5,
         },
         "execution": {
             "mode": mode,
             "swap_provider": "JUPITER",
-            "slippage_bps": 50,
-            "min_notional_usdc": 30,
+            "slippage_bps": 100,
+            "min_notional_usdc": 20,
             "only_direct_routes": False,
         },
         "exit": {

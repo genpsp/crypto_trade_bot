@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Callable
+from typing import Any, Callable
 
 from pybot.app.ports.execution_port import ExecutionPort
 from pybot.app.ports.lock_port import LockPort
@@ -38,6 +38,12 @@ class RunCycleDependencies:
     market_data: MarketDataPort
     persistence: PersistencePort
     now_provider: Callable[[], datetime] | None = None
+
+
+def _round_metric(value: Any, digits: int = 6) -> float | None:
+    if isinstance(value, (int, float)):
+        return round_to(float(value), digits)
+    return None
 
 
 def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
@@ -99,6 +105,16 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                 trigger_reason = "TAKE_PROFIT"
             elif mark_price <= open_trade["position"]["stop_price"]:
                 trigger_reason = "STOP_LOSS"
+            run["metrics"] = {
+                "phase": "EXIT_CHECK",
+                "mark_price": round_to(mark_price, 6),
+                "entry_price": _round_metric(open_trade.get("position", {}).get("entry_price")),
+                "stop_price": _round_metric(open_trade.get("position", {}).get("stop_price")),
+                "take_profit_price": _round_metric(open_trade.get("position", {}).get("take_profit_price")),
+                "quantity_sol": _round_metric(open_trade.get("position", {}).get("quantity_sol"), 9),
+                "trigger_reason": trigger_reason,
+                "bar_close_time_iso": bar_close_time_iso,
+            }
 
             logger.info(
                 "exit check",
@@ -146,6 +162,11 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
         if already_judged:
             run["result"] = "SKIPPED_ENTRY"
             run["summary"] = "SKIPPED_ENTRY: entry already evaluated for this bar"
+            run["metrics"] = {
+                "phase": "ENTRY_CHECK",
+                "bar_close_time_iso": bar_close_time_iso,
+                "entry_idem": "already_judged",
+            }
             return run
 
         bars = market_data.fetch_bars(config["pair"], timeframe, OHLCV_LIMIT)
@@ -167,6 +188,13 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
 
         day_start_iso, day_end_iso = get_utc_day_range(bar_close_time)
         trades_today = persistence.count_trades_for_utc_day(config["pair"], day_start_iso, day_end_iso)
+        run["metrics"] = {
+            "phase": "ENTRY_CHECK",
+            "bar_close_price": round_to(latest_closed_bar.close, 6),
+            "bar_close_time_iso": bar_close_time_iso,
+            "trades_today": trades_today,
+            "max_trades_per_day": config["risk"]["max_trades_per_day"],
+        }
         if trades_today >= config["risk"]["max_trades_per_day"]:
             run["result"] = "SKIPPED"
             run["summary"] = "SKIPPED: max_trades_per_day reached"
@@ -195,6 +223,32 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                 "diagnostics": decision.diagnostics,
             },
         )
+        diagnostics = decision.diagnostics or {}
+        run["metrics"] = {
+            "phase": "ENTRY_CHECK",
+            "bar_close_price": round_to(latest_closed_bar.close, 6),
+            "bar_close_time_iso": bar_close_time_iso,
+            "decision_type": decision.type,
+            "ema_fast": _round_metric(decision.ema_fast),
+            "ema_slow": _round_metric(decision.ema_slow),
+            "entry_price": _round_metric(decision.entry_price) if decision.type == "ENTER" else None,
+            "stop_price": _round_metric(decision.stop_price) if decision.type == "ENTER" else None,
+            "take_profit_price": _round_metric(decision.take_profit_price) if decision.type == "ENTER" else None,
+            "rsi": _round_metric(diagnostics.get("rsi"), 4),
+            "atr": _round_metric(diagnostics.get("atr"), 6),
+            "atr_pct": _round_metric(diagnostics.get("atr_pct"), 4),
+            "distance_from_ema_fast_pct": _round_metric(
+                diagnostics.get("distance_from_ema_fast_pct"),
+                4,
+            ),
+            "stop_distance_pct": _round_metric(diagnostics.get("stop_distance_pct"), 4),
+            "volatility_regime": diagnostics.get("volatility_regime"),
+            "position_size_multiplier": _round_metric(
+                diagnostics.get("position_size_multiplier"),
+                4,
+            ),
+            "reason": decision.reason if decision.type == "NO_SIGNAL" else None,
+        }
 
         if decision.type == "NO_SIGNAL":
             lock.mark_entry_attempt(bar_close_time_iso, ENTRY_IDEM_TTL_SECONDS)
@@ -207,6 +261,11 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
         if not marked:
             run["result"] = "SKIPPED_ENTRY"
             run["summary"] = "SKIPPED_ENTRY: idem entry key already exists for this bar"
+            run["metrics"] = {
+                "phase": "ENTRY_CHECK",
+                "bar_close_time_iso": bar_close_time_iso,
+                "entry_idem": "already_marked",
+            }
             return run
 
         opened = open_position(

@@ -228,7 +228,14 @@ def _build_config() -> BotConfig:
             "swing_low_lookback_bars": 12,
             "entry": "ON_BAR_CLOSE",
         },
-        "risk": {"max_loss_per_trade_pct": 0.5, "max_trades_per_day": 1},
+        "risk": {
+            "max_loss_per_trade_pct": 0.5,
+            "max_trades_per_day": 1,
+            "volatile_atr_pct_threshold": 1.3,
+            "storm_atr_pct_threshold": 1.4,
+            "volatile_size_multiplier": 0.75,
+            "storm_size_multiplier": 0.5,
+        },
         "execution": {
             "mode": "LIVE",
             "swap_provider": "JUPITER",

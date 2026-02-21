@@ -22,6 +22,7 @@ USDC_ATOMIC_MULTIPLIER = 1_000_000
 SOL_ATOMIC_MULTIPLIER = 1_000_000_000
 TX_CONFIRM_TIMEOUT_MS = 75_000
 TX_INFLIGHT_TTL_SECONDS = 180
+MIN_EFFECTIVE_NOTIONAL_USDC = 10.0
 
 
 @dataclass
@@ -57,6 +58,21 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
 
     trade_id = build_trade_id(bar_close_time_iso)
     now = now_iso()
+    base_notional_usdc = float(config["execution"]["min_notional_usdc"])
+    volatility_regime = "NORMAL"
+    position_size_multiplier = 1.0
+    diagnostics = signal.diagnostics or {}
+    raw_regime = diagnostics.get("volatility_regime")
+    if isinstance(raw_regime, str) and raw_regime in ("NORMAL", "VOLATILE", "STORM"):
+        volatility_regime = raw_regime
+    raw_multiplier = diagnostics.get("position_size_multiplier")
+    if isinstance(raw_multiplier, (int, float)) and raw_multiplier > 0:
+        position_size_multiplier = float(raw_multiplier)
+
+    effective_notional_usdc = min(
+        base_notional_usdc,
+        max(round_to(base_notional_usdc * position_size_multiplier, 2), MIN_EFFECTIVE_NOTIONAL_USDC),
+    )
 
     trade: TradeRecord = {
         "trade_id": trade_id,
@@ -72,8 +88,12 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             "ema_slow": signal.ema_slow,
         },
         "plan": {
-            "summary": f"Buy SOL with {config['execution']['min_notional_usdc']} USDC, stop={round_to(signal.stop_price, 4)}, tp={round_to(signal.take_profit_price, 4)}",
-            "notional_usdc": config["execution"]["min_notional_usdc"],
+            "summary": (
+                f"Buy SOL with {effective_notional_usdc} USDC "
+                f"(base={base_notional_usdc}, regime={volatility_regime}, size_x={position_size_multiplier:.2f}), "
+                f"stop={round_to(signal.stop_price, 4)}, tp={round_to(signal.take_profit_price, 4)}"
+            ),
+            "notional_usdc": effective_notional_usdc,
             "entry_price": signal.entry_price,
             "stop_price": signal.stop_price,
             "take_profit_price": signal.take_profit_price,
@@ -113,13 +133,12 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             ),
         )
 
-    notional_usdc = float(config["execution"]["min_notional_usdc"])
-    if notional_usdc <= 0:
+    if base_notional_usdc <= 0:
         trade["execution"]["entry_error"] = "min_notional_usdc must be > 0"
         move_state("FAILED")
         return OpenPositionResult(status="FAILED", trade_id=trade_id, summary="FAILED: invalid min_notional_usdc")
 
-    amount_atomic = int(round(notional_usdc * USDC_ATOMIC_MULTIPLIER))
+    amount_atomic = int(round(effective_notional_usdc * USDC_ATOMIC_MULTIPLIER))
 
     try:
         submission = execution.submit_swap(
@@ -176,7 +195,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             move_state("FAILED")
             return OpenPositionResult(status="FAILED", trade_id=trade_id, summary=f"FAILED: {quantity_error}")
 
-        fallback_entry_price = notional_usdc / received_sol
+        fallback_entry_price = effective_notional_usdc / received_sol
         resolved_entry_price = (
             float(submission.result["avg_fill_price"])
             if submission.result and "avg_fill_price" in submission.result
@@ -203,7 +222,8 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
         trade["plan"]["stop_price"] = trade["position"]["stop_price"]
         trade["plan"]["take_profit_price"] = trade["position"]["take_profit_price"]
         trade["plan"]["summary"] = (
-            f"Buy SOL with {config['execution']['min_notional_usdc']} USDC, "
+            f"Buy SOL with {effective_notional_usdc} USDC "
+            f"(base={base_notional_usdc}, regime={volatility_regime}, size_x={position_size_multiplier:.2f}), "
             f"entry={round_to(trade['position']['entry_price'], 4)}, "
             f"stop={round_to(trade['position']['stop_price'], 4)}, "
             f"tp={round_to(trade['position']['take_profit_price'], 4)}"
@@ -217,6 +237,9 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 "entry_price": trade["position"]["entry_price"],
                 "stop_price": trade["position"]["stop_price"],
                 "take_profit_price": trade["position"]["take_profit_price"],
+                "volatility_regime": volatility_regime,
+                "position_size_multiplier": position_size_multiplier,
+                "notional_usdc": effective_notional_usdc,
             },
         )
         return OpenPositionResult(
@@ -236,4 +259,3 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 {"trade_id": trade_id, "error": to_error_message(state_error)},
             )
         return OpenPositionResult(status="FAILED", trade_id=trade_id, summary=f"FAILED: {error_message}")
-
