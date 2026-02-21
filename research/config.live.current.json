@@ -1,0 +1,33 @@
+{
+  "network": "mainnet-beta",
+  "execution": {
+    "only_direct_routes": false,
+    "mode": "LIVE",
+    "min_notional_usdc": 20,
+    "slippage_bps": 100,
+    "swap_provider": "JUPITER"
+  },
+  "direction": "LONG_ONLY",
+  "exit": {
+    "stop": "SWING_LOW",
+    "take_profit_r_multiple": 1.5
+  },
+  "enabled": true,
+  "risk": {
+    "max_trades_per_day": 2,
+    "max_loss_per_trade_pct": 3
+  },
+  "strategy": {
+    "entry": "ON_BAR_CLOSE",
+    "ema_fast_period": 5,
+    "name": "ema_trend_pullback_v0",
+    "swing_low_lookback_bars": 6,
+    "ema_slow_period": 13
+  },
+  "meta": {
+    "config_version": 2,
+    "note": "v0: spot swap only, long only, 2h close entry, TP=1.5R, small live test"
+  },
+  "signal_timeframe": "2h",
+  "pair": "SOL/USDC"
+}

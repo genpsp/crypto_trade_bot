@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+from datetime import UTC, datetime
 from typing import Any
 
 from google.cloud.firestore import Client
@@ -20,6 +22,27 @@ def sanitize_firestore_value(value: Any) -> Any:
                 sanitized[key] = sanitize_firestore_value(nested_value)
         return sanitized
     return value
+
+
+SKIP_RUN_RESULTS = {"SKIPPED", "SKIPPED_ENTRY"}
+
+
+def _extract_run_date(run: RunRecord) -> str:
+    value = run.get("bar_close_time_iso") or run.get("executed_at_iso")
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.date().isoformat()
+        except ValueError:
+            pass
+    return datetime.now(tz=UTC).date().isoformat()
+
+
+def _build_skip_run_doc_id(run: RunRecord) -> str:
+    result = str(run.get("result", "SKIPPED")).lower()
+    reason_key = str(run.get("reason") or run.get("summary") or "UNKNOWN")
+    digest = hashlib.sha1(f"{result}|{reason_key}".encode("utf-8")).hexdigest()[:12]
+    return f"{result}_{digest}"
 
 
 class FirestoreRepository(PersistencePort):
@@ -73,6 +96,44 @@ class FirestoreRepository(PersistencePort):
         return len([doc for doc in snapshot if doc.to_dict().get("pair") == pair])
 
     def save_run(self, run: RunRecord) -> None:
-        self.firestore.collection(self.collections["runs"]).document(run["run_id"]).set(
-            sanitize_firestore_value(run)
+        runs_collection = self.firestore.collection(self.collections["runs"])
+        run_date = _extract_run_date(run)
+        day_ref = runs_collection.document(run_date)
+        day_ref.set(
+            sanitize_firestore_value(
+                {
+                    "run_date": run_date,
+                    "updated_at_iso": run.get("executed_at_iso"),
+                }
+            ),
+            merge=True,
         )
+
+        payload: RunRecord = dict(run)
+        payload["run_date"] = run_date
+
+        result = payload.get("result")
+        if result in SKIP_RUN_RESULTS:
+            skip_doc_id = _build_skip_run_doc_id(payload)
+            skip_ref = day_ref.collection("items").document(skip_doc_id)
+            existing = skip_ref.get()
+            if existing.exists:
+                existing_data = existing.to_dict() or {}
+                previous_count = int(existing_data.get("occurrence_count", 1))
+                payload["occurrence_count"] = previous_count + 1
+                payload["first_executed_at_iso"] = existing_data.get(
+                    "first_executed_at_iso", payload.get("executed_at_iso")
+                )
+                payload["last_executed_at_iso"] = payload.get("executed_at_iso")
+                payload["latest_run_id"] = payload.get("run_id")
+                skip_ref.set(sanitize_firestore_value(payload), merge=True)
+                return
+
+            payload["occurrence_count"] = 1
+            payload["first_executed_at_iso"] = payload.get("executed_at_iso")
+            payload["last_executed_at_iso"] = payload.get("executed_at_iso")
+            payload["latest_run_id"] = payload.get("run_id")
+            skip_ref.set(sanitize_firestore_value(payload))
+            return
+
+        day_ref.collection("items").document(run["run_id"]).set(sanitize_firestore_value(payload))

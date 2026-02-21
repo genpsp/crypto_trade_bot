@@ -81,6 +81,13 @@ def close_position(
         trade["state"] = next_state
         trade["updated_at"] = next_updated_at
 
+    def persist_execution_only() -> None:
+        trade["updated_at"] = now_iso()
+        persistence.update_trade(
+            trade["trade_id"],
+            strip_none({"execution": trade["execution"], "updated_at": trade["updated_at"]}),
+        )
+
     amount_atomic = int(trade["position"]["quantity_sol"] * SOL_ATOMIC_MULTIPLIER)
     if amount_atomic <= 0:
         trade["execution"]["exit_submission_state"] = "FAILED"
@@ -119,7 +126,7 @@ def close_position(
         if not confirmation.confirmed:
             trade["execution"]["exit_submission_state"] = "FAILED"
             trade["execution"]["exit_error"] = confirmation.error or "unknown confirmation error"
-            move_state("FAILED")
+            persist_execution_only()
             return ClosePositionResult(
                 status="FAILED",
                 trade_id=trade["trade_id"],
@@ -168,15 +175,14 @@ def close_position(
         trade["execution"]["exit_submission_state"] = "FAILED"
         trade["execution"]["exit_error"] = error_message
         try:
-            move_state("FAILED")
-        except Exception as state_error:
+            persist_execution_only()
+        except Exception as persist_error:
             logger.error(
-                "close_position state transition failed",
-                {"trade_id": trade["trade_id"], "error": to_error_message(state_error)},
+                "close_position execution persistence failed",
+                {"trade_id": trade["trade_id"], "error": to_error_message(persist_error)},
             )
         return ClosePositionResult(
             status="FAILED",
             trade_id=trade["trade_id"],
             summary=f"FAILED: {error_message}",
         )
-

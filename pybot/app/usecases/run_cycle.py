@@ -229,8 +229,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             persistence.save_run(run)
         except Exception as save_error:
             logger.error(
-                "failed to save runs/{run_id}",
+                "failed to save run record",
                 {"error": to_error_message(save_error), "run_id": run.get("run_id")},
             )
         lock.release_runner_lock()
-

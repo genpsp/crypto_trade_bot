@@ -34,15 +34,26 @@
 python -m research.scripts.fetch_ohlcv \
   --pair SOL/USDC \
   --timeframe 2h \
-  --limit 1000 \
+  --years 2 \
   --output research/data/raw/solusdc_2h.csv
 ```
 
+上記は初回に2年分をCSV保存し、2回目以降は既存CSVを再利用します。  
+強制再取得したい場合のみ `--refresh` を付けてください。
+
 ```bash
 python -m research.scripts.run_backtest \
-  --config research/config.example.json \
+  --config research/config.json \
   --bars research/data/raw/solusdc_2h.csv \
   --output research/data/processed/backtest_latest.json
 ```
 
-`--config` は `config/current` と同スキーマ JSON を使ってください。初期値は `research/config.example.json` をベースに調整できます。
+`--config` は `config/current` と同スキーマ JSON を使ってください。初期値は `research/config.json` をベースに調整できます。
+
+## Notebook で実行（コピペ不要）
+
+`jupyter lab` を起動したら `research/notebooks/backtest_playground.ipynb` を開いて、`Run -> Run All Cells` を実行してください。
+
+- パラメータはノート内の `Parameters` セルだけ編集
+- `REFRESH_DATA=False` なら既存CSVを再利用
+- 結果は `research/data/processed/backtest_latest.json` に保存

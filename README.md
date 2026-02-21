@@ -39,6 +39,13 @@ Node.js 実装を Python に全面移行した Solana 現物自動売買Bot で�
 - `trades`, `runs`（LIVE）
 - `paper_trades`, `paper_runs`（PAPER）
 
+`runs` / `paper_runs` は日付で分割して保存します:
+
+- `runs/{YYYY-MM-DD}/items/{run_doc_id}`（LIVE）
+- `paper_runs/{YYYY-MM-DD}/items/{run_doc_id}`（PAPER）
+
+同日・同理由の `SKIPPED` / `SKIPPED_ENTRY` は新規作成せず、同じ `run_doc_id` を更新して `occurrence_count` を加算します。
+
 ### 3.2 config/current 投入
 
 ```bash
@@ -109,8 +116,8 @@ docker compose up --build
 分析は `research/` に分離し、エントリー判定ロジックは `pybot` の戦略を直接再利用します。
 
 - データ取得:
-  - `python -m research.scripts.fetch_ohlcv --pair SOL/USDC --timeframe 2h --limit 1000 --output research/data/raw/solusdc_2h.csv`
+  - `python -m research.scripts.fetch_ohlcv --pair SOL/USDC --timeframe 2h --years 2 --output research/data/raw/solusdc_2h.csv`
 - バックテスト:
-  - `python -m research.scripts.run_backtest --config research/config.example.json --bars research/data/raw/solusdc_2h.csv --output research/data/processed/backtest_latest.json`
+  - `python -m research.scripts.run_backtest --config research/config.json --bars research/data/raw/solusdc_2h.csv --output research/data/processed/backtest_latest.json`
 
 詳細は `research/README.md` を参照してください。

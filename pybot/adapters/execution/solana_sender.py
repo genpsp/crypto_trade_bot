@@ -93,12 +93,13 @@ class SolanaSender:
         signed_tx = VersionedTransaction.populate(tx.message, [signature])
         wire_base64 = base64.b64encode(bytes(signed_tx)).decode("utf-8")
 
+        # Solana JSON-RPC standard method is sendTransaction.
         result = self._rpc(
-            "sendRawTransaction",
+            "sendTransaction",
             [wire_base64, {"encoding": "base64", "skipPreflight": False, "maxRetries": 3}],
         )
         if not isinstance(result, str):
-            raise RuntimeError("sendRawTransaction result is invalid")
+            raise RuntimeError("sendTransaction result is invalid")
 
         self.logger.info("Transaction submitted", {"signature": result})
         return result
@@ -130,4 +131,3 @@ class SolanaSender:
             confirmed=False,
             error=f"confirmation timeout after {timeout_ms}ms",
         )
-

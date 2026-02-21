@@ -195,9 +195,14 @@ class RunRecord(TypedDict, total=False):
     run_id: str
     bar_close_time_iso: str
     executed_at_iso: str
+    run_date: str
     result: RunResult
     summary: str
     reason: str
+    occurrence_count: int
+    first_executed_at_iso: str
+    last_executed_at_iso: str
+    latest_run_id: str
     config_version: int
     trade_id: str
 
@@ -223,4 +228,3 @@ def decision_to_dict(decision: StrategyDecision) -> dict[str, Any]:
         "ema_slow": decision.ema_slow,
         "diagnostics": decision.diagnostics,
     }
-
