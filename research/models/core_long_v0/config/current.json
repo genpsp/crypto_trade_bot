@@ -39,6 +39,7 @@
       "model_id": "core_long_v0",
       "enabled": true,
       "direction": "LONG_ONLY",
+      "wallet_key_path": "/run/secrets/wallet.core_long_v0.enc.json",
       "strategy": {
         "name": "ema_trend_pullback_v0",
         "ema_fast_period": 5,

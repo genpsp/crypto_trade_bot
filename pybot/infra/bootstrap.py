@@ -47,20 +47,21 @@ def bootstrap() -> AppRuntime:
     market_data = OhlcvProvider()
     quote_client = JupiterQuoteClient()
     paper_execution: ExecutionPort = PaperExecutionAdapter(quote_client, logger)
-    live_execution: ExecutionPort | None = None
+    live_execution_by_wallet: dict[str, ExecutionPort] = {}
 
-    def resolve_execution(mode: str) -> ExecutionPort:
-        nonlocal live_execution
+    def resolve_execution(mode: str, wallet_key_path: str) -> ExecutionPort:
         if mode == "PAPER":
             return paper_execution
+        live_execution = live_execution_by_wallet.get(wallet_key_path)
         if live_execution is None:
             sender = SolanaSender(
                 env.SOLANA_RPC_URL,
-                env.WALLET_KEY_PATH,
+                wallet_key_path,
                 env.WALLET_KEY_PASSPHRASE,
                 logger,
             )
             live_execution = JupiterSwapAdapter(quote_client, sender, logger)
+            live_execution_by_wallet[wallet_key_path] = live_execution
         return live_execution
 
     model_ids = config_repo.list_model_ids()
@@ -85,12 +86,14 @@ def bootstrap() -> AppRuntime:
         model = startup_config["models"][0]
         if not model["enabled"]:
             continue
-        mode = startup_config["execution"]["mode"]
+        execution_config = startup_config["execution"]
+        mode = execution_config["mode"]
+        wallet_key_path = model.get("wallet_key_path") or env.WALLET_KEY_PATH
 
         context = ModelRuntimeContext(
             model_id=model_id,
             pair=startup_config["pair"],
-            execution=resolve_execution(mode),
+            execution=resolve_execution(mode, wallet_key_path),
             persistence=FirestoreRepository(firestore, config_repo, mode=mode, model_id=model_id),
             lock=RedisLockAdapter(redis, logger, lock_namespace=model_id),
         )
@@ -101,6 +104,7 @@ def bootstrap() -> AppRuntime:
                 "mode": mode,
                 "direction": model["direction"],
                 "strategy": model["strategy"]["name"],
+                "wallet_key_path": wallet_key_path,
             }
         )
         logger.info(
@@ -112,6 +116,7 @@ def bootstrap() -> AppRuntime:
                 "strategy": model["strategy"]["name"],
                 "trades_path": f"models/{model_id}/{context.persistence.trades_collection_name}",
                 "runs_path": f"models/{model_id}/{context.persistence.runs_collection_name}",
+                "wallet_key_path": wallet_key_path,
             },
         )
 

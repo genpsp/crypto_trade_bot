@@ -39,6 +39,7 @@
       "model_id": "storm_short_v0",
       "enabled": false,
       "direction": "SHORT_ONLY",
+      "wallet_key_path": "/run/secrets/wallet.storm_short_v0.enc.json",
       "strategy": {
         "name": "storm_short_v0",
         "ema_fast_period": 4,

@@ -142,6 +142,7 @@ def seed_firestore_config(firestore: Client, config: dict) -> tuple[dict, int]:
     global_config, model_configs = split_global_and_models(config)
     for model_config in model_configs:
         model_id = model_config["model_id"]
+        model_wallet_key_path = model_config.get("wallet_key_path")
         model_scoped_config = {
             "enabled": model_config["enabled"],
             "network": global_config["network"],
@@ -154,13 +155,14 @@ def seed_firestore_config(firestore: Client, config: dict) -> tuple[dict, int]:
             "exit": model_config["exit"],
             "meta": global_config["meta"],
         }
-        firestore.document(f"models/{model_id}").set(
-            {
-                "model_id": model_id,
-                "enabled": model_config["enabled"],
-                "direction": model_config["direction"],
-            }
-        )
+        model_doc_payload = {
+            "model_id": model_id,
+            "enabled": model_config["enabled"],
+            "direction": model_config["direction"],
+        }
+        if isinstance(model_wallet_key_path, str) and model_wallet_key_path.strip() != "":
+            model_doc_payload["wallet_key_path"] = model_wallet_key_path.strip()
+        firestore.document(f"models/{model_id}").set(model_doc_payload)
         firestore.document(f"models/{model_id}/config/current").set(model_scoped_config)
 
     return global_config, len(model_configs)

@@ -138,6 +138,7 @@ def _parse_models(
                 "model_id": DEFAULT_MODEL_ID,
                 "enabled": True,
                 "direction": default_direction,  # type: ignore[typeddict-item]
+                "wallet_key_path": None,
                 "strategy": default_strategy,
                 "risk": default_risk,  # type: ignore[typeddict-item]
                 "exit": default_exit,  # type: ignore[typeddict-item]
@@ -158,11 +159,18 @@ def _parse_models(
         _require(direction in ("LONG_ONLY", "SHORT_ONLY"), f"{prefix}.direction must be LONG_ONLY or SHORT_ONLY")
         enabled = raw_model.get("enabled")
         _require(isinstance(enabled, bool), f"{prefix}.enabled must be boolean")
+        wallet_key_path = raw_model.get("wallet_key_path")
+        _require(
+            wallet_key_path is None
+            or (isinstance(wallet_key_path, str) and wallet_key_path.strip() != ""),
+            f"{prefix}.wallet_key_path must be non-empty string when set",
+        )
         parsed_models.append(
             {
                 "model_id": model_id,
                 "enabled": enabled,
                 "direction": direction,
+                "wallet_key_path": wallet_key_path.strip() if isinstance(wallet_key_path, str) else None,
                 "strategy": _parse_strategy(raw_model.get("strategy"), f"{prefix}.strategy"),
                 "risk": _parse_risk(raw_model.get("risk"), f"{prefix}.risk"),  # type: ignore[typeddict-item]
                 "exit": _parse_exit(raw_model.get("exit"), f"{prefix}.exit"),  # type: ignore[typeddict-item]

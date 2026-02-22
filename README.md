@@ -66,11 +66,11 @@ python scripts/seed-firestore-config.py --mode LIVE
 `id.json` または Phantom base58 秘密鍵を暗号化:
 
 ```bash
-python scripts/encrypt-wallet.py --input /path/to/id.json --output /path/to/wallet.enc.json --passphrase "your-passphrase"
+python scripts/encrypt-wallet.py --input /path/to/id.json --output /path/to/wallet.core_long_v0.enc.json --passphrase "your-passphrase"
 ```
 
 ```bash
-python scripts/encrypt-wallet.py --base58 "PHANTOM_BASE58_PRIVATE_KEY" --output /path/to/wallet.enc.json --passphrase "your-passphrase"
+python scripts/encrypt-wallet.py --base58 "PHANTOM_BASE58_PRIVATE_KEY" --output /path/to/wallet.core_long_v0.enc.json --passphrase "your-passphrase"
 ```
 
 ## 5. ローカル実行

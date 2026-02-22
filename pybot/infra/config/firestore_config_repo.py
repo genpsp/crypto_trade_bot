@@ -45,11 +45,17 @@ class FirestoreConfigRepository:
         if model_data.get("direction") in ("LONG_ONLY", "SHORT_ONLY"):
             normalized["direction"] = model_data["direction"]
 
+        model_wallet_key_path = model_data.get("wallet_key_path")
+        resolved_wallet_key_path: str | None = None
+        if isinstance(model_wallet_key_path, str) and model_wallet_key_path.strip() != "":
+            resolved_wallet_key_path = model_wallet_key_path.strip()
+
         normalized["models"] = [
             {
                 "model_id": model_id,
                 "enabled": normalized.get("enabled"),
                 "direction": normalized.get("direction"),
+                "wallet_key_path": resolved_wallet_key_path,
                 "strategy": normalized.get("strategy"),
                 "risk": normalized.get("risk"),
                 "exit": normalized.get("exit"),

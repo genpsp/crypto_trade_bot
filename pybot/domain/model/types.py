@@ -50,6 +50,7 @@ class ModelConfig(TypedDict):
     model_id: str
     enabled: bool
     direction: Direction
+    wallet_key_path: str | None
     strategy: StrategyConfig
     risk: RiskConfig
     exit: ExitConfig

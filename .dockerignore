@@ -4,7 +4,7 @@
 node_modules
 dist
 coverage
-credentials
+secrets
 research
 tests
 *.pyc
