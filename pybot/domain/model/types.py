@@ -135,6 +135,9 @@ class TradeSignalSnapshot(TypedDict):
     bar_close_time_iso: str
     ema_fast: float
     ema_slow: float
+    entry_price: float
+    stop_price: float
+    take_profit_price: float
 
 
 class TradePlanSnapshot(TypedDict):
@@ -151,7 +154,7 @@ class TradeOrderSnapshot(TypedDict):
 
 
 class TradeResultSnapshot(TypedDict):
-    status: Literal["SIMULATED", "ESTIMATED"]
+    status: Literal["SIMULATED", "ESTIMATED", "CONFIRMED"]
     avg_fill_price: float
     spent_quote_usdc: float
     filled_base_sol: float
@@ -165,6 +168,8 @@ class TradeExecutionSnapshot(TypedDict, total=False):
     exit_error: str
     order: TradeOrderSnapshot
     result: TradeResultSnapshot
+    entry_order: TradeOrderSnapshot
+    entry_result: TradeResultSnapshot
     exit_order: TradeOrderSnapshot
     exit_result: TradeResultSnapshot
 

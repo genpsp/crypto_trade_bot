@@ -88,6 +88,18 @@ def close_position(
             strip_none({"execution": trade["execution"], "updated_at": trade["updated_at"]}),
         )
 
+    def snapshot_balances() -> tuple[float, float] | None:
+        try:
+            quote = float(execution.get_available_quote_usdc(config["pair"]))
+            base = float(execution.get_available_base_sol(config["pair"]))
+            return quote, base
+        except Exception as error:
+            logger.warn(
+                "close_position balance snapshot failed",
+                {"trade_id": trade["trade_id"], "error": to_error_message(error)},
+            )
+            return None
+
     direction = trade.get("direction", "LONG_ONLY")
     side: SwapSide = "SELL_SOL_FOR_USDC"
     amount_atomic = int(trade["position"]["quantity_sol"] * SOL_ATOMIC_MULTIPLIER)
@@ -107,6 +119,8 @@ def close_position(
         return ClosePositionResult(
             status="FAILED", trade_id=trade["trade_id"], summary="FAILED: position close amount is 0"
         )
+
+    before_balances = snapshot_balances()
 
     try:
         submission = execution.submit_swap(
@@ -179,6 +193,26 @@ def close_position(
             if "avg_fill_price" in exit_result
             else fallback_exit_price
         )
+
+        after_balances = snapshot_balances()
+        if before_balances is not None and after_balances is not None:
+            before_quote, before_base = before_balances
+            after_quote, after_base = after_balances
+            if side == "SELL_SOL_FOR_USDC":
+                actual_quote_usdc = max(round_to(after_quote - before_quote, 6), 0.0)
+                actual_base_sol = max(float(trade["position"].get("quantity_sol") or 0.0), 0.0)
+            else:
+                actual_quote_usdc = max(round_to(before_quote - after_quote, 6), 0.0)
+                actual_base_sol = max(round_to(after_base - before_base, 9), 0.0)
+
+            if actual_quote_usdc > 0 and actual_base_sol > 0:
+                trade["execution"]["exit_result"] = {
+                    "status": "CONFIRMED",
+                    "spent_quote_usdc": actual_quote_usdc,
+                    "filled_base_sol": actual_base_sol,
+                    "avg_fill_price": actual_quote_usdc / actual_base_sol,
+                }
+                resolved_exit_price = actual_quote_usdc / actual_base_sol
 
         previous_position_snapshot = dict(trade["position"])
         previous_close_reason = trade.get("close_reason")

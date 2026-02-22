@@ -138,6 +138,9 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             "bar_close_time_iso": bar_close_time_iso,
             "ema_fast": signal.ema_fast,
             "ema_slow": signal.ema_slow,
+            "entry_price": signal.entry_price,
+            "stop_price": signal.stop_price,
+            "take_profit_price": signal.take_profit_price,
         },
         "plan": {
             "summary": _build_plan_summary(
@@ -256,6 +259,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
 
         trade["execution"]["entry_tx_signature"] = submission.tx_signature
         if submission.order:
+            trade["execution"]["entry_order"] = submission.order
             trade["execution"]["order"] = submission.order
 
         entry_result = submission.result
@@ -277,6 +281,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 "spent_quote_usdc": estimated_spent_quote_usdc,
                 "filled_base_sol": estimated_filled_base_sol,
             }
+        trade["execution"]["entry_result"] = entry_result
         trade["execution"]["result"] = entry_result
         move_state("SUBMITTED")
 
