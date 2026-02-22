@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pybot.app.ports.execution_port import ExecutionPort, SubmitSwapRequest
+from pybot.app.ports.execution_port import ExecutionPort, SubmitSwapRequest, SwapSide
 from pybot.app.ports.lock_port import LockPort
 from pybot.app.ports.logger_port import LoggerPort
 from pybot.app.ports.persistence_port import PersistencePort
@@ -88,19 +88,30 @@ def close_position(
             strip_none({"execution": trade["execution"], "updated_at": trade["updated_at"]}),
         )
 
+    direction = trade.get("direction", "LONG_ONLY")
+    side: SwapSide = "SELL_SOL_FOR_USDC"
     amount_atomic = int(trade["position"]["quantity_sol"] * SOL_ATOMIC_MULTIPLIER)
+
+    if direction == "SHORT_ONLY":
+        side = "BUY_SOL_WITH_USDC"
+        quote_amount_usdc = trade.get("position", {}).get("quote_amount_usdc")
+        if not isinstance(quote_amount_usdc, (int, float)) or quote_amount_usdc <= 0:
+            quantity_sol = float(trade.get("position", {}).get("quantity_sol") or 0)
+            quote_amount_usdc = quantity_sol * close_price
+        amount_atomic = int(float(quote_amount_usdc) * USDC_ATOMIC_MULTIPLIER)
+
     if amount_atomic <= 0:
         trade["execution"]["exit_submission_state"] = "FAILED"
-        trade["execution"]["exit_error"] = "position quantity is 0"
+        trade["execution"]["exit_error"] = "position close amount is 0"
         move_state("FAILED")
         return ClosePositionResult(
-            status="FAILED", trade_id=trade["trade_id"], summary="FAILED: position quantity is 0"
+            status="FAILED", trade_id=trade["trade_id"], summary="FAILED: position close amount is 0"
         )
 
     try:
         submission = execution.submit_swap(
             SubmitSwapRequest(
-                side="SELL_SOL_FOR_USDC",
+                side=side,
                 amount_atomic=amount_atomic,
                 slippage_bps=config["execution"]["slippage_bps"],
                 only_direct_routes=config["execution"]["only_direct_routes"],
@@ -112,11 +123,20 @@ def close_position(
             trade["execution"]["exit_order"] = submission.order
         exit_result = submission.result
         if exit_result is None:
-            estimated_input_sol = submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER
-            estimated_output_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
-            estimated_avg_fill_price = (
-                estimated_output_usdc / estimated_input_sol if estimated_input_sol > 0 else close_price
-            )
+            if side == "SELL_SOL_FOR_USDC":
+                estimated_input_sol = submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER
+                estimated_output_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
+                estimated_avg_fill_price = (
+                    estimated_output_usdc / estimated_input_sol if estimated_input_sol > 0 else close_price
+                )
+            else:
+                estimated_input_usdc = submission.in_amount_atomic / USDC_ATOMIC_MULTIPLIER
+                estimated_output_sol = submission.out_amount_atomic / SOL_ATOMIC_MULTIPLIER
+                estimated_avg_fill_price = (
+                    estimated_input_usdc / estimated_output_sol if estimated_output_sol > 0 else close_price
+                )
+                estimated_output_usdc = estimated_input_usdc
+                estimated_input_sol = estimated_output_sol
             exit_result = {
                 "status": "ESTIMATED",
                 "avg_fill_price": estimated_avg_fill_price,
@@ -145,9 +165,15 @@ def close_position(
                 summary=f"FAILED: exit tx not confirmed ({trade['execution']['exit_error']})",
             )
 
-        input_sol = submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER
-        output_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
-        fallback_exit_price = output_usdc / input_sol if input_sol > 0 else close_price
+        if side == "SELL_SOL_FOR_USDC":
+            input_sol = submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER
+            output_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
+            fallback_exit_price = output_usdc / input_sol if input_sol > 0 else close_price
+        else:
+            input_usdc = submission.in_amount_atomic / USDC_ATOMIC_MULTIPLIER
+            output_sol = submission.out_amount_atomic / SOL_ATOMIC_MULTIPLIER
+            fallback_exit_price = input_usdc / output_sol if output_sol > 0 else close_price
+
         resolved_exit_price = (
             float(exit_result["avg_fill_price"])
             if "avg_fill_price" in exit_result
@@ -177,7 +203,7 @@ def close_position(
             status="CLOSED",
             trade_id=trade["trade_id"],
             summary=(
-                f"CLOSED: reason={close_reason}, tx={submission.tx_signature}, "
+                f"CLOSED: reason={close_reason}, tx={submission.tx_signature}, direction={direction}, "
                 f"fill={round_to(trade['position']['exit_price'], 4)}, trigger={round_to(close_price, 4)}"
             ),
         )

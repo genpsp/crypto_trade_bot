@@ -1,0 +1,33 @@
+name: Deploy Bot
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd /opt/crypto_trade_bot
+            git fetch --all --prune
+            git checkout main
+            git pull origin main
+            docker compose up -d --build
+            docker compose ps
+
+# Required repository secrets:
+# - VPS_HOST
+# - VPS_USER
+# - VPS_SSH_KEY

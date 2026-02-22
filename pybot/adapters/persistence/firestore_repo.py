@@ -50,28 +50,55 @@ class FirestoreRepository(PersistencePort):
         self,
         firestore: Client,
         config_repo: FirestoreConfigRepository,
-        collections: dict[str, str] | None = None,
+        mode: str,
+        model_id: str,
     ):
         self.firestore = firestore
         self.config_repo = config_repo
-        self.collections = collections or {"trades": "trades", "runs": "runs"}
+        self.mode = mode
+        self.model_id = model_id
+        self.trades_collection_name = "paper_trades" if mode == "PAPER" else "trades"
+        self.runs_collection_name = "paper_runs" if mode == "PAPER" else "runs"
+
+    def _model_doc(self):
+        return self.firestore.collection("models").document(self.model_id)
+
+    def _touch_model_metadata(self) -> None:
+        self._model_doc().set(
+            sanitize_firestore_value(
+                {
+                    "model_id": self.model_id,
+                    "mode": self.mode,
+                    "updated_at_iso": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
+                }
+            ),
+            merge=True,
+        )
+
+    def _trades_collection(self):
+        return self._model_doc().collection(self.trades_collection_name)
+
+    def _runs_collection(self):
+        return self._model_doc().collection(self.runs_collection_name)
 
     def get_current_config(self) -> BotConfig:
-        return self.config_repo.get_current_config()
+        return self.config_repo.get_current_config(self.model_id)
 
     def create_trade(self, trade: TradeRecord) -> None:
-        self.firestore.collection(self.collections["trades"]).document(trade["trade_id"]).set(
-            sanitize_firestore_value(trade)
-        )
+        self._touch_model_metadata()
+        payload: TradeRecord = dict(trade)
+        payload.setdefault("model_id", self.model_id)
+        self._trades_collection().document(trade["trade_id"]).set(sanitize_firestore_value(payload))
 
     def update_trade(self, trade_id: str, updates: dict) -> None:
-        self.firestore.collection(self.collections["trades"]).document(trade_id).set(
-            sanitize_firestore_value(updates), merge=True
-        )
+        self._touch_model_metadata()
+        payload = dict(updates)
+        payload.setdefault("model_id", self.model_id)
+        self._trades_collection().document(trade_id).set(sanitize_firestore_value(payload), merge=True)
 
     def find_open_trade(self, pair: Pair) -> TradeRecord | None:
         snapshot = (
-            self.firestore.collection(self.collections["trades"])
+            self._trades_collection()
             .where(filter=FieldFilter("state", "==", "CONFIRMED"))
             .get()
         )
@@ -88,7 +115,7 @@ class FirestoreRepository(PersistencePort):
 
     def count_trades_for_utc_day(self, pair: Pair, day_start_iso: str, day_end_iso: str) -> int:
         snapshot = (
-            self.firestore.collection(self.collections["trades"])
+            self._trades_collection()
             .where(filter=FieldFilter("created_at", ">=", day_start_iso))
             .where(filter=FieldFilter("created_at", "<=", day_end_iso))
             .get()
@@ -96,7 +123,8 @@ class FirestoreRepository(PersistencePort):
         return len([doc for doc in snapshot if doc.to_dict().get("pair") == pair])
 
     def save_run(self, run: RunRecord) -> None:
-        runs_collection = self.firestore.collection(self.collections["runs"])
+        self._touch_model_metadata()
+        runs_collection = self._runs_collection()
         run_date = _extract_run_date(run)
         day_ref = runs_collection.document(run_date)
         day_ref.set(
@@ -110,6 +138,7 @@ class FirestoreRepository(PersistencePort):
         )
 
         payload: RunRecord = dict(run)
+        payload.setdefault("model_id", self.model_id)
         payload["run_date"] = run_date
 
         result = payload.get("result")

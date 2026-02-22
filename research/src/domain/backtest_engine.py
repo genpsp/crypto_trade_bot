@@ -5,13 +5,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from pybot.domain.model.types import BotConfig, OhlcvBar
+from pybot.domain.model.types import BotConfig, Direction, OhlcvBar
 from pybot.domain.risk.swing_low_stop import (
     calculate_max_loss_stop_price,
+    calculate_max_loss_stop_price_for_short,
     calculate_take_profit_price,
+    calculate_take_profit_price_for_short,
     tighten_stop_for_long,
+    tighten_stop_for_short,
 )
-from pybot.domain.strategy.ema_trend_pullback_v0 import evaluate_ema_trend_pullback_v0
+from pybot.domain.strategy.registry import evaluate_strategy_for_model
 from pybot.domain.utils.math import round_to
 
 from research.src.domain.backtest_types import BacktestReport, BacktestSummary, BacktestTrade
@@ -21,15 +24,14 @@ from research.src.domain.backtest_types import BacktestReport, BacktestSummary, 
 class _OpenPosition:
     entry_index: int
     entry_time: datetime
+    direction: Direction
     quantity_sol: float
-    entry_trigger_price: float
     entry_price: float
     stop_price: float
     take_profit_price: float
     position_size_multiplier: float
     base_notional_usdc: float
     effective_notional_usdc: float
-    idle_quote_usdc: float
 
 
 def _to_utc_iso(value: datetime) -> str:
@@ -75,6 +77,7 @@ def _simulate_sell_fill_price(trigger_price: float, slippage_bps: int) -> float:
 def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
     if len(bars) < 2:
         raise ValueError("Backtest requires at least 2 OHLCV bars")
+    direction = config["direction"]
     configured_min_notional_usdc = float(config["execution"]["min_notional_usdc"])
     slippage_bps = int(config["execution"]["slippage_bps"])
     max_trades_per_day = config["risk"]["max_trades_per_day"]
@@ -94,11 +97,16 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             if index <= open_position.entry_index:
                 continue
 
-            stop_hit = current_bar.low <= open_position.stop_price
-            tp_hit = current_bar.high >= open_position.take_profit_price
+            is_long = open_position.direction == "LONG_ONLY"
+            if is_long:
+                stop_hit = current_bar.low <= open_position.stop_price
+                tp_hit = current_bar.high >= open_position.take_profit_price
+            else:
+                stop_hit = current_bar.high >= open_position.stop_price
+                tp_hit = current_bar.low <= open_position.take_profit_price
+
             if stop_hit or tp_hit:
                 if stop_hit and tp_hit:
-                    # Same-bar TP/SL touch is ambiguous. Use conservative fill for reproducibility.
                     exit_reason = "STOP_LOSS_AND_TP_SAME_BAR"
                     exit_trigger_price = open_position.stop_price
                 elif stop_hit:
@@ -108,12 +116,17 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
                     exit_reason = "TAKE_PROFIT"
                     exit_trigger_price = open_position.take_profit_price
 
-                exit_price = _simulate_sell_fill_price(exit_trigger_price, slippage_bps)
-                exit_quote_usdc = open_position.quantity_sol * exit_price
-                portfolio_after_exit = open_position.idle_quote_usdc + exit_quote_usdc
+                if is_long:
+                    exit_price = _simulate_sell_fill_price(exit_trigger_price, slippage_bps)
+                    risk_per_unit = open_position.entry_price - open_position.stop_price
+                    pnl_per_unit = exit_price - open_position.entry_price
+                else:
+                    exit_price = _simulate_buy_fill_price(exit_trigger_price, slippage_bps)
+                    risk_per_unit = open_position.stop_price - open_position.entry_price
+                    pnl_per_unit = open_position.entry_price - exit_price
 
-                risk_per_unit = open_position.entry_price - open_position.stop_price
-                pnl_per_unit = exit_price - open_position.entry_price
+                position_pnl_usdc = open_position.quantity_sol * pnl_per_unit
+                portfolio_after_exit = open_position.base_notional_usdc + position_pnl_usdc
                 pnl_pct = (pnl_per_unit / open_position.entry_price) * 100
                 scaled_pnl_pct = (
                     ((portfolio_after_exit / open_position.base_notional_usdc) - 1) * 100
@@ -153,7 +166,8 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
 
         decision_window_start = max(0, index + 1 - OHLCV_LIMIT)
         decision_bars = bars[decision_window_start : index + 1]
-        decision = evaluate_ema_trend_pullback_v0(
+        decision = evaluate_strategy_for_model(
+            direction=direction,
             bars=decision_bars,
             strategy=config["strategy"],
             risk=config["risk"],
@@ -182,8 +196,11 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             no_signal_reasons["INVALID_EFFECTIVE_NOTIONAL"] += 1
             continue
 
-        entry_trigger_price = decision.entry_price
-        resolved_entry_price = _simulate_buy_fill_price(entry_trigger_price, slippage_bps)
+        if direction == "LONG_ONLY":
+            resolved_entry_price = _simulate_buy_fill_price(decision.entry_price, slippage_bps)
+        else:
+            resolved_entry_price = _simulate_sell_fill_price(decision.entry_price, slippage_bps)
+
         if resolved_entry_price <= 0:
             no_signal_count += 1
             no_signal_reasons["INVALID_ENTRY_FILL_PRICE"] += 1
@@ -196,39 +213,58 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             continue
 
         swing_stop = float(decision.stop_price)
-        pct_stop = calculate_max_loss_stop_price(resolved_entry_price, max_loss_per_trade_pct)
-        final_stop = tighten_stop_for_long(
-            resolved_entry_price,
-            swing_stop,
-            max_loss_per_trade_pct,
-        )
-        if final_stop >= resolved_entry_price:
-            final_stop = pct_stop
-        if final_stop >= resolved_entry_price:
-            no_signal_count += 1
-            no_signal_reasons["INVALID_RISK_AFTER_FILL"] += 1
-            continue
-
-        take_profit_price = calculate_take_profit_price(
-            resolved_entry_price,
-            final_stop,
-            take_profit_r_multiple,
-        )
-        idle_quote_usdc = round_to(base_notional_usdc - effective_notional_usdc, 10)
+        if direction == "LONG_ONLY":
+            pct_stop = calculate_max_loss_stop_price(resolved_entry_price, max_loss_per_trade_pct)
+            final_stop = tighten_stop_for_long(
+                resolved_entry_price,
+                swing_stop,
+                max_loss_per_trade_pct,
+            )
+            if final_stop >= resolved_entry_price:
+                final_stop = pct_stop
+            if final_stop >= resolved_entry_price:
+                no_signal_count += 1
+                no_signal_reasons["INVALID_RISK_AFTER_FILL"] += 1
+                continue
+            take_profit_price = calculate_take_profit_price(
+                resolved_entry_price,
+                final_stop,
+                take_profit_r_multiple,
+            )
+        else:
+            pct_stop = calculate_max_loss_stop_price_for_short(
+                resolved_entry_price,
+                max_loss_per_trade_pct,
+            )
+            final_stop = tighten_stop_for_short(
+                resolved_entry_price,
+                swing_stop,
+                max_loss_per_trade_pct,
+            )
+            if final_stop <= resolved_entry_price:
+                final_stop = pct_stop
+            if final_stop <= resolved_entry_price:
+                no_signal_count += 1
+                no_signal_reasons["INVALID_RISK_AFTER_FILL"] += 1
+                continue
+            take_profit_price = calculate_take_profit_price_for_short(
+                resolved_entry_price,
+                final_stop,
+                take_profit_r_multiple,
+            )
 
         enter_count += 1
         open_position = _OpenPosition(
             entry_index=index,
             entry_time=current_bar.close_time,
+            direction=direction,
             quantity_sol=quantity_sol,
-            entry_trigger_price=entry_trigger_price,
             entry_price=resolved_entry_price,
             stop_price=final_stop,
             take_profit_price=take_profit_price,
             position_size_multiplier=size_multiplier,
             base_notional_usdc=base_notional_usdc,
             effective_notional_usdc=effective_notional_usdc,
-            idle_quote_usdc=idle_quote_usdc,
         )
 
     if open_position is not None:

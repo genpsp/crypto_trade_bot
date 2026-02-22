@@ -14,7 +14,7 @@
 
 バックテストのエントリー判定は次を直接使用します。
 
-- `pybot.domain.strategy.ema_trend_pullback_v0.evaluate_ema_trend_pullback_v0`
+- `pybot.domain.strategy.registry.evaluate_strategy_for_model`
 
 つまり、戦略条件は単一ソースで管理されます。
 
@@ -43,16 +43,20 @@ python -m research.scripts.fetch_ohlcv \
 
 ```bash
 python -m research.scripts.run_backtest \
-  --config research/config.json \
+  --config research/models/core_long_v0/config/current.json \
   --bars research/data/raw/solusdc_2h.csv \
   --output research/data/processed/backtest_latest.json
 ```
 
-`--config` は `config/current` と同スキーマ JSON を使ってください。初期値は `research/config.json` をベースに調整できます。
+`--config` は `research/models/<model_id>/config/current.json` を指定します。  
+モデル設定はこの1ファイルに集約されています。
 
 ## Notebook で実行（コピペ不要）
 
-`jupyter lab` を起動したら `research/notebooks/backtest_playground.ipynb` を開いて、`Run -> Run All Cells` を実行してください。
+`jupyter lab` を起動したら下記ノートを開いて、`Run -> Run All Cells` を実行してください。
+
+- ロングモデル: `research/notebooks/backtest_playground.ipynb`
+- ショートモデル: `research/notebooks/backtest_playground_short.ipynb`
 
 - パラメータはノート内の `Parameters` セルだけ編集
 - `REFRESH_DATA=False` なら既存CSVを再利用

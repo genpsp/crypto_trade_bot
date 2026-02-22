@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 
 from pybot.domain.model.types import BotConfig
-from pybot.infra.config.schema import parse_config
+from pybot.infra.config import schema as schema_module
 
 
 def load_bot_config(path: str | Path) -> BotConfig:
@@ -13,4 +14,8 @@ def load_bot_config(path: str | Path) -> BotConfig:
         raise FileNotFoundError(f"Config file not found: {source}")
 
     raw = json.loads(source.read_text(encoding="utf-8"))
-    return parse_config(raw)
+    if not isinstance(raw, dict):
+        raise ValueError(f"Config payload must be object: {source}")
+
+    latest_schema = importlib.reload(schema_module)
+    return latest_schema.parse_config(raw)

@@ -119,6 +119,17 @@ class SolanaSender:
 
         return total_ui_amount
 
+    def get_native_sol_balance_ui_amount(self) -> float:
+        owner = self.get_public_key_base58()
+        result = self._rpc("getBalance", [owner, {"commitment": "confirmed"}])
+        if not isinstance(result, dict):
+            return 0.0
+        value = result.get("value")
+        if not isinstance(value, int) or value < 0:
+            return 0.0
+        lamports_per_sol = 1_000_000_000
+        return value / lamports_per_sol
+
     def _rpc(self, method: str, params: list[Any]) -> Any:
         payload = {
             "jsonrpc": "2.0",

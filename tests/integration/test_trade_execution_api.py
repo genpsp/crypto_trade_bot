@@ -145,6 +145,9 @@ class FakeSolanaSender:
         _ = mint
         return 50.0
 
+    def get_native_sol_balance_ui_amount(self) -> float:
+        return 1.0
+
 
 @dataclass
 class MockServer:
@@ -249,6 +252,29 @@ def _build_config() -> BotConfig:
         },
         "exit": {"stop": "SWING_LOW", "take_profit_r_multiple": 1.5},
         "meta": {"config_version": 2, "note": "test"},
+        "models": [
+            {
+                "model_id": "core_long_v0",
+                "enabled": True,
+                "direction": "LONG_ONLY",
+                "strategy": {
+                    "name": "ema_trend_pullback_v0",
+                    "ema_fast_period": 12,
+                    "ema_slow_period": 34,
+                    "swing_low_lookback_bars": 12,
+                    "entry": "ON_BAR_CLOSE",
+                },
+                "risk": {
+                    "max_loss_per_trade_pct": 0.5,
+                    "max_trades_per_day": 1,
+                    "volatile_atr_pct_threshold": 1.3,
+                    "storm_atr_pct_threshold": 1.4,
+                    "volatile_size_multiplier": 0.75,
+                    "storm_size_multiplier": 0.5,
+                },
+                "exit": {"stop": "SWING_LOW", "take_profit_r_multiple": 1.5},
+            }
+        ],
     }
 
 
@@ -318,6 +344,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                         config=config,
                         signal=signal,
                         bar_close_time_iso="2026-02-21T10:00:00.000Z",
+                        model_id="core_long_v0",
                     ),
                 )
                 self.assertEqual("OPENED", opened.status)
@@ -370,6 +397,136 @@ class TradeExecutionApiTest(unittest.TestCase):
                 self.assertEqual(SOL_MINT, quote_calls[0]["query"]["outputMint"][0])
                 self.assertEqual(SOL_MINT, quote_calls[1]["query"]["inputMint"][0])
                 self.assertEqual(USDC_MINT, quote_calls[1]["query"]["outputMint"][0])
+
+    def test_short_model_open_and_close_hits_sell_then_buy_paths(self) -> None:
+        def responder(
+            method: str,
+            path: str,
+            query: dict[str, list[str]],
+            body_json: dict[str, Any] | None,
+        ) -> tuple[int, dict[str, Any]]:
+            if method == "GET" and path == "/swap/v1/quote":
+                amount = int(query["amount"][0])
+                input_mint = query["inputMint"][0]
+                output_mint = query["outputMint"][0]
+                if input_mint == SOL_MINT and output_mint == USDC_MINT:
+                    in_amount = amount
+                    out_amount = amount // 10
+                elif input_mint == USDC_MINT and output_mint == SOL_MINT:
+                    in_amount = amount
+                    out_amount = amount * 10
+                else:
+                    return 400, {"error": "unsupported pair"}
+                return 200, {"inAmount": str(in_amount), "outAmount": str(out_amount)}
+
+            if method == "POST" and path == "/swap/v1/swap":
+                if not body_json or "quoteResponse" not in body_json:
+                    return 400, {"error": "missing quoteResponse"}
+                if "userPublicKey" not in body_json:
+                    return 400, {"error": "missing userPublicKey"}
+                return 200, {"swapTransaction": "AQ=="}
+
+            return 404, {"error": "not found"}
+
+        with MockServer(responder) as server:
+            quote_url = f"{server.base_url}/swap/v1/quote"
+            swap_url = f"{server.base_url}/swap/v1/swap"
+            with patch("pybot.adapters.execution.jupiter_quote_client.QUOTE_API_URL", quote_url), patch(
+                "pybot.adapters.execution.jupiter_swap.SWAP_API_URL",
+                swap_url,
+            ):
+                config = _build_config()
+                config["direction"] = "SHORT_ONLY"
+                config["models"] = [
+                    {
+                        "model_id": "storm_short_v0",
+                        "enabled": True,
+                        "direction": "SHORT_ONLY",
+                        "strategy": {
+                            "name": "storm_short_v0",
+                            "ema_fast_period": 12,
+                            "ema_slow_period": 34,
+                            "swing_low_lookback_bars": 12,
+                            "entry": "ON_BAR_CLOSE",
+                        },
+                        "risk": {
+                            "max_loss_per_trade_pct": 0.5,
+                            "max_trades_per_day": 1,
+                            "volatile_atr_pct_threshold": 1.3,
+                            "storm_atr_pct_threshold": 1.4,
+                            "volatile_size_multiplier": 0.75,
+                            "storm_size_multiplier": 0.5,
+                        },
+                        "exit": {"stop": "SWING_LOW", "take_profit_r_multiple": 1.5},
+                    }
+                ]
+                persistence = InMemoryPersistence(config)
+                lock = InMemoryLock()
+                logger = InMemoryLogger()
+                sender = FakeSolanaSender()
+                execution = JupiterSwapAdapter(JupiterQuoteClient(), sender, logger)
+
+                signal = EntrySignalDecision(
+                    type="ENTER",
+                    summary="storm short enter",
+                    ema_fast=99,
+                    ema_slow=101,
+                    entry_price=100,
+                    stop_price=102,
+                    take_profit_price=97,
+                    diagnostics={"volatility_regime": "STORM", "position_size_multiplier": 0.5},
+                )
+
+                opened = open_position(
+                    OpenPositionDependencies(
+                        execution=execution,
+                        lock=lock,
+                        logger=logger,
+                        persistence=persistence,
+                    ),
+                    OpenPositionInput(
+                        config=config,
+                        signal=signal,
+                        bar_close_time_iso="2026-02-21T12:00:00.000Z",
+                        model_id="storm_short_v0",
+                    ),
+                )
+                self.assertEqual("OPENED", opened.status)
+
+                trade = persistence.trades[opened.trade_id]
+                self.assertEqual("SHORT_ONLY", trade["direction"])
+                self.assertGreater(float(trade["position"]["quote_amount_usdc"]), 0.0)
+
+                close_price = float(trade["position"]["take_profit_price"])
+                closed = close_position(
+                    ClosePositionDependencies(
+                        execution=execution,
+                        lock=lock,
+                        logger=logger,
+                        persistence=persistence,
+                    ),
+                    ClosePositionInput(
+                        config=config,
+                        trade=trade,
+                        close_reason="TAKE_PROFIT",
+                        close_price=close_price,
+                    ),
+                )
+                self.assertEqual("CLOSED", closed.status)
+
+                assert server.requests is not None
+                quote_calls = [
+                    r
+                    for r in server.requests
+                    if r["method"] == "GET" and r["path"] == "/swap/v1/quote"
+                ]
+                swap_calls = [
+                    r
+                    for r in server.requests
+                    if r["method"] == "POST" and r["path"] == "/swap/v1/swap"
+                ]
+                self.assertGreaterEqual(len(quote_calls), 3, server.requests)
+                self.assertEqual(2, len(swap_calls), server.requests)
 
 
 class SolanaSenderRpcMethodTest(unittest.TestCase):

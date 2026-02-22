@@ -80,6 +80,11 @@ class JupiterSwapAdapter(ExecutionPort):
             raise ValueError(f"Unsupported pair for quote balance: {pair}")
         return self.solana_sender.get_spl_token_balance_ui_amount(USDC_MINT)
 
+    def get_available_base_sol(self, pair: str) -> float:
+        if pair != "SOL/USDC":
+            raise ValueError(f"Unsupported pair for base balance: {pair}")
+        return self.solana_sender.get_native_sol_balance_ui_amount()
+
     def _fetch_swap_transaction(self, quote_response: dict[str, Any]) -> str:
         payload = {
             "quoteResponse": quote_response,

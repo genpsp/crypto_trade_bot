@@ -78,3 +78,12 @@ class PaperExecutionAdapter(ExecutionPort):
             raise ValueError(f"Unsupported pair for quote balance: {pair}")
         # Paper mode uses virtual capital baseline for all-in sizing simulation.
         return 100.0
+
+    def get_available_base_sol(self, pair: str) -> float:
+        if pair != "SOL/USDC":
+            raise ValueError(f"Unsupported pair for base balance: {pair}")
+        mark_price = self.get_mark_price(pair)
+        if mark_price <= 0:
+            return 0.0
+        # Keep paper base inventory aligned with virtual quote baseline.
+        return 100.0 / mark_price

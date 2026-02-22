@@ -6,12 +6,13 @@ from typing import Any, Literal, TypedDict
 
 Network = Literal["mainnet-beta"]
 Pair = Literal["SOL/USDC"]
-Direction = Literal["LONG_ONLY"]
+Direction = Literal["LONG_ONLY", "SHORT_ONLY"]
 SignalTimeframe = Literal["2h", "4h"]
+StrategyName = Literal["ema_trend_pullback_v0", "storm_short_v0"]
 
 
 class StrategyConfig(TypedDict):
-    name: Literal["ema_trend_pullback_v0"]
+    name: StrategyName
     ema_fast_period: int
     ema_slow_period: int
     swing_low_lookback_bars: int
@@ -45,6 +46,15 @@ class MetaConfig(TypedDict):
     note: str
 
 
+class ModelConfig(TypedDict):
+    model_id: str
+    enabled: bool
+    direction: Direction
+    strategy: StrategyConfig
+    risk: RiskConfig
+    exit: ExitConfig
+
+
 class BotConfig(TypedDict):
     enabled: bool
     network: Network
@@ -56,6 +66,7 @@ class BotConfig(TypedDict):
     execution: ExecutionConfig
     exit: ExitConfig
     meta: MetaConfig
+    models: list[ModelConfig]
 
 
 @dataclass
@@ -161,6 +172,7 @@ class TradeExecutionSnapshot(TypedDict, total=False):
 class TradePositionSnapshot(TypedDict, total=False):
     status: Literal["OPEN", "CLOSED"]
     quantity_sol: float
+    quote_amount_usdc: float
     entry_trigger_price: float
     entry_price: float
     stop_price: float
@@ -177,6 +189,7 @@ TradeState = Literal["CREATED", "SUBMITTED", "CONFIRMED", "CLOSED", "FAILED", "C
 
 class TradeRecord(TypedDict, total=False):
     trade_id: str
+    model_id: str
     bar_close_time_iso: str
     pair: Pair
     direction: Direction
@@ -204,6 +217,7 @@ RunResult = Literal[
 
 class RunRecord(TypedDict, total=False):
     run_id: str
+    model_id: str
     bar_close_time_iso: str
     executed_at_iso: str
     run_date: str

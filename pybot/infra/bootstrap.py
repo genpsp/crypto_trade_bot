@@ -27,6 +27,15 @@ class AppRuntime:
     stop: Callable[[], None]
 
 
+@dataclass
+class ModelRuntimeContext:
+    model_id: str
+    pair: str
+    execution: ExecutionPort
+    persistence: FirestoreRepository
+    lock: RedisLockAdapter
+
+
 def bootstrap() -> AppRuntime:
     env = load_env()
     logger = create_logger("bot")
@@ -35,37 +44,84 @@ def bootstrap() -> AppRuntime:
     redis = Redis.from_url(env.REDIS_URL, decode_responses=True)
 
     config_repo = FirestoreConfigRepository(firestore)
-    startup_config = config_repo.get_current_config()
-    mode = startup_config["execution"]["mode"]
-    collections = (
-        {"trades": "paper_trades", "runs": "paper_runs"}
-        if mode == "PAPER"
-        else {"trades": "trades", "runs": "runs"}
-    )
-
-    persistence = FirestoreRepository(firestore, config_repo, collections)
-    lock = RedisLockAdapter(redis, logger)
     market_data = OhlcvProvider()
     quote_client = JupiterQuoteClient()
+    paper_execution: ExecutionPort = PaperExecutionAdapter(quote_client, logger)
+    live_execution: ExecutionPort | None = None
 
-    execution: ExecutionPort
-    if mode == "PAPER":
-        execution = PaperExecutionAdapter(quote_client, logger)
-    else:
-        sender = SolanaSender(
-            env.SOLANA_RPC_URL,
-            env.WALLET_KEY_PATH,
-            env.WALLET_KEY_PASSPHRASE,
-            logger,
+    def resolve_execution(mode: str) -> ExecutionPort:
+        nonlocal live_execution
+        if mode == "PAPER":
+            return paper_execution
+        if live_execution is None:
+            sender = SolanaSender(
+                env.SOLANA_RPC_URL,
+                env.WALLET_KEY_PATH,
+                env.WALLET_KEY_PASSPHRASE,
+                logger,
+            )
+            live_execution = JupiterSwapAdapter(quote_client, sender, logger)
+        return live_execution
+
+    model_ids = config_repo.list_model_ids()
+    if not model_ids:
+        logger.warn("no models found in Firestore models collection")
+
+    model_contexts: list[ModelRuntimeContext] = []
+    runtime_summaries: list[dict[str, str]] = []
+    for model_id in model_ids:
+        try:
+            startup_config = config_repo.get_current_config(model_id)
+        except Exception as error:
+            logger.error(
+                "failed to load model config",
+                {
+                    "model_id": model_id,
+                    "error": str(error),
+                },
+            )
+            continue
+
+        model = startup_config["models"][0]
+        if not model["enabled"]:
+            continue
+        mode = startup_config["execution"]["mode"]
+
+        context = ModelRuntimeContext(
+            model_id=model_id,
+            pair=startup_config["pair"],
+            execution=resolve_execution(mode),
+            persistence=FirestoreRepository(firestore, config_repo, mode=mode, model_id=model_id),
+            lock=RedisLockAdapter(redis, logger, lock_namespace=model_id),
         )
-        execution = JupiterSwapAdapter(quote_client, sender, logger)
+        model_contexts.append(context)
+        runtime_summaries.append(
+            {
+                "model_id": model_id,
+                "mode": mode,
+                "direction": model["direction"],
+                "strategy": model["strategy"]["name"],
+            }
+        )
+        logger.info(
+            "model runtime configured",
+            {
+                "model_id": model_id,
+                "mode": mode,
+                "direction": model["direction"],
+                "strategy": model["strategy"]["name"],
+                "trades_path": f"models/{model_id}/{context.persistence.trades_collection_name}",
+                "runs_path": f"models/{model_id}/{context.persistence.runs_collection_name}",
+            },
+        )
+
+    if not model_contexts:
+        logger.warn("no enabled models found in models/*/config/current")
 
     logger.info(
-        "runtime mode selected",
+        "runtime models selected",
         {
-            "mode": mode,
-            "trades_collection": collections["trades"],
-            "runs_collection": collections["runs"],
+            "enabled_models": runtime_summaries,
         },
     )
 
@@ -75,14 +131,15 @@ def bootstrap() -> AppRuntime:
             "SKIPPED_ENTRY: idem entry key already exists for this bar",
         )
 
-    def execute_cycle() -> None:
+    def execute_cycle_for_model(context: ModelRuntimeContext) -> None:
         result = run_cycle(
             RunCycleDependencies(
-                execution=execution,
-                lock=lock,
+                execution=context.execution,
+                lock=context.lock,
                 logger=logger,
                 market_data=market_data,
-                persistence=persistence,
+                persistence=context.persistence,
+                model_id=context.model_id,
             )
         )
         if should_suppress_run_cycle_log(result):  # type: ignore[arg-type]
@@ -90,6 +147,7 @@ def bootstrap() -> AppRuntime:
         logger.info(
             "run_cycle finished",
             {
+                "model_id": context.model_id,
                 "run_id": result.get("run_id"),
                 "result": result.get("result"),
                 "summary": result.get("summary"),
@@ -97,23 +155,29 @@ def bootstrap() -> AppRuntime:
             },
         )
 
+    def execute_cycle_for_all_models() -> None:
+        for context in model_contexts:
+            execute_cycle_for_model(context)
+
     def execute_scheduled_cycle() -> None:
         from datetime import UTC, datetime
 
         now = datetime.now(tz=UTC)
         is_five_minute_window = now.minute % 5 == 0
-        if not is_five_minute_window:
-            open_trade = persistence.find_open_trade(startup_config["pair"])
-            if open_trade is None:
-                return
-        execute_cycle()
+        for context in model_contexts:
+            if is_five_minute_window:
+                execute_cycle_for_model(context)
+                continue
+            open_trade = context.persistence.find_open_trade(context.pair)
+            if open_trade is not None:
+                execute_cycle_for_model(context)
 
     scheduler: CronController | None = None
 
     def start() -> None:
         nonlocal scheduler
         logger.info("bot startup: run first cycle immediately")
-        execute_cycle()
+        execute_cycle_for_all_models()
         scheduler = create_cron_cycle(execute_scheduled_cycle, logger)
         scheduler.start()
 
