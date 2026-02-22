@@ -121,7 +121,7 @@ def bootstrap() -> AppRuntime:
         )
 
     if not model_contexts:
-        logger.warn("no enabled models found in models/*/config/current")
+        logger.warn("no enabled models found in Firestore models collection")
 
     logger.info(
         "runtime models selected",

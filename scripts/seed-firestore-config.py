@@ -140,18 +140,19 @@ def split_global_and_models(config: dict) -> tuple[dict, list[dict]]:
 
 def seed_firestore_config(firestore: Client, config: dict) -> tuple[dict, int]:
     global_config, model_configs = split_global_and_models(config)
+    execution_config = dict(global_config["execution"])
+    execution_mode = execution_config.pop("mode")
+
     for model_config in model_configs:
         model_id = model_config["model_id"]
         model_wallet_key_path = model_config.get("wallet_key_path")
         model_scoped_config = {
-            "enabled": model_config["enabled"],
             "network": global_config["network"],
             "pair": global_config["pair"],
-            "direction": model_config["direction"],
             "signal_timeframe": global_config["signal_timeframe"],
             "strategy": model_config["strategy"],
             "risk": model_config["risk"],
-            "execution": global_config["execution"],
+            "execution": dict(execution_config),
             "exit": model_config["exit"],
             "meta": global_config["meta"],
         }
@@ -159,6 +160,7 @@ def seed_firestore_config(firestore: Client, config: dict) -> tuple[dict, int]:
             "model_id": model_id,
             "enabled": model_config["enabled"],
             "direction": model_config["direction"],
+            "mode": execution_mode,
         }
         if isinstance(model_wallet_key_path, str) and model_wallet_key_path.strip() != "":
             model_doc_payload["wallet_key_path"] = model_wallet_key_path.strip()
