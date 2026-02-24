@@ -47,7 +47,13 @@ def _build_base_config() -> dict:
 
 
 class ConfigSchemaTest(unittest.TestCase):
-    def test_model_wallet_key_path_is_parsed_when_present(self) -> None:
+    def test_storm_size_multiplier_zero_is_allowed(self) -> None:
+        payload = deepcopy(_build_base_config())
+        payload["risk"]["storm_size_multiplier"] = 0.0
+        parsed = parse_config(payload)
+        self.assertEqual(parsed["risk"]["storm_size_multiplier"], 0.0)
+
+    def test_models_key_is_rejected(self) -> None:
         payload = deepcopy(_build_base_config())
         payload["models"] = [
             {
@@ -60,23 +66,7 @@ class ConfigSchemaTest(unittest.TestCase):
                 "exit": payload["exit"],
             }
         ]
-        parsed = parse_config(payload)
-        self.assertEqual(parsed["models"][0]["wallet_key_path"], "secrets/wallet.long.enc.json")
-
-    def test_model_wallet_key_path_must_not_be_empty(self) -> None:
-        payload = deepcopy(_build_base_config())
-        payload["models"] = [
-            {
-                "model_id": "core_long_v0",
-                "enabled": True,
-                "direction": "LONG_ONLY",
-                "wallet_key_path": "   ",
-                "strategy": payload["strategy"],
-                "risk": payload["risk"],
-                "exit": payload["exit"],
-            }
-        ]
-        with self.assertRaisesRegex(ValueError, "models\\[0\\]\\.wallet_key_path"):
+        with self.assertRaisesRegex(ValueError, "unknown keys"):
             parse_config(payload)
 
 

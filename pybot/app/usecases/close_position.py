@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 from pybot.app.ports.execution_port import ExecutionPort, SubmitSwapRequest, SwapSide
 from pybot.app.ports.lock_port import LockPort
 from pybot.app.ports.logger_port import LoggerPort
 from pybot.app.ports.persistence_port import PersistencePort
-from pybot.app.usecases.usecase_utils import now_iso, strip_none, to_error_message
+from pybot.app.usecases.usecase_utils import (
+    now_iso,
+    should_retry_error,
+    strip_none,
+    to_error_message,
+)
 from pybot.domain.model.trade_state import assert_trade_state_transition
 from pybot.domain.model.types import BotConfig, CloseReason, TradeRecord, TradeState
 from pybot.domain.utils.math import round_to
@@ -15,6 +21,10 @@ SOL_ATOMIC_MULTIPLIER = 1_000_000_000
 USDC_ATOMIC_MULTIPLIER = 1_000_000
 TX_CONFIRM_TIMEOUT_MS = 75_000
 TX_INFLIGHT_TTL_SECONDS = 180
+DEFAULT_EXIT_RETRY_ATTEMPTS = 2
+STOP_LOSS_EXIT_RETRY_ATTEMPTS = 5
+DEFAULT_EXIT_RETRY_DELAY_SECONDS = 0.8
+STOP_LOSS_EXIT_RETRY_DELAY_SECONDS = 0.15
 
 
 @dataclass
@@ -122,139 +132,205 @@ def close_position(
 
     before_balances = snapshot_balances()
 
-    try:
-        submission = execution.submit_swap(
-            SubmitSwapRequest(
-                side=side,
-                amount_atomic=amount_atomic,
-                slippage_bps=config["execution"]["slippage_bps"],
-                only_direct_routes=config["execution"]["only_direct_routes"],
+    max_exit_attempts = (
+        STOP_LOSS_EXIT_RETRY_ATTEMPTS
+        if close_reason == "STOP_LOSS"
+        else DEFAULT_EXIT_RETRY_ATTEMPTS
+    )
+    retry_delay_seconds = (
+        STOP_LOSS_EXIT_RETRY_DELAY_SECONDS
+        if close_reason == "STOP_LOSS"
+        else DEFAULT_EXIT_RETRY_DELAY_SECONDS
+    )
+    last_error_message = "unknown error"
+
+    for attempt in range(1, max_exit_attempts + 1):
+        try:
+            submission = execution.submit_swap(
+                SubmitSwapRequest(
+                    side=side,
+                    amount_atomic=amount_atomic,
+                    slippage_bps=config["execution"]["slippage_bps"],
+                    only_direct_routes=config["execution"]["only_direct_routes"],
+                )
             )
-        )
 
-        trade["execution"]["exit_tx_signature"] = submission.tx_signature
-        if submission.order:
-            trade["execution"]["exit_order"] = submission.order
-        exit_result = submission.result
-        if exit_result is None:
+            trade["execution"]["exit_tx_signature"] = submission.tx_signature
+            if submission.order:
+                trade["execution"]["exit_order"] = submission.order
+            exit_result = submission.result
+            if exit_result is None:
+                if side == "SELL_SOL_FOR_USDC":
+                    estimated_input_sol = submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER
+                    estimated_output_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
+                    estimated_avg_fill_price = (
+                        estimated_output_usdc / estimated_input_sol if estimated_input_sol > 0 else close_price
+                    )
+                else:
+                    estimated_input_usdc = submission.in_amount_atomic / USDC_ATOMIC_MULTIPLIER
+                    estimated_output_sol = submission.out_amount_atomic / SOL_ATOMIC_MULTIPLIER
+                    estimated_avg_fill_price = (
+                        estimated_input_usdc / estimated_output_sol if estimated_output_sol > 0 else close_price
+                    )
+                    estimated_output_usdc = estimated_input_usdc
+                    estimated_input_sol = estimated_output_sol
+                exit_result = {
+                    "status": "ESTIMATED",
+                    "avg_fill_price": estimated_avg_fill_price,
+                    "spent_quote_usdc": estimated_output_usdc,
+                    "filled_base_sol": estimated_input_sol,
+                }
+            trade["execution"]["exit_result"] = exit_result
+            trade["execution"]["exit_submission_state"] = "SUBMITTED"
+            if "exit_error" in trade["execution"]:
+                del trade["execution"]["exit_error"]
+            trade["updated_at"] = now_iso()
+            persistence.update_trade(
+                trade["trade_id"],
+                strip_none({"execution": trade["execution"], "updated_at": trade["updated_at"]}),
+            )
+
+            lock.set_inflight_tx(submission.tx_signature, TX_INFLIGHT_TTL_SECONDS)
+            try:
+                confirmation = execution.confirm_swap(submission.tx_signature, TX_CONFIRM_TIMEOUT_MS)
+            finally:
+                lock.clear_inflight_tx(submission.tx_signature)
+
+            if not confirmation.confirmed:
+                last_error_message = confirmation.error or "unknown confirmation error"
+                trade["execution"]["exit_submission_state"] = "FAILED"
+                trade["execution"]["exit_error"] = (
+                    f"attempt {attempt}/{max_exit_attempts}: {last_error_message}"
+                )
+                persist_execution_only()
+                if should_retry_error(
+                    attempt=attempt,
+                    max_attempts=max_exit_attempts,
+                    error_message=last_error_message,
+                ):
+                    logger.warn(
+                        "close_position retrying after unconfirmed exit tx",
+                        {
+                            "trade_id": trade["trade_id"],
+                            "reason": close_reason,
+                            "attempt": attempt,
+                            "max_attempts": max_exit_attempts,
+                            "error": last_error_message,
+                        },
+                    )
+                    if retry_delay_seconds > 0:
+                        time.sleep(retry_delay_seconds)
+                    continue
+
+                return ClosePositionResult(
+                    status="FAILED",
+                    trade_id=trade["trade_id"],
+                    summary=f"FAILED: exit tx not confirmed ({last_error_message})",
+                )
+
             if side == "SELL_SOL_FOR_USDC":
-                estimated_input_sol = submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER
-                estimated_output_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
-                estimated_avg_fill_price = (
-                    estimated_output_usdc / estimated_input_sol if estimated_input_sol > 0 else close_price
-                )
+                input_sol = submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER
+                output_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
+                fallback_exit_price = output_usdc / input_sol if input_sol > 0 else close_price
             else:
-                estimated_input_usdc = submission.in_amount_atomic / USDC_ATOMIC_MULTIPLIER
-                estimated_output_sol = submission.out_amount_atomic / SOL_ATOMIC_MULTIPLIER
-                estimated_avg_fill_price = (
-                    estimated_input_usdc / estimated_output_sol if estimated_output_sol > 0 else close_price
-                )
-                estimated_output_usdc = estimated_input_usdc
-                estimated_input_sol = estimated_output_sol
-            exit_result = {
-                "status": "ESTIMATED",
-                "avg_fill_price": estimated_avg_fill_price,
-                "spent_quote_usdc": estimated_output_usdc,
-                "filled_base_sol": estimated_input_sol,
-            }
-        trade["execution"]["exit_result"] = exit_result
-        trade["execution"]["exit_submission_state"] = "SUBMITTED"
-        trade["updated_at"] = now_iso()
-        persistence.update_trade(
-            trade["trade_id"],
-            strip_none({"execution": trade["execution"], "updated_at": trade["updated_at"]}),
-        )
+                input_usdc = submission.in_amount_atomic / USDC_ATOMIC_MULTIPLIER
+                output_sol = submission.out_amount_atomic / SOL_ATOMIC_MULTIPLIER
+                fallback_exit_price = input_usdc / output_sol if output_sol > 0 else close_price
 
-        lock.set_inflight_tx(submission.tx_signature, TX_INFLIGHT_TTL_SECONDS)
-        confirmation = execution.confirm_swap(submission.tx_signature, TX_CONFIRM_TIMEOUT_MS)
-        lock.clear_inflight_tx(submission.tx_signature)
+            resolved_exit_price = (
+                float(exit_result["avg_fill_price"])
+                if "avg_fill_price" in exit_result
+                else fallback_exit_price
+            )
 
-        if not confirmation.confirmed:
+            after_balances = snapshot_balances()
+            if before_balances is not None and after_balances is not None:
+                before_quote, before_base = before_balances
+                after_quote, after_base = after_balances
+                if side == "SELL_SOL_FOR_USDC":
+                    actual_quote_usdc = max(round_to(after_quote - before_quote, 6), 0.0)
+                    actual_base_sol = max(float(trade["position"].get("quantity_sol") or 0.0), 0.0)
+                else:
+                    actual_quote_usdc = max(round_to(before_quote - after_quote, 6), 0.0)
+                    actual_base_sol = max(round_to(after_base - before_base, 9), 0.0)
+
+                if actual_quote_usdc > 0 and actual_base_sol > 0:
+                    trade["execution"]["exit_result"] = {
+                        "status": "CONFIRMED",
+                        "spent_quote_usdc": actual_quote_usdc,
+                        "filled_base_sol": actual_base_sol,
+                        "avg_fill_price": actual_quote_usdc / actual_base_sol,
+                    }
+                    resolved_exit_price = actual_quote_usdc / actual_base_sol
+
+            previous_position_snapshot = dict(trade["position"])
+            previous_close_reason = trade.get("close_reason")
+            trade["execution"]["exit_submission_state"] = "CONFIRMED"
+            trade["position"]["status"] = "CLOSED"
+            trade["position"]["exit_price"] = round_to(resolved_exit_price, 6)
+            trade["position"]["exit_trigger_price"] = round_to(close_price, 6)
+            trade["position"]["exit_time_iso"] = now_iso()
+            trade["close_reason"] = close_reason
+
+            try:
+                move_state("CLOSED")
+            except Exception:
+                trade["position"] = previous_position_snapshot
+                if previous_close_reason is None and "close_reason" in trade:
+                    del trade["close_reason"]
+                elif previous_close_reason is not None:
+                    trade["close_reason"] = previous_close_reason
+                raise
+
+            attempt_note = f" after {attempt} attempts" if attempt > 1 else ""
+            return ClosePositionResult(
+                status="CLOSED",
+                trade_id=trade["trade_id"],
+                summary=(
+                    f"CLOSED: reason={close_reason}, tx={submission.tx_signature}, direction={direction}, "
+                    f"fill={round_to(trade['position']['exit_price'], 4)}, trigger={round_to(close_price, 4)}"
+                    f"{attempt_note}"
+                ),
+            )
+        except Exception as error:
+            last_error_message = to_error_message(error)
             trade["execution"]["exit_submission_state"] = "FAILED"
-            trade["execution"]["exit_error"] = confirmation.error or "unknown confirmation error"
-            persist_execution_only()
+            trade["execution"]["exit_error"] = f"attempt {attempt}/{max_exit_attempts}: {last_error_message}"
+            try:
+                persist_execution_only()
+            except Exception as persist_error:
+                logger.error(
+                    "close_position execution persistence failed",
+                    {"trade_id": trade["trade_id"], "error": to_error_message(persist_error)},
+                )
+            if should_retry_error(
+                attempt=attempt,
+                max_attempts=max_exit_attempts,
+                error_message=last_error_message,
+            ):
+                logger.warn(
+                    "close_position retrying after submit/confirm exception",
+                    {
+                        "trade_id": trade["trade_id"],
+                        "reason": close_reason,
+                        "attempt": attempt,
+                        "max_attempts": max_exit_attempts,
+                        "error": last_error_message,
+                    },
+                )
+                if retry_delay_seconds > 0:
+                    time.sleep(retry_delay_seconds)
+                continue
+
+            logger.error("close_position failed", {"trade_id": trade["trade_id"], "error": last_error_message})
             return ClosePositionResult(
                 status="FAILED",
                 trade_id=trade["trade_id"],
-                summary=f"FAILED: exit tx not confirmed ({trade['execution']['exit_error']})",
+                summary=f"FAILED: {last_error_message}",
             )
 
-        if side == "SELL_SOL_FOR_USDC":
-            input_sol = submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER
-            output_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
-            fallback_exit_price = output_usdc / input_sol if input_sol > 0 else close_price
-        else:
-            input_usdc = submission.in_amount_atomic / USDC_ATOMIC_MULTIPLIER
-            output_sol = submission.out_amount_atomic / SOL_ATOMIC_MULTIPLIER
-            fallback_exit_price = input_usdc / output_sol if output_sol > 0 else close_price
-
-        resolved_exit_price = (
-            float(exit_result["avg_fill_price"])
-            if "avg_fill_price" in exit_result
-            else fallback_exit_price
-        )
-
-        after_balances = snapshot_balances()
-        if before_balances is not None and after_balances is not None:
-            before_quote, before_base = before_balances
-            after_quote, after_base = after_balances
-            if side == "SELL_SOL_FOR_USDC":
-                actual_quote_usdc = max(round_to(after_quote - before_quote, 6), 0.0)
-                actual_base_sol = max(float(trade["position"].get("quantity_sol") or 0.0), 0.0)
-            else:
-                actual_quote_usdc = max(round_to(before_quote - after_quote, 6), 0.0)
-                actual_base_sol = max(round_to(after_base - before_base, 9), 0.0)
-
-            if actual_quote_usdc > 0 and actual_base_sol > 0:
-                trade["execution"]["exit_result"] = {
-                    "status": "CONFIRMED",
-                    "spent_quote_usdc": actual_quote_usdc,
-                    "filled_base_sol": actual_base_sol,
-                    "avg_fill_price": actual_quote_usdc / actual_base_sol,
-                }
-                resolved_exit_price = actual_quote_usdc / actual_base_sol
-
-        previous_position_snapshot = dict(trade["position"])
-        previous_close_reason = trade.get("close_reason")
-        trade["execution"]["exit_submission_state"] = "CONFIRMED"
-        trade["position"]["status"] = "CLOSED"
-        trade["position"]["exit_price"] = round_to(resolved_exit_price, 6)
-        trade["position"]["exit_trigger_price"] = round_to(close_price, 6)
-        trade["position"]["exit_time_iso"] = now_iso()
-        trade["close_reason"] = close_reason
-
-        try:
-            move_state("CLOSED")
-        except Exception:
-            trade["position"] = previous_position_snapshot
-            if previous_close_reason is None and "close_reason" in trade:
-                del trade["close_reason"]
-            elif previous_close_reason is not None:
-                trade["close_reason"] = previous_close_reason
-            raise
-
-        return ClosePositionResult(
-            status="CLOSED",
-            trade_id=trade["trade_id"],
-            summary=(
-                f"CLOSED: reason={close_reason}, tx={submission.tx_signature}, direction={direction}, "
-                f"fill={round_to(trade['position']['exit_price'], 4)}, trigger={round_to(close_price, 4)}"
-            ),
-        )
-    except Exception as error:
-        error_message = to_error_message(error)
-        logger.error("close_position failed", {"trade_id": trade["trade_id"], "error": error_message})
-        trade["execution"]["exit_submission_state"] = "FAILED"
-        trade["execution"]["exit_error"] = error_message
-        try:
-            persist_execution_only()
-        except Exception as persist_error:
-            logger.error(
-                "close_position execution persistence failed",
-                {"trade_id": trade["trade_id"], "error": to_error_message(persist_error)},
-            )
-        return ClosePositionResult(
-            status="FAILED",
-            trade_id=trade["trade_id"],
-            summary=f"FAILED: {error_message}",
-        )
+    return ClosePositionResult(
+        status="FAILED",
+        trade_id=trade["trade_id"],
+        summary=f"FAILED: {last_error_message}",
+    )

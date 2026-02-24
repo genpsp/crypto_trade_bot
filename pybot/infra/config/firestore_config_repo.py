@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from google.cloud.firestore import Client
 
 from pybot.domain.model.types import BotConfig
 from pybot.infra.config.schema import parse_config
+
+
+@dataclass(frozen=True)
+class ModelMetadata:
+    enabled: bool
+    direction: str
+    mode: str
+    wallet_key_path: str | None
 
 
 class FirestoreConfigRepository:
@@ -36,9 +45,7 @@ class FirestoreConfigRepository:
 
         return model_data, config_payload
 
-    def get_current_config(self, model_id: str) -> BotConfig:
-        model_data, config_payload = self._load_model_payload(model_id)
-
+    def _parse_model_metadata(self, model_id: str, model_data: dict[str, Any]) -> ModelMetadata:
         enabled = model_data.get("enabled")
         if not isinstance(enabled, bool):
             raise RuntimeError(f"models/{model_id}.enabled must be boolean")
@@ -49,36 +56,48 @@ class FirestoreConfigRepository:
         if mode not in ("PAPER", "LIVE"):
             raise RuntimeError(f"models/{model_id}.mode must be PAPER or LIVE")
 
+        wallet_key_path: str | None = None
+        raw_wallet_key_path = model_data.get("wallet_key_path")
+        if isinstance(raw_wallet_key_path, str):
+            stripped = raw_wallet_key_path.strip()
+            if stripped:
+                wallet_key_path = stripped
+
+        return ModelMetadata(
+            enabled=enabled,
+            direction=direction,
+            mode=mode,
+            wallet_key_path=wallet_key_path,
+        )
+
+    def get_model_metadata(self, model_id: str) -> ModelMetadata:
+        model_ref = self.firestore.collection("models").document(model_id)
+        model_snapshot = model_ref.get()
+        if not model_snapshot.exists:
+            raise RuntimeError(f"models/{model_id} document is missing")
+        model_data = model_snapshot.to_dict()
+        if not isinstance(model_data, dict):
+            raise RuntimeError(f"models/{model_id} payload is invalid")
+        return self._parse_model_metadata(model_id, model_data)
+
+    def get_current_config(self, model_id: str) -> BotConfig:
+        model_data, config_payload = self._load_model_payload(model_id)
+        model_metadata = self._parse_model_metadata(model_id, model_data)
+
         normalized: dict[str, Any] = dict(config_payload)
         normalized.pop("enabled", None)
         normalized.pop("direction", None)
+        normalized.pop("models", None)
 
         execution_payload = normalized.get("execution")
         if not isinstance(execution_payload, dict):
             raise RuntimeError(f"models/{model_id}/config/current.execution must be object")
         execution: dict[str, Any] = dict(execution_payload)
         execution.pop("mode", None)
-        execution["mode"] = mode
+        execution["mode"] = model_metadata.mode
 
-        normalized["enabled"] = enabled
-        normalized["direction"] = direction
+        normalized["enabled"] = model_metadata.enabled
+        normalized["direction"] = model_metadata.direction
         normalized["execution"] = execution
-
-        model_wallet_key_path = model_data.get("wallet_key_path")
-        resolved_wallet_key_path: str | None = None
-        if isinstance(model_wallet_key_path, str) and model_wallet_key_path.strip() != "":
-            resolved_wallet_key_path = model_wallet_key_path.strip()
-
-        normalized["models"] = [
-            {
-                "model_id": model_id,
-                "enabled": enabled,
-                "direction": direction,
-                "wallet_key_path": resolved_wallet_key_path,
-                "strategy": normalized.get("strategy"),
-                "risk": normalized.get("risk"),
-                "exit": normalized.get("exit"),
-            }
-        ]
 
         return parse_config(normalized)

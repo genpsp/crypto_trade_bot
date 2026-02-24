@@ -73,6 +73,7 @@ def bootstrap() -> AppRuntime:
     for model_id in model_ids:
         try:
             startup_config = config_repo.get_current_config(model_id)
+            model_metadata = config_repo.get_model_metadata(model_id)
         except Exception as error:
             logger.error(
                 "failed to load model config",
@@ -83,12 +84,11 @@ def bootstrap() -> AppRuntime:
             )
             continue
 
-        model = startup_config["models"][0]
-        if not model["enabled"]:
+        if not startup_config["enabled"]:
             continue
         execution_config = startup_config["execution"]
         mode = execution_config["mode"]
-        wallet_key_path = model.get("wallet_key_path") or env.WALLET_KEY_PATH
+        wallet_key_path = model_metadata.wallet_key_path or env.WALLET_KEY_PATH
 
         context = ModelRuntimeContext(
             model_id=model_id,
@@ -102,8 +102,8 @@ def bootstrap() -> AppRuntime:
             {
                 "model_id": model_id,
                 "mode": mode,
-                "direction": model["direction"],
-                "strategy": model["strategy"]["name"],
+                "direction": startup_config["direction"],
+                "strategy": startup_config["strategy"]["name"],
                 "wallet_key_path": wallet_key_path,
             }
         )
@@ -112,8 +112,8 @@ def bootstrap() -> AppRuntime:
             {
                 "model_id": model_id,
                 "mode": mode,
-                "direction": model["direction"],
-                "strategy": model["strategy"]["name"],
+                "direction": startup_config["direction"],
+                "strategy": startup_config["strategy"]["name"],
                 "trades_path": f"models/{model_id}/{context.persistence.trades_collection_name}",
                 "runs_path": f"models/{model_id}/{context.persistence.runs_collection_name}",
                 "wallet_key_path": wallet_key_path,

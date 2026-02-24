@@ -11,6 +11,7 @@ from pybot.app.ports.execution_port import (
     SwapSubmission,
 )
 from pybot.app.ports.logger_port import LoggerPort
+from pybot.adapters.execution.http_retry import request_with_retry
 from pybot.adapters.execution.jupiter_quote_client import JupiterQuoteClient
 from pybot.adapters.execution.jupiter_quote_client import USDC_MINT
 from pybot.adapters.execution.solana_sender import SolanaSender
@@ -18,6 +19,8 @@ from pybot.adapters.execution.solana_sender import SolanaSender
 SWAP_API_URL = "https://lite-api.jup.ag/swap/v1/swap"
 SOL_ATOMIC_MULTIPLIER = 1_000_000_000
 USDC_ATOMIC_MULTIPLIER = 1_000_000
+SWAP_RETRY_ATTEMPTS = 4
+SWAP_RETRY_BASE_DELAY_SECONDS = 0.35
 
 
 class JupiterSwapAdapter(ExecutionPort):
@@ -25,6 +28,11 @@ class JupiterSwapAdapter(ExecutionPort):
         self.quote_client = quote_client
         self.solana_sender = solana_sender
         self.logger = logger
+
+    @staticmethod
+    def _assert_pair_supported(pair: str, context: str) -> None:
+        if pair != "SOL/USDC":
+            raise ValueError(f"Unsupported pair for {context}: {pair}")
 
     def submit_swap(self, request: SubmitSwapRequest) -> SwapSubmission:
         quote = self.quote_client.fetch_quote(request)
@@ -57,8 +65,7 @@ class JupiterSwapAdapter(ExecutionPort):
         return SwapConfirmation(confirmed=confirmation.confirmed, error=confirmation.error)
 
     def get_mark_price(self, pair: str) -> float:
-        if pair != "SOL/USDC":
-            raise ValueError(f"Unsupported pair for mark price: {pair}")
+        self._assert_pair_supported(pair, "mark price")
 
         quote = self.quote_client.fetch_quote(
             SubmitSwapRequest(
@@ -76,13 +83,11 @@ class JupiterSwapAdapter(ExecutionPort):
         return out_usdc
 
     def get_available_quote_usdc(self, pair: str) -> float:
-        if pair != "SOL/USDC":
-            raise ValueError(f"Unsupported pair for quote balance: {pair}")
+        self._assert_pair_supported(pair, "quote balance")
         return self.solana_sender.get_spl_token_balance_ui_amount(USDC_MINT)
 
     def get_available_base_sol(self, pair: str) -> float:
-        if pair != "SOL/USDC":
-            raise ValueError(f"Unsupported pair for base balance: {pair}")
+        self._assert_pair_supported(pair, "base balance")
         return self.solana_sender.get_native_sol_balance_ui_amount()
 
     def _fetch_swap_transaction(self, quote_response: dict[str, Any]) -> str:
@@ -91,18 +96,17 @@ class JupiterSwapAdapter(ExecutionPort):
             "userPublicKey": self.solana_sender.get_public_key_base58(),
             "wrapAndUnwrapSol": True,
         }
-        try:
-            response = requests.post(
+        response = request_with_retry(
+            lambda: requests.post(
                 SWAP_API_URL,
                 json=payload,
                 timeout=30,
                 headers={"Content-Type": "application/json"},
-            )
-        except Exception as error:
-            raise RuntimeError(f"Jupiter swap request failed: {error}") from error
-
-        if response.status_code != 200:
-            raise RuntimeError(f"Jupiter swap failed: HTTP {response.status_code}")
+            ),
+            attempts=SWAP_RETRY_ATTEMPTS,
+            base_delay_seconds=SWAP_RETRY_BASE_DELAY_SECONDS,
+            context="Jupiter swap failed",
+        )
 
         data = response.json()
         swap_transaction = data.get("swapTransaction")

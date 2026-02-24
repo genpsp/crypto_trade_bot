@@ -14,7 +14,21 @@ from solders.keypair import Keypair
 from solders.message import to_bytes_versioned
 from solders.transaction import VersionedTransaction
 
+from pybot.adapters.execution.http_retry import RETRIABLE_HTTP_STATUS_CODES, retry_delay_seconds
 from pybot.app.ports.logger_port import LoggerPort
+
+RPC_RETRY_ATTEMPTS = 4
+RPC_RETRY_BASE_DELAY_SECONDS = 0.35
+RETRIABLE_RPC_ERROR_CODES = {-32005, -32004, -32603}
+RETRIABLE_RPC_ERROR_MARKERS = (
+    "too many requests",
+    "rate limit",
+    "temporarily unavailable",
+    "node is behind",
+    "timed out",
+    "timeout",
+    "service unavailable",
+)
 
 
 @dataclass
@@ -61,6 +75,23 @@ def _decrypt_secret_key(path: str, passphrase: str) -> bytes:
     if len(secret_array) != 64:
         raise ValueError(f"Decrypted secret key length must be 64, got {len(secret_array)}")
     return bytes(secret_array)
+
+
+def _extract_rpc_error_text(error_obj: Any) -> str:
+    if isinstance(error_obj, dict):
+        message = error_obj.get("message")
+        if isinstance(message, str):
+            return message
+    return str(error_obj)
+
+
+def _is_retriable_rpc_error(error_obj: Any) -> bool:
+    if isinstance(error_obj, dict):
+        code = error_obj.get("code")
+        if isinstance(code, int) and code in RETRIABLE_RPC_ERROR_CODES:
+            return True
+    message = _extract_rpc_error_text(error_obj).lower()
+    return any(marker in message for marker in RETRIABLE_RPC_ERROR_MARKERS)
 
 
 class SolanaSender:
@@ -137,12 +168,42 @@ class SolanaSender:
             "method": method,
             "params": params,
         }
-        response = requests.post(self.rpc_url, json=payload, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        if "error" in data:
-            raise RuntimeError(f"RPC {method} failed: {data['error']}")
-        return data.get("result")
+        for attempt in range(1, RPC_RETRY_ATTEMPTS + 1):
+            try:
+                response = requests.post(self.rpc_url, json=payload, timeout=30)
+            except requests.RequestException as error:
+                if attempt < RPC_RETRY_ATTEMPTS:
+                    time.sleep(retry_delay_seconds(RPC_RETRY_BASE_DELAY_SECONDS, attempt))
+                    continue
+                raise RuntimeError(f"RPC {method} failed: {error}") from error
+
+            if response.status_code != 200:
+                should_retry = (
+                    response.status_code in RETRIABLE_HTTP_STATUS_CODES and attempt < RPC_RETRY_ATTEMPTS
+                )
+                if should_retry:
+                    time.sleep(retry_delay_seconds(RPC_RETRY_BASE_DELAY_SECONDS, attempt))
+                    continue
+                response.raise_for_status()
+
+            try:
+                data = response.json()
+            except ValueError as error:
+                if attempt < RPC_RETRY_ATTEMPTS:
+                    time.sleep(retry_delay_seconds(RPC_RETRY_BASE_DELAY_SECONDS, attempt))
+                    continue
+                raise RuntimeError(f"RPC {method} returned invalid JSON: {error}") from error
+
+            if "error" in data:
+                rpc_error = data["error"]
+                if attempt < RPC_RETRY_ATTEMPTS and _is_retriable_rpc_error(rpc_error):
+                    time.sleep(retry_delay_seconds(RPC_RETRY_BASE_DELAY_SECONDS, attempt))
+                    continue
+                raise RuntimeError(f"RPC {method} failed: {rpc_error}")
+
+            return data.get("result")
+
+        raise RuntimeError(f"RPC {method} failed: retry attempts exhausted")
 
     def send_versioned_transaction_base64(self, serialized_base64: str) -> str:
         tx_bytes = base64.b64decode(serialized_base64)

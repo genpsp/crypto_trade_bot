@@ -20,7 +20,7 @@ from pybot.app.usecases.open_position import (
     open_position,
 )
 from pybot.app.usecases.usecase_utils import to_error_message
-from pybot.domain.model.types import BotConfig, ModelConfig, RunRecord
+from pybot.domain.model.types import BotConfig, RunRecord
 from pybot.domain.strategy.registry import evaluate_strategy_for_model
 from pybot.domain.utils.math import round_to
 from pybot.domain.utils.time import build_run_id, get_last_closed_bar_close, get_utc_day_range
@@ -45,24 +45,6 @@ def _round_metric(value: Any, digits: int = 6) -> float | None:
     if isinstance(value, (int, float)):
         return round_to(float(value), digits)
     return None
-
-
-def _find_model(config: BotConfig, model_id: str) -> ModelConfig | None:
-    for model in config.get("models", []):
-        if model.get("model_id") == model_id:
-            return model
-    return None
-
-
-def _to_runtime_config(config: BotConfig, model: ModelConfig) -> BotConfig:
-    runtime: BotConfig = {
-        **config,
-        "direction": model["direction"],
-        "strategy": model["strategy"],
-        "risk": model["risk"],
-        "exit": model["exit"],
-    }
-    return runtime
 
 
 def _build_model_run_id(model_id: str, bar_close_time_iso: str, run_at: datetime) -> str:
@@ -99,18 +81,11 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
         return run
 
     try:
-        config = persistence.get_current_config()
-        model = _find_model(config, model_id)
-        if model is None:
-            run["result"] = "SKIPPED"
-            run["summary"] = f"SKIPPED: model {model_id} is not found in config.models"
-            return run
-        if not model["enabled"]:
+        runtime_config: BotConfig = persistence.get_current_config()
+        if not runtime_config["enabled"]:
             run["result"] = "SKIPPED"
             run["summary"] = f"SKIPPED: model {model_id} is disabled"
             return run
-
-        runtime_config = _to_runtime_config(config, model)
 
         timeframe = runtime_config["signal_timeframe"]
         bar_close_time = get_last_closed_bar_close(run_at, timeframe)
@@ -118,11 +93,6 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
         run["run_id"] = _build_model_run_id(model_id, bar_close_time_iso, run_at)
         run["bar_close_time_iso"] = bar_close_time_iso
         run["config_version"] = runtime_config["meta"]["config_version"]
-
-        if not runtime_config["enabled"]:
-            run["result"] = "SKIPPED"
-            run["summary"] = "SKIPPED: model config.enabled is false"
-            return run
 
         open_trade = persistence.find_open_trade(runtime_config["pair"])
         if open_trade:
@@ -315,7 +285,12 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             ),
         )
         run["trade_id"] = opened.trade_id
-        run["result"] = "OPENED" if opened.status == "OPENED" else "FAILED"
+        if opened.status == "OPENED":
+            run["result"] = "OPENED"
+        elif opened.status == "CANCELED":
+            run["result"] = "SKIPPED_ENTRY"
+        else:
+            run["result"] = "FAILED"
         run["summary"] = opened.summary
         return run
     except Exception as error:

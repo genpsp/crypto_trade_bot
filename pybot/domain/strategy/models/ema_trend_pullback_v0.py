@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from pybot.domain.indicators.ta import atr_series, ema_series, rsi_series
+from pybot.domain.indicators.ta import atr_series, rsi_series
 from pybot.domain.model.types import (
     ExecutionConfig,
     ExitConfig,
@@ -18,6 +18,10 @@ from pybot.domain.risk.swing_low_stop import (
     tighten_stop_for_long,
 )
 from pybot.domain.strategy.shared.decision_builders import build_entry_signal, build_no_signal
+from pybot.domain.strategy.shared.market_context import (
+    build_ema_market_context,
+    calculate_minimum_bars,
+)
 
 # 押し目判定に使う過去バー本数、上げると押し目検知が増えやすくなり、エントリー機会が増える
 PULLBACK_LOOKBACK_BARS = 4
@@ -54,10 +58,8 @@ def evaluate_ema_trend_pullback_v0(
     exit: ExitConfig,
     execution: ExecutionConfig,
 ) -> StrategyDecision:
-    minimum_bars = max(
-        strategy["ema_fast_period"],
-        strategy["ema_slow_period"],
-        strategy["swing_low_lookback_bars"],
+    minimum_bars = calculate_minimum_bars(
+        strategy,
         PULLBACK_LOOKBACK_BARS + 1,
         RSI_PERIOD + 1,
         ATR_PERIOD + 1,
@@ -81,23 +83,16 @@ def evaluate_ema_trend_pullback_v0(
             diagnostics=diagnostics,
         )
 
-    closes = [bar.close for bar in bars]
-    highs = [bar.high for bar in bars]
-    lows = [bar.low for bar in bars]
-
-    ema_fast_series = ema_series(closes, strategy["ema_fast_period"])
-    ema_slow_series = ema_series(closes, strategy["ema_slow_period"])
-    ema_fast_offset = len(closes) - len(ema_fast_series)
-    ema_fast_by_bar: list[float | None] = []
-    for index, _close in enumerate(closes):
-        ema_index = index - ema_fast_offset
-        ema_fast_by_bar.append(ema_fast_series[ema_index] if ema_index >= 0 else None)
-
-    ema_fast = ema_fast_by_bar[-1]
-    ema_slow = ema_slow_series[-1] if ema_slow_series else None
-    entry_price = closes[-1] if closes else None
-    previous_close = closes[-2] if len(closes) >= 2 else None
-    previous_ema_fast = ema_fast_by_bar[-2] if len(ema_fast_by_bar) >= 2 else None
+    context = build_ema_market_context(bars, strategy)
+    closes = context.closes
+    highs = context.highs
+    lows = context.lows
+    ema_fast_by_bar = context.ema_fast_by_bar
+    ema_fast = context.ema_fast
+    ema_slow = context.ema_slow
+    entry_price = context.entry_price
+    previous_close = context.previous_close
+    previous_ema_fast = context.previous_ema_fast
     diagnostics["ema_fast"] = ema_fast
     diagnostics["ema_slow"] = ema_slow
     diagnostics["previous_close"] = previous_close
@@ -210,6 +205,14 @@ def evaluate_ema_trend_pullback_v0(
     diagnostics["atr_pct"] = atr_pct
     diagnostics["volatility_regime"] = volatility_regime
     diagnostics["position_size_multiplier"] = position_size_multiplier
+    if volatility_regime == "STORM" and position_size_multiplier <= 0:
+        return build_no_signal(
+            "NO_SIGNAL: storm entries are disabled by storm_size_multiplier=0",
+            "STORM_SIZE_MULTIPLIER_DISABLED",
+            ema_fast=ema_fast,
+            ema_slow=ema_slow,
+            diagnostics=diagnostics,
+        )
     if latest_atr is not None and math.isfinite(latest_atr) and latest_atr > 0:
         atr_stop = entry_price - latest_atr * ATR_STOP_MULTIPLIER
         if atr_stop < stop_candidate:

@@ -15,6 +15,7 @@ from solders.keypair import Keypair
 from pybot.adapters.execution.jupiter_quote_client import SOL_MINT, USDC_MINT, JupiterQuoteClient
 from pybot.adapters.execution.jupiter_swap import JupiterSwapAdapter
 from pybot.adapters.execution.solana_sender import SignatureConfirmation, SolanaSender
+from pybot.app.ports.execution_port import SubmitSwapRequest, SwapConfirmation, SwapSubmission
 from pybot.app.usecases.close_position import (
     ClosePositionDependencies,
     ClosePositionInput,
@@ -252,33 +253,65 @@ def _build_config() -> BotConfig:
         },
         "exit": {"stop": "SWING_LOW", "take_profit_r_multiple": 1.5},
         "meta": {"config_version": 2, "note": "test"},
-        "models": [
-            {
-                "model_id": "core_long_v0",
-                "enabled": True,
-                "direction": "LONG_ONLY",
-                "strategy": {
-                    "name": "ema_trend_pullback_v0",
-                    "ema_fast_period": 12,
-                    "ema_slow_period": 34,
-                    "swing_low_lookback_bars": 12,
-                    "entry": "ON_BAR_CLOSE",
-                },
-                "risk": {
-                    "max_loss_per_trade_pct": 0.5,
-                    "max_trades_per_day": 1,
-                    "volatile_atr_pct_threshold": 1.3,
-                    "storm_atr_pct_threshold": 1.4,
-                    "volatile_size_multiplier": 0.75,
-                    "storm_size_multiplier": 0.5,
-                },
-                "exit": {"stop": "SWING_LOW", "take_profit_r_multiple": 1.5},
-            }
-        ],
     }
 
 
 class TradeExecutionApiTest(unittest.TestCase):
+    def test_open_position_is_canceled_when_multiplier_is_zero(self) -> None:
+        def responder(
+            method: str,
+            path: str,
+            query: dict[str, list[str]],
+            body_json: dict[str, Any] | None,
+        ) -> tuple[int, dict[str, Any]]:
+            _ = method
+            _ = path
+            _ = query
+            _ = body_json
+            return 404, {"error": "not used"}
+
+        with MockServer(responder):
+            config = _build_config()
+            persistence = InMemoryPersistence(config)
+            lock = InMemoryLock()
+            logger = InMemoryLogger()
+            sender = FakeSolanaSender()
+            execution = JupiterSwapAdapter(JupiterQuoteClient(), sender, logger)
+
+            signal = EntrySignalDecision(
+                type="ENTER",
+                summary="test enter",
+                ema_fast=101,
+                ema_slow=100,
+                entry_price=100,
+                stop_price=98,
+                take_profit_price=103,
+                diagnostics={
+                    "volatility_regime": "STORM",
+                    "position_size_multiplier": 0,
+                },
+            )
+
+            opened = open_position(
+                OpenPositionDependencies(
+                    execution=execution,
+                    lock=lock,
+                    logger=logger,
+                    persistence=persistence,
+                ),
+                OpenPositionInput(
+                    config=config,
+                    signal=signal,
+                    bar_close_time_iso="2026-02-21T10:00:00.000Z",
+                    model_id="core_long_v0",
+                ),
+            )
+
+            self.assertEqual("CANCELED", opened.status)
+            self.assertEqual(0, len(sender.sent))
+            trade = persistence.trades[opened.trade_id]
+            self.assertEqual("CANCELED", trade["state"])
+
     def test_open_and_close_position_hit_jupiter_quote_and_swap_api(self) -> None:
         def responder(
             method: str,
@@ -437,29 +470,13 @@ class TradeExecutionApiTest(unittest.TestCase):
             ):
                 config = _build_config()
                 config["direction"] = "SHORT_ONLY"
-                config["models"] = [
-                    {
-                        "model_id": "storm_short_v0",
-                        "enabled": True,
-                        "direction": "SHORT_ONLY",
-                        "strategy": {
-                            "name": "storm_short_v0",
-                            "ema_fast_period": 12,
-                            "ema_slow_period": 34,
-                            "swing_low_lookback_bars": 12,
-                            "entry": "ON_BAR_CLOSE",
-                        },
-                        "risk": {
-                            "max_loss_per_trade_pct": 0.5,
-                            "max_trades_per_day": 1,
-                            "volatile_atr_pct_threshold": 1.3,
-                            "storm_atr_pct_threshold": 1.4,
-                            "volatile_size_multiplier": 0.75,
-                            "storm_size_multiplier": 0.5,
-                        },
-                        "exit": {"stop": "SWING_LOW", "take_profit_r_multiple": 1.5},
-                    }
-                ]
+                config["strategy"] = {
+                    "name": "storm_short_v0",
+                    "ema_fast_period": 12,
+                    "ema_slow_period": 34,
+                    "swing_low_lookback_bars": 12,
+                    "entry": "ON_BAR_CLOSE",
+                }
                 persistence = InMemoryPersistence(config)
                 lock = InMemoryLock()
                 logger = InMemoryLogger()
@@ -528,8 +545,328 @@ class TradeExecutionApiTest(unittest.TestCase):
                 self.assertGreaterEqual(len(quote_calls), 3, server.requests)
                 self.assertEqual(2, len(swap_calls), server.requests)
 
+    def test_close_position_stop_loss_retries_immediately_until_confirmed(self) -> None:
+        config = _build_config()
+        persistence = InMemoryPersistence(config)
+        lock = InMemoryLock()
+        logger = InMemoryLogger()
+
+        trade: TradeRecord = {
+            "trade_id": "2026-02-22T20:00:00Z_core_long_v0_LONG",
+            "model_id": "core_long_v0",
+            "bar_close_time_iso": "2026-02-22T20:00:00Z",
+            "pair": "SOL/USDC",
+            "direction": "LONG_ONLY",
+            "state": "CONFIRMED",
+            "config_version": 2,
+            "execution": {"entry_tx_signature": "entry_sig_1"},
+            "position": {
+                "status": "OPEN",
+                "quantity_sol": 0.5,
+                "entry_price": 80.0,
+                "stop_price": 78.0,
+                "take_profit_price": 84.0,
+                "entry_time_iso": "2026-02-22T20:01:00Z",
+            },
+            "created_at": "2026-02-22T20:01:00Z",
+            "updated_at": "2026-02-22T20:01:00Z",
+        }
+        persistence.create_trade(trade)
+        stored_trade = persistence.trades[trade["trade_id"]]
+
+        class RetryExecution:
+            def __init__(self) -> None:
+                self.submit_calls = 0
+
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                _ = request
+                self.submit_calls += 1
+                if self.submit_calls < 4:
+                    raise RuntimeError("temporary rpc error")
+                return SwapSubmission(
+                    tx_signature=f"exit_sig_{self.submit_calls}",
+                    in_amount_atomic=500_000_000,
+                    out_amount_atomic=40_000_000,
+                    order={"tx_signature": f"exit_sig_{self.submit_calls}"},
+                    result={
+                        "status": "ESTIMATED",
+                        "avg_fill_price": 80.0,
+                        "spent_quote_usdc": 40.0,
+                        "filled_base_sol": 0.5,
+                    },
+                )
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=True)
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 77.5
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return 1.0
+
+        execution = RetryExecution()
+        closed = close_position(
+            ClosePositionDependencies(
+                execution=execution,
+                lock=lock,
+                logger=logger,
+                persistence=persistence,
+            ),
+            ClosePositionInput(
+                config=config,
+                trade=stored_trade,
+                close_reason="STOP_LOSS",
+                close_price=77.5,
+            ),
+        )
+
+        self.assertEqual("CLOSED", closed.status)
+        self.assertEqual(4, execution.submit_calls)
+        self.assertIn("after 4 attempts", closed.summary)
+        closed_trade = persistence.trades[trade["trade_id"]]
+        self.assertEqual("CLOSED", closed_trade["state"])
+        self.assertEqual("CONFIRMED", closed_trade["execution"]["exit_submission_state"])
+
+    def test_open_position_retries_transient_submit_errors(self) -> None:
+        config = _build_config()
+        persistence = InMemoryPersistence(config)
+        lock = InMemoryLock()
+        logger = InMemoryLogger()
+
+        signal = EntrySignalDecision(
+            type="ENTER",
+            summary="retry enter",
+            ema_fast=101.0,
+            ema_slow=100.0,
+            entry_price=100.0,
+            stop_price=98.0,
+            take_profit_price=103.0,
+        )
+
+        class RetryEntryExecution:
+            def __init__(self) -> None:
+                self.submit_calls = 0
+
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                _ = request
+                self.submit_calls += 1
+                if self.submit_calls < 3:
+                    raise RuntimeError("temporary rpc timeout")
+                return SwapSubmission(
+                    tx_signature="entry_sig_retry_ok",
+                    in_amount_atomic=50_000_000,
+                    out_amount_atomic=500_000_000,
+                    order={"tx_signature": "entry_sig_retry_ok"},
+                    result={
+                        "status": "ESTIMATED",
+                        "avg_fill_price": 100.0,
+                        "spent_quote_usdc": 50.0,
+                        "filled_base_sol": 0.5,
+                    },
+                )
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=True)
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return 1.0
+
+        execution = RetryEntryExecution()
+        with patch("pybot.app.usecases.open_position.time.sleep", return_value=None):
+            opened = open_position(
+                OpenPositionDependencies(
+                    execution=execution,
+                    lock=lock,
+                    logger=logger,
+                    persistence=persistence,
+                ),
+                OpenPositionInput(
+                    config=config,
+                    signal=signal,
+                    bar_close_time_iso="2026-02-21T10:00:00.000Z",
+                    model_id="core_long_v0",
+                ),
+            )
+
+        self.assertEqual("OPENED", opened.status)
+        self.assertEqual(3, execution.submit_calls)
+        self.assertIn("after 3 attempts", opened.summary)
+        trade = persistence.trades[opened.trade_id]
+        self.assertEqual("CONFIRMED", trade["state"])
+
+    def test_open_position_does_not_retry_non_retriable_submit_error(self) -> None:
+        config = _build_config()
+        persistence = InMemoryPersistence(config)
+        lock = InMemoryLock()
+        logger = InMemoryLogger()
+
+        signal = EntrySignalDecision(
+            type="ENTER",
+            summary="no retry enter",
+            ema_fast=101.0,
+            ema_slow=100.0,
+            entry_price=100.0,
+            stop_price=98.0,
+            take_profit_price=103.0,
+        )
+
+        class NonRetriableEntryExecution:
+            def __init__(self) -> None:
+                self.submit_calls = 0
+
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                _ = request
+                self.submit_calls += 1
+                raise RuntimeError("insufficient funds for fee")
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=False, error="unused")
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return 1.0
+
+        execution = NonRetriableEntryExecution()
+        with patch("pybot.app.usecases.open_position.time.sleep", return_value=None):
+            opened = open_position(
+                OpenPositionDependencies(
+                    execution=execution,
+                    lock=lock,
+                    logger=logger,
+                    persistence=persistence,
+                ),
+                OpenPositionInput(
+                    config=config,
+                    signal=signal,
+                    bar_close_time_iso="2026-02-21T10:00:00.000Z",
+                    model_id="core_long_v0",
+                ),
+            )
+
+        self.assertEqual("FAILED", opened.status)
+        self.assertEqual(1, execution.submit_calls)
+        trade = persistence.trades[opened.trade_id]
+        self.assertEqual("FAILED", trade["state"])
+        self.assertIn("attempt 1/3", trade["execution"]["entry_error"])
+
+    def test_submit_swap_retries_quote_and_swap_http_503(self) -> None:
+        quote_count = 0
+        swap_count = 0
+
+        def responder(
+            method: str,
+            path: str,
+            query: dict[str, list[str]],
+            body_json: dict[str, Any] | None,
+        ) -> tuple[int, dict[str, Any]]:
+            nonlocal quote_count, swap_count
+            _ = query
+            _ = body_json
+            if method == "GET" and path == "/swap/v1/quote":
+                quote_count += 1
+                if quote_count == 1:
+                    return 503, {"error": "temporary unavailable"}
+                return 200, {"inAmount": "50000000", "outAmount": "500000000"}
+            if method == "POST" and path == "/swap/v1/swap":
+                swap_count += 1
+                if swap_count == 1:
+                    return 503, {"error": "temporary unavailable"}
+                return 200, {"swapTransaction": "AQ=="}
+            return 404, {"error": "not found"}
+
+        with MockServer(responder) as server:
+            quote_url = f"{server.base_url}/swap/v1/quote"
+            swap_url = f"{server.base_url}/swap/v1/swap"
+            sender = FakeSolanaSender()
+            adapter = JupiterSwapAdapter(JupiterQuoteClient(), sender, InMemoryLogger())
+            with patch("pybot.adapters.execution.jupiter_quote_client.QUOTE_API_URL", quote_url), patch(
+                "pybot.adapters.execution.jupiter_swap.SWAP_API_URL",
+                swap_url,
+            ), patch(
+                "pybot.adapters.execution.http_retry.time.sleep",
+                return_value=None,
+            ):
+                submission = adapter.submit_swap(
+                    SubmitSwapRequest(
+                        side="BUY_SOL_WITH_USDC",
+                        amount_atomic=50_000_000,
+                        slippage_bps=12,
+                        only_direct_routes=False,
+                    )
+                )
+
+        self.assertEqual("sig-1", submission.tx_signature)
+        self.assertEqual(2, quote_count)
+        self.assertEqual(2, swap_count)
+        self.assertEqual(1, len(sender.sent))
+
 
 class SolanaSenderRpcMethodTest(unittest.TestCase):
+    def test_rpc_retries_on_http_503_then_succeeds(self) -> None:
+        request_count = 0
+
+        def responder(
+            method: str,
+            path: str,
+            query: dict[str, list[str]],
+            body_json: dict[str, Any] | None,
+        ) -> tuple[int, dict[str, Any]]:
+            nonlocal request_count
+            _ = query
+            if method == "POST" and path == "/rpc" and body_json and body_json.get("method") == "getBalance":
+                request_count += 1
+                if request_count == 1:
+                    return 503, {"error": "temporary unavailable"}
+                return 200, {"jsonrpc": "2.0", "id": 1, "result": {"value": 2_000_000_000}}
+            return 404, {"error": "not found"}
+
+        with MockServer(responder) as server:
+            fake_secret = bytes(Keypair())
+            with patch(
+                "pybot.adapters.execution.solana_sender._decrypt_secret_key",
+                return_value=fake_secret,
+            ), patch("pybot.adapters.execution.solana_sender.time.sleep", return_value=None):
+                sender = SolanaSender(
+                    rpc_url=f"{server.base_url}/rpc",
+                    wallet_key_path="unused",
+                    wallet_passphrase="unused",
+                    logger=InMemoryLogger(),
+                )
+                balance = sender.get_native_sol_balance_ui_amount()
+
+        self.assertEqual(2.0, balance)
+        self.assertEqual(2, request_count)
+
     def test_send_versioned_transaction_uses_send_transaction_rpc_method(self) -> None:
         def responder(
             method: str,

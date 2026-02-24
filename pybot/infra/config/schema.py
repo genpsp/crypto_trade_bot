@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pybot.domain.model.types import BotConfig, ModelConfig, StrategyConfig
+from pybot.domain.model.types import BotConfig, StrategyConfig
 
 ALLOWED_TOP_LEVEL_KEYS = {
     "enabled",
@@ -15,14 +15,12 @@ ALLOWED_TOP_LEVEL_KEYS = {
     "execution",
     "exit",
     "meta",
-    "models",
 }
 
 DEFAULT_VOLATILE_ATR_PCT_THRESHOLD = 1.30
 DEFAULT_STORM_ATR_PCT_THRESHOLD = 1.40
 DEFAULT_VOLATILE_SIZE_MULTIPLIER = 0.75
 DEFAULT_STORM_SIZE_MULTIPLIER = 0.50
-DEFAULT_MODEL_ID = "core_long_v0"
 
 
 def _require(condition: bool, message: str) -> None:
@@ -93,8 +91,8 @@ def _parse_risk(risk: Any, prefix: str) -> dict[str, float | int]:
         f"{prefix}.volatile_size_multiplier must be > 0 and <= 1",
     )
     _require(
-        isinstance(storm_size_multiplier, (int, float)) and 0 < storm_size_multiplier <= 1,
-        f"{prefix}.storm_size_multiplier must be > 0 and <= 1",
+        isinstance(storm_size_multiplier, (int, float)) and 0 <= storm_size_multiplier <= 1,
+        f"{prefix}.storm_size_multiplier must be >= 0 and <= 1",
     )
     _require(
         storm_size_multiplier <= volatile_size_multiplier,
@@ -122,62 +120,6 @@ def _parse_exit(exit_config: Any, prefix: str) -> dict[str, str | float]:
         "stop": exit_config["stop"],
         "take_profit_r_multiple": float(exit_config["take_profit_r_multiple"]),
     }
-
-
-def _parse_models(
-    data: dict[str, Any],
-    default_direction: str,
-    default_strategy: StrategyConfig,
-    default_risk: dict[str, float | int],
-    default_exit: dict[str, str | float],
-) -> list[ModelConfig]:
-    raw_models = data.get("models")
-    if raw_models is None:
-        return [
-            {
-                "model_id": DEFAULT_MODEL_ID,
-                "enabled": True,
-                "direction": default_direction,  # type: ignore[typeddict-item]
-                "wallet_key_path": None,
-                "strategy": default_strategy,
-                "risk": default_risk,  # type: ignore[typeddict-item]
-                "exit": default_exit,  # type: ignore[typeddict-item]
-            }
-        ]
-
-    _require(isinstance(raw_models, list) and len(raw_models) > 0, "models must be non-empty list")
-    parsed_models: list[ModelConfig] = []
-    seen_model_ids: set[str] = set()
-    for index, raw_model in enumerate(raw_models):
-        prefix = f"models[{index}]"
-        _require(isinstance(raw_model, dict), f"{prefix} must be object")
-        model_id = raw_model.get("model_id")
-        _require(isinstance(model_id, str) and model_id.strip() != "", f"{prefix}.model_id must be non-empty string")
-        _require(model_id not in seen_model_ids, f"models has duplicate model_id: {model_id}")
-        seen_model_ids.add(model_id)
-        direction = raw_model.get("direction")
-        _require(direction in ("LONG_ONLY", "SHORT_ONLY"), f"{prefix}.direction must be LONG_ONLY or SHORT_ONLY")
-        enabled = raw_model.get("enabled")
-        _require(isinstance(enabled, bool), f"{prefix}.enabled must be boolean")
-        wallet_key_path = raw_model.get("wallet_key_path")
-        _require(
-            wallet_key_path is None
-            or (isinstance(wallet_key_path, str) and wallet_key_path.strip() != ""),
-            f"{prefix}.wallet_key_path must be non-empty string when set",
-        )
-        parsed_models.append(
-            {
-                "model_id": model_id,
-                "enabled": enabled,
-                "direction": direction,
-                "wallet_key_path": wallet_key_path.strip() if isinstance(wallet_key_path, str) else None,
-                "strategy": _parse_strategy(raw_model.get("strategy"), f"{prefix}.strategy"),
-                "risk": _parse_risk(raw_model.get("risk"), f"{prefix}.risk"),  # type: ignore[typeddict-item]
-                "exit": _parse_exit(raw_model.get("exit"), f"{prefix}.exit"),  # type: ignore[typeddict-item]
-            }
-        )
-
-    return parsed_models
 
 
 def parse_config(data: Any) -> BotConfig:
@@ -222,8 +164,6 @@ def parse_config(data: Any) -> BotConfig:
         "meta.config_version must be positive int",
     )
     _require(isinstance(meta.get("note"), str) and len(meta["note"]) > 0, "meta.note must be non-empty")
-    models = _parse_models(data, data["direction"], strategy, risk, exit_config)
-
     parsed: BotConfig = {
         "enabled": data["enabled"],
         "network": data["network"],
@@ -244,6 +184,5 @@ def parse_config(data: Any) -> BotConfig:
             "config_version": meta["config_version"],
             "note": meta["note"],
         },
-        "models": models,
     }
     return parsed

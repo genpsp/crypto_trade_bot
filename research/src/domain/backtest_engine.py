@@ -53,7 +53,7 @@ def _resolve_position_size_multiplier(diagnostics: dict[str, Any] | None) -> flo
     if diagnostics is None:
         return 1.0
     raw = diagnostics.get("position_size_multiplier")
-    if isinstance(raw, (int, float)) and raw > 0:
+    if isinstance(raw, (int, float)) and raw >= 0:
         return float(raw)
     return 1.0
 
@@ -193,7 +193,7 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
         effective_notional_usdc = _resolve_effective_notional(base_notional_usdc, size_multiplier)
         if effective_notional_usdc <= 0:
             no_signal_count += 1
-            no_signal_reasons["INVALID_EFFECTIVE_NOTIONAL"] += 1
+            no_signal_reasons["ENTRY_DISABLED_BY_POSITION_SIZE_MULTIPLIER"] += 1
             continue
 
         if direction == "LONG_ONLY":
