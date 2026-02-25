@@ -120,7 +120,17 @@ class FirestoreRepository(PersistencePort):
             .where(filter=FieldFilter("created_at", "<=", day_end_iso))
             .get()
         )
-        return len([doc for doc in snapshot if doc.to_dict().get("pair") == pair])
+        count = 0
+        for doc in snapshot:
+            trade = doc.to_dict()
+            if not isinstance(trade, dict):
+                continue
+            if trade.get("pair") != pair:
+                continue
+            if trade.get("state") == "FAILED":
+                continue
+            count += 1
+        return count
 
     def save_run(self, run: RunRecord) -> None:
         self._touch_model_metadata()
