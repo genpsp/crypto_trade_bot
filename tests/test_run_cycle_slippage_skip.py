@@ -8,7 +8,15 @@ from unittest.mock import patch
 from pybot.app.usecases.close_position import ClosePositionResult
 from pybot.app.usecases.open_position import OpenPositionResult
 from pybot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
-from pybot.domain.model.types import BotConfig, EntrySignalDecision, OhlcvBar, Pair, RunRecord, TradeRecord
+from pybot.domain.model.types import (
+    BotConfig,
+    EntrySignalDecision,
+    NoSignalDecision,
+    OhlcvBar,
+    Pair,
+    RunRecord,
+    TradeRecord,
+)
 
 
 def _build_config() -> BotConfig:
@@ -110,9 +118,18 @@ class DummyMarketData:
 
 
 class DummyPersistence:
-    def __init__(self, config: BotConfig, open_trade: TradeRecord | None = None) -> None:
+    def __init__(
+        self,
+        config: BotConfig,
+        open_trade: TradeRecord | None = None,
+        *,
+        trades_today: int = 0,
+        recent_closed_trades: list[TradeRecord] | None = None,
+    ) -> None:
         self.config = config
         self.open_trade = open_trade
+        self.trades_today = trades_today
+        self.recent_closed_trades = recent_closed_trades or []
         self.saved_runs: list[RunRecord] = []
 
     def get_current_config(self) -> BotConfig:
@@ -133,7 +150,11 @@ class DummyPersistence:
         _ = pair
         _ = day_start_iso
         _ = day_end_iso
-        return 0
+        return self.trades_today
+
+    def list_recent_closed_trades(self, pair: Pair, limit: int) -> list[TradeRecord]:
+        _ = pair
+        return self.recent_closed_trades[:limit]
 
     def save_run(self, run: RunRecord) -> None:
         self.saved_runs.append(run)
@@ -250,6 +271,92 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         self.assertEqual("trade_exit_slippage_skip", run["trade_id"])
         self.assertGreaterEqual(len(persistence.saved_runs), 1)
         self.assertEqual("SKIPPED", persistence.saved_runs[-1]["result"])
+
+    def test_loss_streak_reduces_daily_trade_cap_and_skips_entry(self) -> None:
+        config = _build_config()
+        bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)
+        bars = [
+            OhlcvBar(
+                open_time=bar_close - timedelta(minutes=15),
+                close_time=bar_close,
+                open=99.5,
+                high=100.5,
+                low=99.0,
+                close=100.0,
+                volume=1000.0,
+            )
+        ]
+        recent_closed_trades: list[TradeRecord] = [
+            {"trade_id": "loss_1", "pair": "SOL/USDC", "state": "CLOSED", "close_reason": "STOP_LOSS"},
+            {"trade_id": "loss_2", "pair": "SOL/USDC", "state": "CLOSED", "close_reason": "STOP_LOSS"},
+            {"trade_id": "win_1", "pair": "SOL/USDC", "state": "CLOSED", "close_reason": "TAKE_PROFIT"},
+        ]
+        persistence = DummyPersistence(
+            config,
+            trades_today=2,
+            recent_closed_trades=recent_closed_trades,
+        )
+        deps = RunCycleDependencies(
+            execution=DummyExecution(),
+            lock=DummyLock(),
+            logger=DummyLogger(),
+            market_data=DummyMarketData(bars),
+            persistence=persistence,
+            model_id="core_long_15m_v0",
+            now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
+        )
+
+        run = run_cycle(deps)
+
+        self.assertEqual("SKIPPED", run["result"])
+        self.assertEqual("SKIPPED: max_trades_per_day reached", run["summary"])
+        self.assertIn("LOSS_STREAK_2", run["reason"])
+        self.assertIn("LOSS_STREAK_GE_2", run["reason"])
+        self.assertEqual(2, run["metrics"]["effective_max_trades_per_day"])
+        self.assertEqual(2, run["metrics"]["consecutive_stop_loss_streak"])
+
+    def test_recent_take_profit_resets_loss_streak_for_dynamic_cap(self) -> None:
+        config = _build_config()
+        bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)
+        bars = [
+            OhlcvBar(
+                open_time=bar_close - timedelta(minutes=15),
+                close_time=bar_close,
+                open=99.5,
+                high=100.5,
+                low=99.0,
+                close=100.0,
+                volume=1000.0,
+            )
+        ]
+        recent_closed_trades: list[TradeRecord] = [
+            {"trade_id": "win_1", "pair": "SOL/USDC", "state": "CLOSED", "close_reason": "TAKE_PROFIT"},
+            {"trade_id": "loss_1", "pair": "SOL/USDC", "state": "CLOSED", "close_reason": "STOP_LOSS"},
+            {"trade_id": "loss_2", "pair": "SOL/USDC", "state": "CLOSED", "close_reason": "STOP_LOSS"},
+        ]
+        persistence = DummyPersistence(
+            config,
+            trades_today=2,
+            recent_closed_trades=recent_closed_trades,
+        )
+        deps = RunCycleDependencies(
+            execution=DummyExecution(),
+            lock=DummyLock(),
+            logger=DummyLogger(),
+            market_data=DummyMarketData(bars),
+            persistence=persistence,
+            model_id="core_long_15m_v0",
+            now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
+        )
+        no_signal = NoSignalDecision(type="NO_SIGNAL", summary="NO_SIGNAL: test", reason="TEST_REASON")
+
+        with patch("pybot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=no_signal):
+            run = run_cycle(deps)
+
+        self.assertEqual("NO_SIGNAL", run["result"])
+        self.assertEqual(0, run["metrics"]["consecutive_stop_loss_streak"])
+        self.assertEqual(3, run["metrics"]["effective_max_trades_per_day"])
+        self.assertEqual("BASE", run["metrics"]["dynamic_trade_cap_reason"])
 
 
 if __name__ == "__main__":

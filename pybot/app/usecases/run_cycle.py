@@ -20,7 +20,7 @@ from pybot.app.usecases.open_position import (
     open_position,
 )
 from pybot.app.usecases.usecase_utils import to_error_message
-from pybot.domain.model.types import BotConfig, RunRecord
+from pybot.domain.model.types import BotConfig, Pair, RunRecord, TradeRecord
 from pybot.domain.strategy.registry import evaluate_strategy_for_model
 from pybot.domain.utils.math import round_to
 from pybot.domain.utils.time import build_run_id, get_last_closed_bar_close, get_utc_day_range
@@ -29,6 +29,12 @@ RUN_LOCK_TTL_SECONDS = 240
 ENTRY_IDEM_TTL_SECONDS = 12 * 60 * 60
 DEFAULT_OHLCV_LIMIT = 300
 OHLCV_LIMIT_FOR_15M_UPPER_TREND = 600
+LOSS_STREAK_DYNAMIC_CAP_STRATEGY_NAMES = frozenset({"ema_trend_pullback_15m_v0"})
+LOSS_STREAK_LOOKBACK_CLOSED_TRADES = 20
+LOSS_STREAK_CAP_LEVEL_1_THRESHOLD = 2
+LOSS_STREAK_CAP_LEVEL_2_THRESHOLD = 3
+LOSS_STREAK_CAP_LEVEL_1_MAX_TRADES = 2
+LOSS_STREAK_CAP_LEVEL_2_MAX_TRADES = 1
 
 
 @dataclass
@@ -56,6 +62,52 @@ def _resolve_ohlcv_limit(config: BotConfig) -> int:
     if config["strategy"]["name"] == "ema_trend_pullback_15m_v0":
         return OHLCV_LIMIT_FOR_15M_UPPER_TREND
     return DEFAULT_OHLCV_LIMIT
+
+
+def _is_loss_streak_dynamic_cap_enabled(config: BotConfig) -> bool:
+    return config["strategy"]["name"] in LOSS_STREAK_DYNAMIC_CAP_STRATEGY_NAMES
+
+
+def _count_consecutive_stop_losses(recent_closed_trades: list[TradeRecord]) -> int:
+    streak = 0
+    for trade in recent_closed_trades:
+        close_reason = trade.get("close_reason")
+        if close_reason == "STOP_LOSS":
+            streak += 1
+            continue
+        if close_reason == "TAKE_PROFIT":
+            break
+        # Unknown/manual/system closes should not bias the streak.
+        break
+    return streak
+
+
+def _resolve_effective_max_trades_per_day(
+    *,
+    runtime_config: BotConfig,
+    persistence: PersistencePort,
+    pair: Pair,
+) -> tuple[int, int, str]:
+    base_max_trades_per_day = int(runtime_config["risk"]["max_trades_per_day"])
+    if not _is_loss_streak_dynamic_cap_enabled(runtime_config):
+        return base_max_trades_per_day, 0, "DISABLED"
+
+    recent_closed_trades = persistence.list_recent_closed_trades(
+        pair,
+        LOSS_STREAK_LOOKBACK_CLOSED_TRADES,
+    )
+    consecutive_loss_streak = _count_consecutive_stop_losses(recent_closed_trades)
+
+    effective_max_trades_per_day = base_max_trades_per_day
+    dynamic_cap_reason = "BASE"
+    if consecutive_loss_streak >= LOSS_STREAK_CAP_LEVEL_2_THRESHOLD:
+        effective_max_trades_per_day = min(base_max_trades_per_day, LOSS_STREAK_CAP_LEVEL_2_MAX_TRADES)
+        dynamic_cap_reason = "LOSS_STREAK_GE_3"
+    elif consecutive_loss_streak >= LOSS_STREAK_CAP_LEVEL_1_THRESHOLD:
+        effective_max_trades_per_day = min(base_max_trades_per_day, LOSS_STREAK_CAP_LEVEL_1_MAX_TRADES)
+        dynamic_cap_reason = "LOSS_STREAK_GE_2"
+
+    return effective_max_trades_per_day, consecutive_loss_streak, dynamic_cap_reason
 
 
 def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
@@ -201,6 +253,13 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
 
         day_start_iso, day_end_iso = get_utc_day_range(bar_close_time)
         trades_today = persistence.count_trades_for_utc_day(runtime_config["pair"], day_start_iso, day_end_iso)
+        effective_max_trades_per_day, consecutive_loss_streak, dynamic_cap_reason = (
+            _resolve_effective_max_trades_per_day(
+                runtime_config=runtime_config,
+                persistence=persistence,
+                pair=runtime_config["pair"],
+            )
+        )
         run["metrics"] = {
             "phase": "ENTRY_CHECK",
             "model_id": model_id,
@@ -209,11 +268,17 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             "bar_close_time_iso": bar_close_time_iso,
             "trades_today": trades_today,
             "max_trades_per_day": runtime_config["risk"]["max_trades_per_day"],
+            "effective_max_trades_per_day": effective_max_trades_per_day,
+            "consecutive_stop_loss_streak": consecutive_loss_streak,
+            "dynamic_trade_cap_reason": dynamic_cap_reason,
         }
-        if trades_today >= runtime_config["risk"]["max_trades_per_day"]:
+        if trades_today >= effective_max_trades_per_day:
             run["result"] = "SKIPPED"
             run["summary"] = "SKIPPED: max_trades_per_day reached"
-            run["reason"] = f"TRADES_TODAY_{trades_today}"
+            run["reason"] = (
+                f"TRADES_TODAY_{trades_today}_CAP_{effective_max_trades_per_day}_"
+                f"LOSS_STREAK_{consecutive_loss_streak}_{dynamic_cap_reason}"
+            )
             return run
 
         decision = evaluate_strategy_for_model(
@@ -247,6 +312,11 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             "direction": runtime_config["direction"],
             "bar_close_price": round_to(latest_closed_bar.close, 6),
             "bar_close_time_iso": bar_close_time_iso,
+            "trades_today": trades_today,
+            "max_trades_per_day": runtime_config["risk"]["max_trades_per_day"],
+            "effective_max_trades_per_day": effective_max_trades_per_day,
+            "consecutive_stop_loss_streak": consecutive_loss_streak,
+            "dynamic_trade_cap_reason": dynamic_cap_reason,
             "decision_type": decision.type,
             "ema_fast": _round_metric(decision.ema_fast),
             "ema_slow": _round_metric(decision.ema_slow),

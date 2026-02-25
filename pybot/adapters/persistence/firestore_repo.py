@@ -87,6 +87,21 @@ def _is_day_doc_id(doc_id: str) -> bool:
     return True
 
 
+def _sort_trade_key(trade: dict[str, Any]) -> str:
+    position = trade.get("position")
+    if isinstance(position, dict):
+        exit_time_iso = position.get("exit_time_iso")
+        if isinstance(exit_time_iso, str):
+            return exit_time_iso
+    updated_at = trade.get("updated_at")
+    if isinstance(updated_at, str):
+        return updated_at
+    created_at = trade.get("created_at")
+    if isinstance(created_at, str):
+        return created_at
+    return ""
+
+
 def _build_skip_run_doc_id(run: RunRecord) -> str:
     result = str(run.get("result", "SKIPPED")).lower()
     reason_key = str(run.get("reason") or run.get("summary") or "UNKNOWN")
@@ -259,6 +274,43 @@ class FirestoreRepository(PersistencePort):
                 continue
             count += 1
         return count
+
+    def list_recent_closed_trades(self, pair: Pair, limit: int) -> list[TradeRecord]:
+        if limit <= 0:
+            return []
+
+        trades_by_id: dict[str, TradeRecord] = {}
+        day_snapshots = self._trades_collection().stream()
+        trade_day_ids = sorted((doc.id for doc in day_snapshots if _is_day_doc_id(doc.id)), reverse=True)
+
+        for trade_date in trade_day_ids:
+            snapshot = (
+                self._trade_items_collection_for_date(trade_date)
+                .where(filter=FieldFilter("state", "==", "CLOSED"))
+                .where(filter=FieldFilter("pair", "==", pair))
+                .get()
+            )
+            for doc in snapshot:
+                trade = doc.to_dict()
+                if not isinstance(trade, dict):
+                    continue
+                if trade.get("pair") != pair:
+                    continue
+                if trade.get("state") != "CLOSED":
+                    continue
+                trade_id = trade.get("trade_id")
+                if not isinstance(trade_id, str):
+                    continue
+                trade.setdefault("trade_date", trade_date)
+                trades_by_id[trade_id] = trade
+
+            if len(trades_by_id) >= limit * 3:
+                # Heuristic short-circuit to reduce read cost.
+                break
+
+        trades = [trade for trade in trades_by_id.values() if isinstance(trade, dict)]
+        trades.sort(key=_sort_trade_key, reverse=True)
+        return trades[:limit]
 
     def save_run(self, run: RunRecord) -> None:
         self._touch_model_metadata()
