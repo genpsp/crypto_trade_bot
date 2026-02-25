@@ -36,6 +36,16 @@ class ModelRuntimeContext:
     lock: RedisLockAdapter
 
 
+@dataclass(frozen=True)
+class ModelRuntimeSpec:
+    model_id: str
+    pair: str
+    mode: str
+    direction: str
+    strategy: str
+    wallet_key_path: str
+
+
 def bootstrap() -> AppRuntime:
     env = load_env()
     logger = create_logger("bot")
@@ -66,76 +76,139 @@ def bootstrap() -> AppRuntime:
             live_execution_by_wallet[wallet_key_path] = live_execution
         return live_execution
 
-    model_ids = config_repo.list_model_ids()
-    if not model_ids:
-        logger.warn("no models found in Firestore models collection")
+    model_contexts: dict[str, ModelRuntimeContext] = {}
+    runtime_specs: dict[str, ModelRuntimeSpec] = {}
+    warned_no_models = False
+    warned_no_enabled_models = False
 
-    model_contexts: list[ModelRuntimeContext] = []
-    runtime_summaries: list[dict[str, str]] = []
-    for model_id in model_ids:
-        try:
-            startup_config = config_repo.get_current_config(model_id)
-            model_metadata = config_repo.get_model_metadata(model_id)
-        except Exception as error:
-            logger.error(
-                "failed to load model config",
+    def _build_runtime_summary(spec: ModelRuntimeSpec) -> dict[str, str]:
+        return {
+            "model_id": spec.model_id,
+            "mode": spec.mode,
+            "direction": spec.direction,
+            "strategy": spec.strategy,
+            "wallet_key_path": spec.wallet_key_path,
+        }
+
+    def _create_runtime_context(spec: ModelRuntimeSpec) -> ModelRuntimeContext:
+        return ModelRuntimeContext(
+            model_id=spec.model_id,
+            pair=spec.pair,
+            execution=resolve_execution(spec.mode, spec.wallet_key_path),
+            persistence=FirestoreRepository(firestore, config_repo, mode=spec.mode, model_id=spec.model_id),
+            lock=RedisLockAdapter(redis, logger, lock_namespace=spec.model_id),
+        )
+
+    def _load_enabled_model_specs() -> dict[str, ModelRuntimeSpec]:
+        nonlocal warned_no_models
+        model_ids = config_repo.list_model_ids()
+        if not model_ids:
+            if not warned_no_models:
+                logger.warn("no models found in Firestore models collection")
+            warned_no_models = True
+            return {}
+        warned_no_models = False
+
+        specs: dict[str, ModelRuntimeSpec] = {}
+        for model_id in model_ids:
+            try:
+                runtime_config = config_repo.get_current_config(model_id)
+                model_metadata = config_repo.get_model_metadata(model_id)
+            except Exception as error:
+                logger.error(
+                    "failed to load model config",
+                    {
+                        "model_id": model_id,
+                        "error": str(error),
+                    },
+                )
+                continue
+
+            if not runtime_config["enabled"]:
+                continue
+
+            mode = runtime_config["execution"]["mode"]
+            wallet_key_path = (model_metadata.wallet_key_path or "").strip()
+            if mode == "LIVE" and wallet_key_path == "":
+                logger.error(
+                    "skipping enabled LIVE model because wallet_key_path is missing",
+                    {"model_id": model_id},
+                )
+                continue
+
+            specs[model_id] = ModelRuntimeSpec(
+                model_id=model_id,
+                pair=runtime_config["pair"],
+                mode=mode,
+                direction=runtime_config["direction"],
+                strategy=runtime_config["strategy"]["name"],
+                wallet_key_path=wallet_key_path,
+            )
+        return specs
+
+    def _refresh_model_contexts(*, force_log_runtime_summary: bool = False) -> list[ModelRuntimeContext]:
+        nonlocal warned_no_enabled_models
+        desired_specs = _load_enabled_model_specs()
+        changed = False
+
+        for model_id in list(model_contexts.keys()):
+            if model_id in desired_specs:
+                continue
+            previous_spec = runtime_specs.get(model_id)
+            model_contexts.pop(model_id, None)
+            runtime_specs.pop(model_id, None)
+            changed = True
+            logger.info(
+                "model runtime removed",
                 {
                     "model_id": model_id,
-                    "error": str(error),
+                    "mode": previous_spec.mode if previous_spec else "",
+                    "wallet_key_path": previous_spec.wallet_key_path if previous_spec else "",
                 },
             )
-            continue
 
-        if not startup_config["enabled"]:
-            continue
-        execution_config = startup_config["execution"]
-        mode = execution_config["mode"]
-        wallet_key_path = model_metadata.wallet_key_path
-        if mode == "LIVE" and (wallet_key_path is None or wallet_key_path.strip() == ""):
-            raise RuntimeError(
-                f"models/{model_id}.wallet_key_path is required when execution.mode=LIVE"
+        for model_id in sorted(desired_specs.keys()):
+            desired_spec = desired_specs[model_id]
+            current_spec = runtime_specs.get(model_id)
+            if current_spec == desired_spec:
+                continue
+
+            context = _create_runtime_context(desired_spec)
+            model_contexts[model_id] = context
+            runtime_specs[model_id] = desired_spec
+            changed = True
+
+            action = "model runtime configured" if current_spec is None else "model runtime reconfigured"
+            logger.info(
+                action,
+                {
+                    "model_id": desired_spec.model_id,
+                    "mode": desired_spec.mode,
+                    "direction": desired_spec.direction,
+                    "strategy": desired_spec.strategy,
+                    "trades_path": f"models/{desired_spec.model_id}/{context.persistence.trades_collection_name}",
+                    "runs_path": f"models/{desired_spec.model_id}/{context.persistence.runs_collection_name}",
+                    "wallet_key_path": desired_spec.wallet_key_path,
+                },
             )
-        wallet_key_path_for_log = wallet_key_path or ""
 
-        context = ModelRuntimeContext(
-            model_id=model_id,
-            pair=startup_config["pair"],
-            execution=resolve_execution(mode, wallet_key_path),
-            persistence=FirestoreRepository(firestore, config_repo, mode=mode, model_id=model_id),
-            lock=RedisLockAdapter(redis, logger, lock_namespace=model_id),
-        )
-        model_contexts.append(context)
-        runtime_summaries.append(
-            {
-                "model_id": model_id,
-                "mode": mode,
-                "direction": startup_config["direction"],
-                "strategy": startup_config["strategy"]["name"],
-                "wallet_key_path": wallet_key_path_for_log,
-            }
-        )
-        logger.info(
-            "model runtime configured",
-            {
-                "model_id": model_id,
-                "mode": mode,
-                "direction": startup_config["direction"],
-                "strategy": startup_config["strategy"]["name"],
-                "trades_path": f"models/{model_id}/{context.persistence.trades_collection_name}",
-                "runs_path": f"models/{model_id}/{context.persistence.runs_collection_name}",
-                "wallet_key_path": wallet_key_path_for_log,
-            },
-        )
+        if not model_contexts:
+            if force_log_runtime_summary or changed or not warned_no_enabled_models:
+                logger.warn("no enabled models found in Firestore models collection")
+            warned_no_enabled_models = True
+        else:
+            warned_no_enabled_models = False
 
-    if not model_contexts:
-        logger.warn("no enabled models found in Firestore models collection")
+        if changed or force_log_runtime_summary:
+            runtime_summaries = [_build_runtime_summary(runtime_specs[mid]) for mid in sorted(runtime_specs.keys())]
+            logger.info(
+                "runtime models selected",
+                {
+                    "enabled_models": runtime_summaries,
+                },
+            )
 
-    logger.info(
-        "runtime models selected",
-        {
-            "enabled_models": runtime_summaries,
-        },
-    )
+        return [model_contexts[mid] for mid in sorted(model_contexts.keys())]
 
     def should_suppress_run_cycle_log(result: dict[str, str]) -> bool:
         return result.get("result") == "SKIPPED_ENTRY" and result.get("summary") in (
@@ -168,15 +241,17 @@ def bootstrap() -> AppRuntime:
         )
 
     def execute_cycle_for_all_models() -> None:
-        for context in model_contexts:
+        contexts = _refresh_model_contexts()
+        for context in contexts:
             execute_cycle_for_model(context)
 
     def execute_scheduled_cycle() -> None:
         from datetime import UTC, datetime
 
+        contexts = _refresh_model_contexts()
         now = datetime.now(tz=UTC)
         is_five_minute_window = now.minute % 5 == 0
-        for context in model_contexts:
+        for context in contexts:
             if is_five_minute_window:
                 execute_cycle_for_model(context)
                 continue
@@ -189,7 +264,9 @@ def bootstrap() -> AppRuntime:
     def start() -> None:
         nonlocal scheduler
         logger.info("bot startup: run first cycle immediately")
-        execute_cycle_for_all_models()
+        contexts = _refresh_model_contexts(force_log_runtime_summary=True)
+        for context in contexts:
+            execute_cycle_for_model(context)
         scheduler = create_cron_cycle(execute_scheduled_cycle, logger)
         scheduler.start()
 
