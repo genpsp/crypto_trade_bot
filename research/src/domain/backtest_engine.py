@@ -46,7 +46,8 @@ def _safe_average(values: list[float]) -> float:
 
 BASE_PORTFOLIO_NOTIONAL_USDC = 100.0
 SLIPPAGE_BPS_DENOMINATOR = 10_000
-OHLCV_LIMIT = 300
+DEFAULT_OHLCV_LIMIT = 300
+OHLCV_LIMIT_FOR_15M_UPPER_TREND = 600
 
 
 def _resolve_position_size_multiplier(diagnostics: dict[str, Any] | None) -> float:
@@ -74,6 +75,12 @@ def _simulate_sell_fill_price(trigger_price: float, slippage_bps: int) -> float:
     return max(0.0, trigger_price * (1 - _slippage_ratio(slippage_bps)))
 
 
+def _resolve_ohlcv_limit(config: BotConfig) -> int:
+    if config["strategy"]["name"] == "ema_trend_pullback_15m_v0":
+        return OHLCV_LIMIT_FOR_15M_UPPER_TREND
+    return DEFAULT_OHLCV_LIMIT
+
+
 def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
     if len(bars) < 2:
         raise ValueError("Backtest requires at least 2 OHLCV bars")
@@ -83,6 +90,7 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
     max_trades_per_day = config["risk"]["max_trades_per_day"]
     max_loss_per_trade_pct = float(config["risk"]["max_loss_per_trade_pct"])
     take_profit_r_multiple = float(config["exit"]["take_profit_r_multiple"])
+    ohlcv_limit = _resolve_ohlcv_limit(config)
     portfolio_quote_usdc = BASE_PORTFOLIO_NOTIONAL_USDC
 
     open_position: _OpenPosition | None = None
@@ -164,7 +172,7 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             no_signal_reasons["MAX_TRADES_PER_DAY_REACHED"] += 1
             continue
 
-        decision_window_start = max(0, index + 1 - OHLCV_LIMIT)
+        decision_window_start = max(0, index + 1 - ohlcv_limit)
         decision_bars = bars[decision_window_start : index + 1]
         decision = evaluate_strategy_for_model(
             direction=direction,

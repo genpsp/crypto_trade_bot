@@ -27,7 +27,8 @@ from pybot.domain.utils.time import build_run_id, get_last_closed_bar_close, get
 
 RUN_LOCK_TTL_SECONDS = 240
 ENTRY_IDEM_TTL_SECONDS = 12 * 60 * 60
-OHLCV_LIMIT = 300
+DEFAULT_OHLCV_LIMIT = 300
+OHLCV_LIMIT_FOR_15M_UPPER_TREND = 600
 
 
 @dataclass
@@ -49,6 +50,12 @@ def _round_metric(value: Any, digits: int = 6) -> float | None:
 
 def _build_model_run_id(model_id: str, bar_close_time_iso: str, run_at: datetime) -> str:
     return f"{model_id}_{build_run_id(bar_close_time_iso, run_at)}"
+
+
+def _resolve_ohlcv_limit(config: BotConfig) -> int:
+    if config["strategy"]["name"] == "ema_trend_pullback_15m_v0":
+        return OHLCV_LIMIT_FOR_15M_UPPER_TREND
+    return DEFAULT_OHLCV_LIMIT
 
 
 def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
@@ -169,7 +176,8 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             }
             return run
 
-        bars = market_data.fetch_bars(runtime_config["pair"], timeframe, OHLCV_LIMIT)
+        ohlcv_limit = _resolve_ohlcv_limit(runtime_config)
+        bars = market_data.fetch_bars(runtime_config["pair"], timeframe, ohlcv_limit)
         closed_bars = [bar for bar in bars if bar.close_time <= bar_close_time]
         latest_closed_bar = closed_bars[-1] if closed_bars else None
         if latest_closed_bar is None:
