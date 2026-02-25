@@ -59,6 +59,9 @@ class SpyLock:
         self.active.add(signature)
         self.set_calls.append(signature)
 
+    def has_inflight_tx(self, signature: str) -> bool:
+        return signature in self.active
+
     def clear_inflight_tx(self, signature: str) -> None:
         self.active.discard(signature)
         self.clear_calls.append(signature)
@@ -311,10 +314,10 @@ class ClosePositionRetryTest(unittest.TestCase):
             )
 
         self.assertEqual("CLOSED", result.status)
-        self.assertEqual(3, execution.submit_calls)
+        self.assertEqual(1, execution.submit_calls)
         self.assertEqual(3, execution.confirm_calls)
-        self.assertEqual(3, len(lock.set_calls))
-        self.assertEqual(3, len(lock.clear_calls))
+        self.assertEqual(1, len(lock.set_calls))
+        self.assertEqual(1, len(lock.clear_calls))
         self.assertEqual(0, len(lock.active))
         self.assertEqual("CLOSED", trade["state"])
         self.assertEqual("CONFIRMED", trade["execution"]["exit_submission_state"])
@@ -383,10 +386,10 @@ class ClosePositionRetryTest(unittest.TestCase):
             )
 
         self.assertEqual("CLOSED", result.status)
-        self.assertEqual(2, execution.submit_calls)
+        self.assertEqual(1, execution.submit_calls)
         self.assertEqual(2, execution.confirm_calls)
-        self.assertEqual(2, len(lock.set_calls))
-        self.assertEqual(2, len(lock.clear_calls))
+        self.assertEqual(1, len(lock.set_calls))
+        self.assertEqual(1, len(lock.clear_calls))
         self.assertEqual(0, len(lock.active))
         self.assertEqual("CLOSED", trade["state"])
         self.assertEqual("CONFIRMED", trade["execution"]["exit_submission_state"])

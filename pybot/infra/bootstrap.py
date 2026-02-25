@@ -72,8 +72,8 @@ def bootstrap() -> AppRuntime:
     redis = Redis.from_url(env.REDIS_URL, decode_responses=True)
 
     config_repo = FirestoreConfigRepository(firestore)
-    market_data = OhlcvProvider()
-    quote_client = JupiterQuoteClient()
+    market_data = OhlcvProvider(redis=redis)
+    quote_client = JupiterQuoteClient(redis=redis)
     paper_execution: ExecutionPort = PaperExecutionAdapter(quote_client, logger)
     live_execution_by_wallet: dict[str, ExecutionPort] = {}
 

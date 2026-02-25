@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 
 import requests
+from redis import Redis
 
 from pybot.app.ports.market_data_port import MarketDataPort
 from pybot.domain.model.types import OhlcvBar, Pair, SignalTimeframe
@@ -10,11 +12,49 @@ from pybot.domain.utils.time import get_bar_duration_seconds
 
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 MAX_OHLCV_LIMIT = 1000
+DEFAULT_OHLCV_CACHE_TTL_SECONDS = 30
 PAIR_SYMBOL_MAP: dict[Pair, str] = {"SOL/USDC": "SOLUSDC"}
 TIMEFRAME_TO_BINANCE_INTERVAL: dict[SignalTimeframe, str] = {"15m": "15m", "2h": "2h", "4h": "4h"}
 
 
 class OhlcvProvider(MarketDataPort):
+    def __init__(self, redis: Redis | None = None, cache_ttl_seconds: int = DEFAULT_OHLCV_CACHE_TTL_SECONDS):
+        self.redis = redis
+        self.cache_ttl_seconds = max(int(cache_ttl_seconds), 0)
+
+    def _build_cache_key(self, symbol: str, interval: str, limit: int, end_time_ms: int | None) -> str:
+        end_time_token = "latest" if end_time_ms is None else str(end_time_ms)
+        return f"cache:ohlcv:{symbol}:{interval}:{limit}:{end_time_token}"
+
+    def _get_cached_rows(self, cache_key: str) -> list[list] | None:
+        if self.redis is None or self.cache_ttl_seconds <= 0:
+            return None
+        try:
+            cached_payload = self.redis.get(cache_key)
+        except Exception:
+            return None
+        if cached_payload is None:
+            return None
+        if isinstance(cached_payload, bytes):
+            raw_payload = cached_payload.decode("utf-8")
+        elif isinstance(cached_payload, str):
+            raw_payload = cached_payload
+        else:
+            return None
+        try:
+            parsed = json.loads(raw_payload)
+        except Exception:
+            return None
+        return parsed if isinstance(parsed, list) else None
+
+    def _set_cached_rows(self, cache_key: str, rows: list[list]) -> None:
+        if self.redis is None or self.cache_ttl_seconds <= 0:
+            return
+        try:
+            self.redis.set(cache_key, json.dumps(rows), ex=self.cache_ttl_seconds)
+        except Exception:
+            return
+
     def _fetch_klines(
         self,
         symbol: str,
@@ -22,6 +62,11 @@ class OhlcvProvider(MarketDataPort):
         limit: int,
         end_time_ms: int | None = None,
     ) -> list[list]:
+        cache_key = self._build_cache_key(symbol, interval, limit, end_time_ms)
+        cached_rows = self._get_cached_rows(cache_key)
+        if cached_rows is not None:
+            return cached_rows
+
         params: dict[str, str] = {"symbol": symbol, "interval": interval, "limit": str(limit)}
         if end_time_ms is not None:
             params["endTime"] = str(end_time_ms)
@@ -33,6 +78,7 @@ class OhlcvProvider(MarketDataPort):
         payload = response.json()
         if not isinstance(payload, list):
             raise RuntimeError("OHLCV payload is not an array")
+        self._set_cached_rows(cache_key, payload)
         return payload
 
     def _rows_to_bars(self, rows: list[list], bar_duration_seconds: int) -> list[OhlcvBar]:

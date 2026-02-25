@@ -299,60 +299,67 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
     confirmed_submission = None
     confirmed_entry_result = None
     confirmed_before_balances: tuple[float, float] | None = None
+    inflight_submission = None
+    inflight_entry_result = None
+    inflight_before_balances: tuple[float, float] | None = None
     max_entry_attempts = ENTRY_RETRY_ATTEMPTS
     last_error_message = "unknown entry error"
 
     for attempt in range(1, max_entry_attempts + 1):
+        submission = inflight_submission
+        entry_result = inflight_entry_result
         try:
-            attempt_before_balances = snapshot_balances()
-            submission = execution.submit_swap(
-                SubmitSwapRequest(
-                    side=entry_side,
-                    amount_atomic=amount_atomic,
-                    slippage_bps=config["execution"]["slippage_bps"],
-                    only_direct_routes=config["execution"]["only_direct_routes"],
+            if submission is None:
+                attempt_before_balances = snapshot_balances()
+                submission = execution.submit_swap(
+                    SubmitSwapRequest(
+                        side=entry_side,
+                        amount_atomic=amount_atomic,
+                        slippage_bps=config["execution"]["slippage_bps"],
+                        only_direct_routes=config["execution"]["only_direct_routes"],
+                    )
                 )
-            )
 
-            trade["execution"]["entry_tx_signature"] = submission.tx_signature
-            if submission.order:
-                trade["execution"]["entry_order"] = submission.order
-                trade["execution"]["order"] = submission.order
+                trade["execution"]["entry_tx_signature"] = submission.tx_signature
+                if submission.order:
+                    trade["execution"]["entry_order"] = submission.order
+                    trade["execution"]["order"] = submission.order
 
-            entry_result = submission.result
-            if entry_result is None:
-                if entry_side == "BUY_SOL_WITH_USDC":
-                    estimated_spent_quote_usdc = submission.in_amount_atomic / USDC_ATOMIC_MULTIPLIER
-                    estimated_filled_base_sol = submission.out_amount_atomic / SOL_ATOMIC_MULTIPLIER
+                entry_result = submission.result
+                if entry_result is None:
+                    if entry_side == "BUY_SOL_WITH_USDC":
+                        estimated_spent_quote_usdc = submission.in_amount_atomic / USDC_ATOMIC_MULTIPLIER
+                        estimated_filled_base_sol = submission.out_amount_atomic / SOL_ATOMIC_MULTIPLIER
+                    else:
+                        estimated_spent_quote_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
+                        estimated_filled_base_sol = submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER
+                    estimated_avg_fill_price = (
+                        estimated_spent_quote_usdc / estimated_filled_base_sol
+                        if estimated_filled_base_sol > 0
+                        else 0
+                    )
+                    entry_result = {
+                        "status": "ESTIMATED",
+                        "avg_fill_price": estimated_avg_fill_price,
+                        "spent_quote_usdc": estimated_spent_quote_usdc,
+                        "filled_base_sol": estimated_filled_base_sol,
+                    }
+                trade["execution"]["entry_result"] = entry_result
+                trade["execution"]["result"] = entry_result
+                if "entry_error" in trade["execution"]:
+                    del trade["execution"]["entry_error"]
+
+                if current_state == "CREATED":
+                    move_state("SUBMITTED")
                 else:
-                    estimated_spent_quote_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
-                    estimated_filled_base_sol = submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER
-                estimated_avg_fill_price = (
-                    estimated_spent_quote_usdc / estimated_filled_base_sol
-                    if estimated_filled_base_sol > 0
-                    else 0
-                )
-                entry_result = {
-                    "status": "ESTIMATED",
-                    "avg_fill_price": estimated_avg_fill_price,
-                    "spent_quote_usdc": estimated_spent_quote_usdc,
-                    "filled_base_sol": estimated_filled_base_sol,
-                }
-            trade["execution"]["entry_result"] = entry_result
-            trade["execution"]["result"] = entry_result
-            if "entry_error" in trade["execution"]:
-                del trade["execution"]["entry_error"]
+                    persist_execution_only()
 
-            if current_state == "CREATED":
-                move_state("SUBMITTED")
-            else:
-                persist_execution_only()
+                lock.set_inflight_tx(submission.tx_signature, TX_INFLIGHT_TTL_SECONDS)
+                inflight_submission = submission
+                inflight_entry_result = entry_result
+                inflight_before_balances = attempt_before_balances
 
-            lock.set_inflight_tx(submission.tx_signature, TX_INFLIGHT_TTL_SECONDS)
-            try:
-                confirmation = execution.confirm_swap(submission.tx_signature, TX_CONFIRM_TIMEOUT_MS)
-            finally:
-                lock.clear_inflight_tx(submission.tx_signature)
+            confirmation = execution.confirm_swap(submission.tx_signature, TX_CONFIRM_TIMEOUT_MS)
 
             if not confirmation.confirmed:
                 last_error_message = confirmation.error or "unknown confirmation error"
@@ -363,6 +370,10 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                     or is_market_condition_error_message(last_error_message)
                     or is_insufficient_funds_error_message(last_error_message)
                 ):
+                    lock.clear_inflight_tx(submission.tx_signature)
+                    inflight_submission = None
+                    inflight_entry_result = None
+                    inflight_before_balances = None
                     move_state("CANCELED")
                     return OpenPositionResult(
                         status="SKIPPED",
@@ -375,17 +386,22 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                     error_message=last_error_message,
                 ):
                     logger.warn(
-                        "open_position retrying after unconfirmed entry tx",
+                        "open_position retrying confirmation for inflight entry tx",
                         {
                             "trade_id": trade_id,
                             "attempt": attempt,
                             "max_attempts": max_entry_attempts,
                             "error": last_error_message,
+                            "tx_signature": submission.tx_signature,
                         },
                     )
                     time.sleep(ENTRY_RETRY_DELAY_SECONDS)
                     continue
 
+                lock.clear_inflight_tx(submission.tx_signature)
+                inflight_submission = None
+                inflight_entry_result = None
+                inflight_before_balances = None
                 move_state("FAILED")
                 return OpenPositionResult(
                     status="FAILED",
@@ -393,9 +409,13 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                     summary=failed_summary(f"entry tx not confirmed ({last_error_message})"),
                 )
 
+            lock.clear_inflight_tx(submission.tx_signature)
+            inflight_submission = None
+            inflight_entry_result = None
             confirmed_submission = submission
             confirmed_entry_result = entry_result
-            confirmed_before_balances = attempt_before_balances
+            confirmed_before_balances = inflight_before_balances
+            inflight_before_balances = None
             entry_fee_lamports = resolve_tx_fee_lamports(
                 execution,
                 submission.tx_signature,
@@ -421,6 +441,11 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 or is_market_condition_error_message(last_error_message)
                 or is_insufficient_funds_error_message(last_error_message)
             ):
+                if submission is not None and lock.has_inflight_tx(submission.tx_signature):
+                    lock.clear_inflight_tx(submission.tx_signature)
+                    inflight_submission = None
+                    inflight_entry_result = None
+                    inflight_before_balances = None
                 try:
                     move_state("CANCELED")
                 except Exception as state_error:
@@ -439,18 +464,35 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 max_attempts=max_entry_attempts,
                 error_message=last_error_message,
             ):
-                logger.warn(
-                    "open_position retrying after submit/confirm exception",
-                    {
-                        "trade_id": trade_id,
-                        "attempt": attempt,
-                        "max_attempts": max_entry_attempts,
-                        "error": last_error_message,
-                    },
-                )
+                if submission is not None and lock.has_inflight_tx(submission.tx_signature):
+                    logger.warn(
+                        "open_position retrying confirmation after entry exception",
+                        {
+                            "trade_id": trade_id,
+                            "attempt": attempt,
+                            "max_attempts": max_entry_attempts,
+                            "error": last_error_message,
+                            "tx_signature": submission.tx_signature,
+                        },
+                    )
+                else:
+                    logger.warn(
+                        "open_position retrying after submit exception",
+                        {
+                            "trade_id": trade_id,
+                            "attempt": attempt,
+                            "max_attempts": max_entry_attempts,
+                            "error": last_error_message,
+                        },
+                    )
                 time.sleep(ENTRY_RETRY_DELAY_SECONDS)
                 continue
 
+            if submission is not None and lock.has_inflight_tx(submission.tx_signature):
+                lock.clear_inflight_tx(submission.tx_signature)
+                inflight_submission = None
+                inflight_entry_result = None
+                inflight_before_balances = None
             logger.error("open_position failed", {"trade_id": trade_id, "error": last_error_message})
             try:
                 move_state("FAILED")

@@ -8,6 +8,13 @@ from pybot.app.ports.lock_port import LockPort
 from pybot.app.ports.logger_port import LoggerPort
 
 RUNNER_LOCK_KEY_PREFIX = "lock:runner"
+INFLIGHT_TX_KEY_PREFIX = "tx:inflight"
+RUNNER_LOCK_RELEASE_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+end
+return 0
+"""
 
 
 class RedisLockAdapter(LockPort):
@@ -23,6 +30,9 @@ class RedisLockAdapter(LockPort):
     def _entry_idem_key(self, bar_close_time_iso: str) -> str:
         return f"idem:entry:{self.lock_namespace}:{bar_close_time_iso}"
 
+    def _inflight_tx_key(self, signature: str) -> str:
+        return f"{INFLIGHT_TX_KEY_PREFIX}:{self.lock_namespace}:{signature}"
+
     def acquire_runner_lock(self, ttl_seconds: int) -> bool:
         token = str(uuid4())
         result = self.redis.set(self._runner_lock_key(), token, nx=True, ex=ttl_seconds)
@@ -35,17 +45,21 @@ class RedisLockAdapter(LockPort):
         if self.runner_lock_token is None:
             return
         runner_lock_key = self._runner_lock_key()
-        current_token = self.redis.get(runner_lock_key)
-        if isinstance(current_token, bytes):
-            current_token_str = current_token.decode("utf-8")
-        elif isinstance(current_token, str):
-            current_token_str = current_token
-        else:
-            current_token_str = None
-        if current_token_str == self.runner_lock_token:
-            self.redis.delete(runner_lock_key)
-        else:
-            self.logger.warn("Runner lock token mismatch on release")
+        runner_lock_token = self.runner_lock_token
+        try:
+            released = self.redis.eval(
+                RUNNER_LOCK_RELEASE_SCRIPT,
+                1,
+                runner_lock_key,
+                runner_lock_token,
+            )
+            if released != 1:
+                self.logger.warn("Runner lock token mismatch on release")
+        except Exception as error:
+            self.logger.warn(
+                "Runner lock release failed",
+                {"error": str(error), "lock_key": runner_lock_key},
+            )
         self.runner_lock_token = None
 
     def mark_entry_attempt(self, bar_close_time_iso: str, ttl_seconds: int) -> bool:
@@ -58,7 +72,10 @@ class RedisLockAdapter(LockPort):
         return self.redis.get(key) is not None
 
     def set_inflight_tx(self, signature: str, ttl_seconds: int) -> None:
-        self.redis.set(f"tx:inflight:{self.lock_namespace}:{signature}", "1", ex=ttl_seconds)
+        self.redis.set(self._inflight_tx_key(signature), "1", ex=ttl_seconds)
+
+    def has_inflight_tx(self, signature: str) -> bool:
+        return self.redis.get(self._inflight_tx_key(signature)) is not None
 
     def clear_inflight_tx(self, signature: str) -> None:
-        self.redis.delete(f"tx:inflight:{self.lock_namespace}:{signature}")
+        self.redis.delete(self._inflight_tx_key(signature))

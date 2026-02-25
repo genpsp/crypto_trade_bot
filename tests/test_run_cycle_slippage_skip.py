@@ -63,6 +63,7 @@ class DummyLock:
     def __init__(self) -> None:
         self.locked = False
         self.entry_attempts: set[str] = set()
+        self.inflight: set[str] = set()
 
     def acquire_runner_lock(self, ttl_seconds: int) -> bool:
         _ = ttl_seconds
@@ -85,11 +86,14 @@ class DummyLock:
         return bar_close_time_iso in self.entry_attempts
 
     def set_inflight_tx(self, signature: str, ttl_seconds: int) -> None:
-        _ = signature
+        self.inflight.add(signature)
         _ = ttl_seconds
 
+    def has_inflight_tx(self, signature: str) -> bool:
+        return signature in self.inflight
+
     def clear_inflight_tx(self, signature: str) -> None:
-        _ = signature
+        self.inflight.discard(signature)
 
 
 class DummyLogger:

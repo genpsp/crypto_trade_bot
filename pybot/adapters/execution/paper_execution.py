@@ -8,6 +8,7 @@ from pybot.app.ports.execution_port import (
     SwapConfirmation,
     SwapSubmission,
 )
+from pybot.adapters.execution.jupiter_quote_client import MARK_PRICE_QUOTE_CACHE_TTL_SECONDS
 from pybot.app.ports.logger_port import LoggerPort
 from pybot.adapters.execution.jupiter_quote_client import JupiterQuoteClient
 
@@ -73,7 +74,8 @@ class PaperExecutionAdapter(ExecutionPort):
                 amount_atomic=SOL_ATOMIC_MULTIPLIER,
                 slippage_bps=1,
                 only_direct_routes=False,
-            )
+            ),
+            cache_ttl_seconds=MARK_PRICE_QUOTE_CACHE_TTL_SECONDS,
         )
         return quote.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
 

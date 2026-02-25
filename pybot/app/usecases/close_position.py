@@ -203,59 +203,64 @@ def close_position(
     if max_exit_slippage_bps < current_slippage_bps:
         max_exit_slippage_bps = current_slippage_bps
     last_error_message = "unknown error"
+    inflight_submission = None
+    inflight_exit_result = None
 
     for attempt in range(1, max_exit_attempts + 1):
+        submission = inflight_submission
+        exit_result = inflight_exit_result
         try:
             trade["execution"]["exit_slippage_bps"] = current_slippage_bps
-            submission = execution.submit_swap(
-                SubmitSwapRequest(
-                    side=side,
-                    amount_atomic=amount_atomic,
-                    slippage_bps=current_slippage_bps,
-                    only_direct_routes=config["execution"]["only_direct_routes"],
+            if submission is None:
+                submission = execution.submit_swap(
+                    SubmitSwapRequest(
+                        side=side,
+                        amount_atomic=amount_atomic,
+                        slippage_bps=current_slippage_bps,
+                        only_direct_routes=config["execution"]["only_direct_routes"],
+                    )
                 )
-            )
 
-            trade["execution"]["exit_tx_signature"] = submission.tx_signature
-            if submission.order:
-                trade["execution"]["exit_order"] = submission.order
-            exit_result = submission.result
-            if exit_result is None:
-                if side == "SELL_SOL_FOR_USDC":
-                    estimated_input_sol = submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER
-                    estimated_output_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
-                    estimated_avg_fill_price = (
-                        estimated_output_usdc / estimated_input_sol if estimated_input_sol > 0 else close_price
-                    )
-                else:
-                    estimated_input_usdc = submission.in_amount_atomic / USDC_ATOMIC_MULTIPLIER
-                    estimated_output_sol = submission.out_amount_atomic / SOL_ATOMIC_MULTIPLIER
-                    estimated_avg_fill_price = (
-                        estimated_input_usdc / estimated_output_sol if estimated_output_sol > 0 else close_price
-                    )
-                    estimated_output_usdc = estimated_input_usdc
-                    estimated_input_sol = estimated_output_sol
-                exit_result = {
-                    "status": "ESTIMATED",
-                    "avg_fill_price": estimated_avg_fill_price,
-                    "spent_quote_usdc": estimated_output_usdc,
-                    "filled_base_sol": estimated_input_sol,
-                }
-            trade["execution"]["exit_result"] = exit_result
-            trade["execution"]["exit_submission_state"] = "SUBMITTED"
-            if "exit_error" in trade["execution"]:
-                del trade["execution"]["exit_error"]
-            trade["updated_at"] = now_iso()
-            persistence.update_trade(
-                trade["trade_id"],
-                strip_none({"execution": trade["execution"], "updated_at": trade["updated_at"]}),
-            )
+                trade["execution"]["exit_tx_signature"] = submission.tx_signature
+                if submission.order:
+                    trade["execution"]["exit_order"] = submission.order
+                exit_result = submission.result
+                if exit_result is None:
+                    if side == "SELL_SOL_FOR_USDC":
+                        estimated_input_sol = submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER
+                        estimated_output_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
+                        estimated_avg_fill_price = (
+                            estimated_output_usdc / estimated_input_sol if estimated_input_sol > 0 else close_price
+                        )
+                    else:
+                        estimated_input_usdc = submission.in_amount_atomic / USDC_ATOMIC_MULTIPLIER
+                        estimated_output_sol = submission.out_amount_atomic / SOL_ATOMIC_MULTIPLIER
+                        estimated_avg_fill_price = (
+                            estimated_input_usdc / estimated_output_sol if estimated_output_sol > 0 else close_price
+                        )
+                        estimated_output_usdc = estimated_input_usdc
+                        estimated_input_sol = estimated_output_sol
+                    exit_result = {
+                        "status": "ESTIMATED",
+                        "avg_fill_price": estimated_avg_fill_price,
+                        "spent_quote_usdc": estimated_output_usdc,
+                        "filled_base_sol": estimated_input_sol,
+                    }
+                trade["execution"]["exit_result"] = exit_result
+                trade["execution"]["exit_submission_state"] = "SUBMITTED"
+                if "exit_error" in trade["execution"]:
+                    del trade["execution"]["exit_error"]
+                trade["updated_at"] = now_iso()
+                persistence.update_trade(
+                    trade["trade_id"],
+                    strip_none({"execution": trade["execution"], "updated_at": trade["updated_at"]}),
+                )
 
-            lock.set_inflight_tx(submission.tx_signature, TX_INFLIGHT_TTL_SECONDS)
-            try:
-                confirmation = execution.confirm_swap(submission.tx_signature, TX_CONFIRM_TIMEOUT_MS)
-            finally:
-                lock.clear_inflight_tx(submission.tx_signature)
+                lock.set_inflight_tx(submission.tx_signature, TX_INFLIGHT_TTL_SECONDS)
+                inflight_submission = submission
+                inflight_exit_result = exit_result
+
+            confirmation = execution.confirm_swap(submission.tx_signature, TX_CONFIRM_TIMEOUT_MS)
 
             if not confirmation.confirmed:
                 last_error_message = confirmation.error or "unknown confirmation error"
@@ -281,16 +286,25 @@ def close_position(
                                 },
                             )
                             current_slippage_bps = next_slippage_bps
+                        lock.clear_inflight_tx(submission.tx_signature)
+                        inflight_submission = None
+                        inflight_exit_result = None
                         if retry_delay_seconds > 0:
                             time.sleep(retry_delay_seconds)
                         continue
                     if close_reason == "TAKE_PROFIT":
+                        lock.clear_inflight_tx(submission.tx_signature)
+                        inflight_submission = None
+                        inflight_exit_result = None
                         return ClosePositionResult(
                             status="SKIPPED",
                             trade_id=trade["trade_id"],
                             summary=take_profit_skip_summary(last_error_message),
                         )
                 if can_skip_take_profit_error(last_error_message) and close_reason == "TAKE_PROFIT":
+                    lock.clear_inflight_tx(submission.tx_signature)
+                    inflight_submission = None
+                    inflight_exit_result = None
                     return ClosePositionResult(
                         status="SKIPPED",
                         trade_id=trade["trade_id"],
@@ -302,25 +316,32 @@ def close_position(
                     error_message=last_error_message,
                 ):
                     logger.warn(
-                        "close_position retrying after unconfirmed exit tx",
+                        "close_position retrying confirmation for inflight exit tx",
                         {
                             "trade_id": trade["trade_id"],
                             "reason": close_reason,
                             "attempt": attempt,
                             "max_attempts": max_exit_attempts,
                             "error": last_error_message,
+                            "tx_signature": submission.tx_signature,
                         },
                     )
                     if retry_delay_seconds > 0:
                         time.sleep(retry_delay_seconds)
                     continue
 
+                lock.clear_inflight_tx(submission.tx_signature)
+                inflight_submission = None
+                inflight_exit_result = None
                 return ClosePositionResult(
                     status="FAILED",
                     trade_id=trade["trade_id"],
                     summary=failed_summary(f"exit tx not confirmed ({last_error_message})"),
                 )
 
+            lock.clear_inflight_tx(submission.tx_signature)
+            inflight_submission = None
+            inflight_exit_result = None
             if side == "SELL_SOL_FOR_USDC":
                 input_sol = submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER
                 output_usdc = submission.out_amount_atomic / USDC_ATOMIC_MULTIPLIER
@@ -424,16 +445,28 @@ def close_position(
                             },
                         )
                         current_slippage_bps = next_slippage_bps
+                    if submission is not None and lock.has_inflight_tx(submission.tx_signature):
+                        lock.clear_inflight_tx(submission.tx_signature)
+                        inflight_submission = None
+                        inflight_exit_result = None
                     if retry_delay_seconds > 0:
                         time.sleep(retry_delay_seconds)
                     continue
                 if close_reason == "TAKE_PROFIT":
+                    if submission is not None and lock.has_inflight_tx(submission.tx_signature):
+                        lock.clear_inflight_tx(submission.tx_signature)
+                        inflight_submission = None
+                        inflight_exit_result = None
                     return ClosePositionResult(
                         status="SKIPPED",
                         trade_id=trade["trade_id"],
                         summary=take_profit_skip_summary(last_error_message),
                     )
             if can_skip_take_profit_error(last_error_message) and close_reason == "TAKE_PROFIT":
+                if submission is not None and lock.has_inflight_tx(submission.tx_signature):
+                    lock.clear_inflight_tx(submission.tx_signature)
+                    inflight_submission = None
+                    inflight_exit_result = None
                 return ClosePositionResult(
                     status="SKIPPED",
                     trade_id=trade["trade_id"],
@@ -444,20 +477,37 @@ def close_position(
                 max_attempts=max_exit_attempts,
                 error_message=last_error_message,
             ):
-                logger.warn(
-                    "close_position retrying after submit/confirm exception",
-                    {
-                        "trade_id": trade["trade_id"],
-                        "reason": close_reason,
-                        "attempt": attempt,
-                        "max_attempts": max_exit_attempts,
-                        "error": last_error_message,
-                    },
-                )
+                if submission is not None and lock.has_inflight_tx(submission.tx_signature):
+                    logger.warn(
+                        "close_position retrying confirmation after exit exception",
+                        {
+                            "trade_id": trade["trade_id"],
+                            "reason": close_reason,
+                            "attempt": attempt,
+                            "max_attempts": max_exit_attempts,
+                            "error": last_error_message,
+                            "tx_signature": submission.tx_signature,
+                        },
+                    )
+                else:
+                    logger.warn(
+                        "close_position retrying after submit exception",
+                        {
+                            "trade_id": trade["trade_id"],
+                            "reason": close_reason,
+                            "attempt": attempt,
+                            "max_attempts": max_exit_attempts,
+                            "error": last_error_message,
+                        },
+                    )
                 if retry_delay_seconds > 0:
                     time.sleep(retry_delay_seconds)
                 continue
 
+            if submission is not None and lock.has_inflight_tx(submission.tx_signature):
+                lock.clear_inflight_tx(submission.tx_signature)
+                inflight_submission = None
+                inflight_exit_result = None
             logger.error("close_position failed", {"trade_id": trade["trade_id"], "error": last_error_message})
             return ClosePositionResult(
                 status="FAILED",

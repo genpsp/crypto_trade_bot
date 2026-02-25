@@ -72,6 +72,9 @@ class InMemoryLock:
     def set_inflight_tx(self, signature: str, ttl_seconds: int) -> None:
         self.inflight[signature] = ttl_seconds
 
+    def has_inflight_tx(self, signature: str) -> bool:
+        return signature in self.inflight
+
     def clear_inflight_tx(self, signature: str) -> None:
         self.inflight.pop(signature, None)
 
