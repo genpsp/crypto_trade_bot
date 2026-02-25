@@ -40,3 +40,37 @@ def is_non_retriable_error_message(message: str) -> bool:
 
 def should_retry_error(*, attempt: int, max_attempts: int, error_message: str) -> bool:
     return attempt < max_attempts and not is_non_retriable_error_message(error_message)
+
+
+def resolve_tx_fee_lamports(
+    execution: object,
+    tx_signature: str,
+    *,
+    logger: Any,
+    log_context: dict[str, Any] | None = None,
+) -> int | None:
+    fee_getter = getattr(execution, "get_transaction_fee_lamports", None)
+    if not callable(fee_getter):
+        return None
+
+    context = dict(log_context or {})
+    context["tx_signature"] = tx_signature
+    try:
+        fee_value = fee_getter(tx_signature)
+    except Exception as error:
+        logger.warn(
+            "failed to fetch transaction fee",
+            {**context, "error": to_error_message(error)},
+        )
+        return None
+
+    if fee_value is None:
+        return None
+    if isinstance(fee_value, int) and fee_value >= 0:
+        return fee_value
+
+    logger.warn(
+        "invalid transaction fee payload",
+        {**context, "fee_value": fee_value},
+    )
+    return None

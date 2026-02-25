@@ -9,6 +9,7 @@ from pybot.app.ports.logger_port import LoggerPort
 from pybot.app.ports.persistence_port import PersistencePort
 from pybot.app.usecases.usecase_utils import (
     now_iso,
+    resolve_tx_fee_lamports,
     should_retry_error,
     strip_none,
     to_error_message,
@@ -363,6 +364,14 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             confirmed_submission = submission
             confirmed_entry_result = entry_result
             confirmed_before_balances = attempt_before_balances
+            entry_fee_lamports = resolve_tx_fee_lamports(
+                execution,
+                submission.tx_signature,
+                logger=logger,
+                log_context={"trade_id": trade_id, "phase": "ENTRY"},
+            )
+            if entry_fee_lamports is not None:
+                trade["execution"]["entry_fee_lamports"] = entry_fee_lamports
             break
         except Exception as error:
             last_error_message = to_error_message(error)

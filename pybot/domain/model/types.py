@@ -154,6 +154,8 @@ class TradeExecutionSnapshot(TypedDict, total=False):
     entry_tx_signature: str
     exit_tx_signature: str
     exit_submission_state: Literal["SUBMITTED", "CONFIRMED", "FAILED"]
+    entry_fee_lamports: int
+    exit_fee_lamports: int
     entry_error: str
     exit_error: str
     order: TradeOrderSnapshot

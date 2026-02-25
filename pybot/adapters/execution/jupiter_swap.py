@@ -64,6 +64,15 @@ class JupiterSwapAdapter(ExecutionPort):
         confirmation = self.solana_sender.confirm_signature(tx_signature, timeout_ms)
         return SwapConfirmation(confirmed=confirmation.confirmed, error=confirmation.error)
 
+    def get_transaction_fee_lamports(self, tx_signature: str) -> int | None:
+        fee_getter = getattr(self.solana_sender, "get_transaction_fee_lamports", None)
+        if not callable(fee_getter):
+            return None
+        fee = fee_getter(tx_signature)
+        if isinstance(fee, int) and fee >= 0:
+            return fee
+        return None
+
     def get_mark_price(self, pair: str) -> float:
         self._assert_pair_supported(pair, "mark price")
 

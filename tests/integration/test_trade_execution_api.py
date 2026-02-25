@@ -945,6 +945,163 @@ class TradeExecutionApiTest(unittest.TestCase):
         self.assertEqual("SHORT_ONLY", trade["direction"])
         self.assertEqual(118.371078, float(trade["position"]["quote_amount_usdc"]))
 
+    def test_open_position_persists_entry_fee_lamports_when_supported(self) -> None:
+        config = _build_config()
+        persistence = InMemoryPersistence(config)
+        lock = InMemoryLock()
+        logger = InMemoryLogger()
+
+        signal = EntrySignalDecision(
+            type="ENTER",
+            summary="entry fee capture",
+            ema_fast=101.0,
+            ema_slow=100.0,
+            entry_price=100.0,
+            stop_price=98.0,
+            take_profit_price=103.0,
+        )
+
+        class FeeAwareExecution:
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                _ = request
+                return SwapSubmission(
+                    tx_signature="entry_sig_fee_capture",
+                    in_amount_atomic=100_000_000,
+                    out_amount_atomic=1_000_000_000,
+                    order={"tx_signature": "entry_sig_fee_capture"},
+                    result={
+                        "status": "ESTIMATED",
+                        "avg_fill_price": 100.0,
+                        "spent_quote_usdc": 100.0,
+                        "filled_base_sol": 1.0,
+                    },
+                )
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=True)
+
+            def get_transaction_fee_lamports(self, tx_signature: str) -> int:
+                _ = tx_signature
+                return 8_500
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return 1.0
+
+        opened = open_position(
+            OpenPositionDependencies(
+                execution=FeeAwareExecution(),
+                lock=lock,
+                logger=logger,
+                persistence=persistence,
+            ),
+            OpenPositionInput(
+                config=config,
+                signal=signal,
+                bar_close_time_iso="2026-02-21T10:00:00.000Z",
+                model_id="core_long_v0",
+            ),
+        )
+
+        self.assertEqual("OPENED", opened.status)
+        trade = persistence.trades[opened.trade_id]
+        self.assertEqual(8_500, trade["execution"]["entry_fee_lamports"])
+
+    def test_close_position_persists_exit_fee_lamports_when_supported(self) -> None:
+        config = _build_config()
+        persistence = InMemoryPersistence(config)
+        lock = InMemoryLock()
+        logger = InMemoryLogger()
+
+        trade: TradeRecord = {
+            "trade_id": "2026-02-22T20:00:00Z_core_long_v0_LONG",
+            "model_id": "core_long_v0",
+            "bar_close_time_iso": "2026-02-22T20:00:00Z",
+            "pair": "SOL/USDC",
+            "direction": "LONG_ONLY",
+            "state": "CONFIRMED",
+            "config_version": 2,
+            "execution": {"entry_tx_signature": "entry_sig_1"},
+            "position": {
+                "status": "OPEN",
+                "quantity_sol": 0.5,
+                "entry_price": 80.0,
+                "stop_price": 78.0,
+                "take_profit_price": 84.0,
+                "entry_time_iso": "2026-02-22T20:01:00Z",
+            },
+            "created_at": "2026-02-22T20:01:00Z",
+            "updated_at": "2026-02-22T20:01:00Z",
+        }
+        persistence.create_trade(trade)
+        stored_trade = persistence.trades[trade["trade_id"]]
+
+        class FeeAwareExecution:
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                _ = request
+                return SwapSubmission(
+                    tx_signature="exit_sig_fee_capture",
+                    in_amount_atomic=500_000_000,
+                    out_amount_atomic=40_000_000,
+                    order={"tx_signature": "exit_sig_fee_capture"},
+                    result={
+                        "status": "ESTIMATED",
+                        "avg_fill_price": 80.0,
+                        "spent_quote_usdc": 40.0,
+                        "filled_base_sol": 0.5,
+                    },
+                )
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=True)
+
+            def get_transaction_fee_lamports(self, tx_signature: str) -> int:
+                _ = tx_signature
+                return 12_000
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 77.5
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return 1.0
+
+        closed = close_position(
+            ClosePositionDependencies(
+                execution=FeeAwareExecution(),
+                lock=lock,
+                logger=logger,
+                persistence=persistence,
+            ),
+            ClosePositionInput(
+                config=config,
+                trade=stored_trade,
+                close_reason="STOP_LOSS",
+                close_price=77.5,
+            ),
+        )
+
+        self.assertEqual("CLOSED", closed.status)
+        closed_trade = persistence.trades[trade["trade_id"]]
+        self.assertEqual(12_000, closed_trade["execution"]["exit_fee_lamports"])
+
     def test_submit_swap_retries_quote_and_swap_http_503(self) -> None:
         quote_count = 0
         swap_count = 0
@@ -1095,6 +1252,78 @@ class SolanaSenderRpcMethodTest(unittest.TestCase):
             rpc_methods = [r["body_json"]["method"] for r in server.requests if r.get("body_json")]
             self.assertIn("sendTransaction", rpc_methods)
             self.assertNotIn("sendRawTransaction", rpc_methods)
+
+    def test_get_transaction_fee_lamports_reads_meta_fee(self) -> None:
+        def responder(
+            method: str,
+            path: str,
+            query: dict[str, list[str]],
+            body_json: dict[str, Any] | None,
+        ) -> tuple[int, dict[str, Any]]:
+            _ = query
+            if (
+                method == "POST"
+                and path == "/rpc"
+                and body_json
+                and body_json.get("method") == "getTransaction"
+            ):
+                return 200, {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "meta": {"fee": 9_400},
+                    },
+                }
+            return 404, {"error": "not found"}
+
+        with MockServer(responder) as server:
+            fake_secret = bytes(Keypair())
+            with patch(
+                "pybot.adapters.execution.solana_sender._decrypt_secret_key",
+                return_value=fake_secret,
+            ):
+                sender = SolanaSender(
+                    rpc_url=f"{server.base_url}/rpc",
+                    wallet_key_path="unused",
+                    wallet_passphrase="unused",
+                    logger=InMemoryLogger(),
+                )
+                fee = sender.get_transaction_fee_lamports("sig-1")
+
+        self.assertEqual(9_400, fee)
+
+    def test_get_transaction_fee_lamports_returns_none_when_missing(self) -> None:
+        def responder(
+            method: str,
+            path: str,
+            query: dict[str, list[str]],
+            body_json: dict[str, Any] | None,
+        ) -> tuple[int, dict[str, Any]]:
+            _ = query
+            if (
+                method == "POST"
+                and path == "/rpc"
+                and body_json
+                and body_json.get("method") == "getTransaction"
+            ):
+                return 200, {"jsonrpc": "2.0", "id": 1, "result": {"meta": {}}}
+            return 404, {"error": "not found"}
+
+        with MockServer(responder) as server:
+            fake_secret = bytes(Keypair())
+            with patch(
+                "pybot.adapters.execution.solana_sender._decrypt_secret_key",
+                return_value=fake_secret,
+            ):
+                sender = SolanaSender(
+                    rpc_url=f"{server.base_url}/rpc",
+                    wallet_key_path="unused",
+                    wallet_passphrase="unused",
+                    logger=InMemoryLogger(),
+                )
+                fee = sender.get_transaction_fee_lamports("sig-1")
+
+        self.assertIsNone(fee)
 
 
 if __name__ == "__main__":

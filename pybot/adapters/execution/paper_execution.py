@@ -60,6 +60,10 @@ class PaperExecutionAdapter(ExecutionPort):
         _ = timeout_ms
         return SwapConfirmation(confirmed=True)
 
+    def get_transaction_fee_lamports(self, tx_signature: str) -> int:
+        _ = tx_signature
+        return 0
+
     def get_mark_price(self, pair: str) -> float:
         if pair != "SOL/USDC":
             raise ValueError(f"Unsupported pair for mark price: {pair}")

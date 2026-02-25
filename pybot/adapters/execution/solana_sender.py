@@ -250,3 +250,25 @@ class SolanaSender:
             confirmed=False,
             error=f"confirmation timeout after {timeout_ms}ms",
         )
+
+    def get_transaction_fee_lamports(self, signature: str) -> int | None:
+        result = self._rpc(
+            "getTransaction",
+            [
+                signature,
+                {
+                    "encoding": "json",
+                    "commitment": "confirmed",
+                    "maxSupportedTransactionVersion": 0,
+                },
+            ],
+        )
+        if not isinstance(result, dict):
+            return None
+        meta = result.get("meta")
+        if not isinstance(meta, dict):
+            return None
+        fee = meta.get("fee")
+        if isinstance(fee, int) and fee >= 0:
+            return fee
+        return None

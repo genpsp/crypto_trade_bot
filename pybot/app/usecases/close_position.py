@@ -9,6 +9,7 @@ from pybot.app.ports.logger_port import LoggerPort
 from pybot.app.ports.persistence_port import PersistencePort
 from pybot.app.usecases.usecase_utils import (
     now_iso,
+    resolve_tx_fee_lamports,
     should_retry_error,
     strip_none,
     to_error_message,
@@ -269,6 +270,15 @@ def close_position(
                 if "avg_fill_price" in exit_result
                 else fallback_exit_price
             )
+
+            exit_fee_lamports = resolve_tx_fee_lamports(
+                execution,
+                submission.tx_signature,
+                logger=logger,
+                log_context={"trade_id": trade["trade_id"], "phase": "EXIT"},
+            )
+            if exit_fee_lamports is not None:
+                trade["execution"]["exit_fee_lamports"] = exit_fee_lamports
 
             after_balances = snapshot_balances()
             if before_balances is not None and after_balances is not None:
