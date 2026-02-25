@@ -8,8 +8,10 @@ from pybot.app.ports.lock_port import LockPort
 from pybot.app.ports.logger_port import LoggerPort
 from pybot.app.ports.persistence_port import PersistencePort
 from pybot.app.usecases.usecase_utils import (
+    is_slippage_error_message,
     now_iso,
     resolve_tx_fee_lamports,
+    summarize_error_for_log,
     should_retry_error,
     strip_none,
     to_error_message,
@@ -170,7 +172,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
         },
         "execution": {},
         "position": {
-            "status": "OPEN",
+            "status": "CLOSED",
             "quantity_sol": 0.0,
             "quote_amount_usdc": 0.0,
             "entry_trigger_price": signal.entry_price,
@@ -211,6 +213,9 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             strip_none({"execution": trade["execution"], "updated_at": trade["updated_at"]}),
         )
 
+    def failed_summary(message: str) -> str:
+        return f"FAILED: {summarize_error_for_log(message)}"
+
     def snapshot_balances() -> tuple[float, float] | None:
         try:
             quote = float(execution.get_available_quote_usdc(config["pair"]))
@@ -231,7 +236,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
     if balance_error:
         trade["execution"]["entry_error"] = balance_error
         move_state("FAILED")
-        return OpenPositionResult(status="FAILED", trade_id=trade_id, summary=f"FAILED: {balance_error}")
+        return OpenPositionResult(status="FAILED", trade_id=trade_id, summary=failed_summary(balance_error))
 
     if base_notional_usdc <= 0:
         trade["execution"]["entry_error"] = "available balance is 0"
@@ -239,7 +244,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
         return OpenPositionResult(
             status="FAILED",
             trade_id=trade_id,
-            summary=f"FAILED: {trade['execution']['entry_error']}",
+            summary=failed_summary(str(trade["execution"]["entry_error"])),
         )
 
     if base_notional_usdc < configured_min_notional_usdc:
@@ -251,7 +256,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
         return OpenPositionResult(
             status="FAILED",
             trade_id=trade_id,
-            summary=f"FAILED: {trade['execution']['entry_error']}",
+            summary=failed_summary(str(trade["execution"]["entry_error"])),
         )
 
     if effective_notional_usdc <= 0:
@@ -273,7 +278,11 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
     if amount_atomic <= 0:
         trade["execution"]["entry_error"] = "entry amount_atomic must be > 0"
         move_state("FAILED")
-        return OpenPositionResult(status="FAILED", trade_id=trade_id, summary=f"FAILED: {trade['execution']['entry_error']}")
+        return OpenPositionResult(
+            status="FAILED",
+            trade_id=trade_id,
+            summary=failed_summary(str(trade["execution"]["entry_error"])),
+        )
 
     confirmed_submission = None
     confirmed_entry_result = None
@@ -337,6 +346,13 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 last_error_message = confirmation.error or "unknown confirmation error"
                 trade["execution"]["entry_error"] = f"attempt {attempt}/{max_entry_attempts}: {last_error_message}"
                 persist_execution_only()
+                if is_slippage_error_message(last_error_message):
+                    move_state("CANCELED")
+                    return OpenPositionResult(
+                        status="SKIPPED",
+                        trade_id=trade_id,
+                        summary=f"SKIPPED: slippage exceeded ({summarize_error_for_log(last_error_message)})",
+                    )
                 if should_retry_error(
                     attempt=attempt,
                     max_attempts=max_entry_attempts,
@@ -358,7 +374,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 return OpenPositionResult(
                     status="FAILED",
                     trade_id=trade_id,
-                    summary=f"FAILED: entry tx not confirmed ({last_error_message})",
+                    summary=failed_summary(f"entry tx not confirmed ({last_error_message})"),
                 )
 
             confirmed_submission = submission
@@ -382,6 +398,20 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 logger.error(
                     "open_position execution persistence failed",
                     {"trade_id": trade_id, "error": to_error_message(persist_error)},
+                )
+
+            if is_slippage_error_message(last_error_message):
+                try:
+                    move_state("CANCELED")
+                except Exception as state_error:
+                    logger.error(
+                        "open_position state transition failed",
+                        {"trade_id": trade_id, "error": to_error_message(state_error)},
+                    )
+                return OpenPositionResult(
+                    status="SKIPPED",
+                    trade_id=trade_id,
+                    summary=f"SKIPPED: slippage exceeded ({summarize_error_for_log(last_error_message)})",
                 )
 
             if should_retry_error(
@@ -409,7 +439,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                     "open_position state transition failed",
                     {"trade_id": trade_id, "error": to_error_message(state_error)},
                 )
-            return OpenPositionResult(status="FAILED", trade_id=trade_id, summary=f"FAILED: {last_error_message}")
+            return OpenPositionResult(status="FAILED", trade_id=trade_id, summary=failed_summary(last_error_message))
 
     if confirmed_submission is None or confirmed_entry_result is None:
         trade["execution"]["entry_error"] = last_error_message
@@ -420,7 +450,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 "open_position state transition failed",
                 {"trade_id": trade_id, "error": to_error_message(state_error)},
             )
-        return OpenPositionResult(status="FAILED", trade_id=trade_id, summary=f"FAILED: {last_error_message}")
+        return OpenPositionResult(status="FAILED", trade_id=trade_id, summary=failed_summary(last_error_message))
 
     fallback_base_qty = (
         confirmed_submission.out_amount_atomic / SOL_ATOMIC_MULTIPLIER
@@ -449,7 +479,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             },
         )
         move_state("FAILED")
-        return OpenPositionResult(status="FAILED", trade_id=trade_id, summary=f"FAILED: {quantity_error}")
+        return OpenPositionResult(status="FAILED", trade_id=trade_id, summary=failed_summary(quantity_error))
 
     actual_quote_usdc = (
         float(confirmed_entry_result["spent_quote_usdc"])
@@ -521,6 +551,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
     trade["position"]["stop_price"] = round_to(final_stop, 6)
     trade["position"]["take_profit_price"] = round_to(recalculated_take_profit, 6)
     trade["position"]["entry_time_iso"] = now_iso()
+    trade["position"]["status"] = "OPEN"
     trade["plan"]["entry_price"] = trade["position"]["entry_price"]
     trade["plan"]["stop_price"] = trade["position"]["stop_price"]
     trade["plan"]["take_profit_price"] = trade["position"]["take_profit_price"]

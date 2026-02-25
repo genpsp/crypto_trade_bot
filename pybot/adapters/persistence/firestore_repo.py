@@ -127,7 +127,7 @@ class FirestoreRepository(PersistencePort):
                 continue
             if trade.get("pair") != pair:
                 continue
-            if trade.get("state") == "FAILED":
+            if trade.get("state") in {"FAILED", "CANCELED"}:
                 continue
             count += 1
         return count

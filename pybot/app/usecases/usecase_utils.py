@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import re
 from typing import Any
 
 NON_RETRIABLE_ERROR_MARKERS = (
@@ -17,6 +18,13 @@ NON_RETRIABLE_ERROR_MARKERS = (
     "owner mismatch",
     "signature verification failed",
 )
+
+SLIPPAGE_ERROR_MARKERS = (
+    "custom program error: 0x1771",
+    "custom 6001",
+    "slippage",
+)
+SUMMARY_ERROR_MAX_LENGTH = 220
 
 
 def now_iso() -> str:
@@ -36,6 +44,23 @@ def strip_none(value: dict[str, Any]) -> dict[str, Any]:
 def is_non_retriable_error_message(message: str) -> bool:
     normalized = message.strip().lower()
     return any(marker in normalized for marker in NON_RETRIABLE_ERROR_MARKERS)
+
+
+def is_slippage_error_message(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(marker in normalized for marker in SLIPPAGE_ERROR_MARKERS)
+
+
+def summarize_error_for_log(message: str, max_length: int = SUMMARY_ERROR_MAX_LENGTH) -> str:
+    normalized = " ".join(message.strip().split())
+    for pattern in (r"'message':\s*'([^']+)'", r'"message"\s*:\s*"([^"]+)"'):
+        matched = re.search(pattern, normalized)
+        if matched:
+            normalized = matched.group(1).strip()
+            break
+    if len(normalized) > max_length:
+        return f"{normalized[: max_length - 3]}..."
+    return normalized
 
 
 def should_retry_error(*, attempt: int, max_attempts: int, error_message: str) -> bool:

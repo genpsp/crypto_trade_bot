@@ -287,6 +287,8 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
         run["trade_id"] = opened.trade_id
         if opened.status == "OPENED":
             run["result"] = "OPENED"
+        elif opened.status == "SKIPPED":
+            run["result"] = "SKIPPED"
         elif opened.status == "CANCELED":
             run["result"] = "SKIPPED_ENTRY"
         else:

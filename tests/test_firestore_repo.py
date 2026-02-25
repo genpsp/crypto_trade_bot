@@ -37,10 +37,11 @@ class _RepositoryUnderTest(FirestoreRepository):
 
 
 class FirestoreRepositoryCountTradesTest(unittest.TestCase):
-    def test_count_trades_for_utc_day_excludes_failed_state(self) -> None:
+    def test_count_trades_for_utc_day_excludes_failed_and_canceled_states(self) -> None:
         repo = _RepositoryUnderTest(
             [
                 _FakeDoc({"pair": "SOL/USDC", "state": "FAILED"}),
+                _FakeDoc({"pair": "SOL/USDC", "state": "CANCELED"}),
                 _FakeDoc({"pair": "SOL/USDC", "state": "CLOSED"}),
                 _FakeDoc({"pair": "SOL/USDC", "state": "CONFIRMED"}),
                 _FakeDoc({"pair": "BTC/USDC", "state": "CLOSED"}),

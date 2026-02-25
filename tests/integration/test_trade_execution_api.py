@@ -311,6 +311,7 @@ class TradeExecutionApiTest(unittest.TestCase):
             self.assertEqual(0, len(sender.sent))
             trade = persistence.trades[opened.trade_id]
             self.assertEqual("CANCELED", trade["state"])
+            self.assertEqual("CLOSED", trade["position"]["status"])
 
     def test_open_and_close_position_hit_jupiter_quote_and_swap_api(self) -> None:
         def responder(
@@ -778,6 +779,77 @@ class TradeExecutionApiTest(unittest.TestCase):
         trade = persistence.trades[opened.trade_id]
         self.assertEqual("FAILED", trade["state"])
         self.assertIn("attempt 1/3", trade["execution"]["entry_error"])
+        self.assertEqual("CLOSED", trade["position"]["status"])
+
+    def test_open_position_marks_slippage_error_as_skipped(self) -> None:
+        config = _build_config()
+        persistence = InMemoryPersistence(config)
+        lock = InMemoryLock()
+        logger = InMemoryLogger()
+
+        signal = EntrySignalDecision(
+            type="ENTER",
+            summary="slippage skip enter",
+            ema_fast=101.0,
+            ema_slow=100.0,
+            entry_price=100.0,
+            stop_price=98.0,
+            take_profit_price=103.0,
+        )
+
+        class SlippageExecution:
+            def __init__(self) -> None:
+                self.submit_calls = 0
+
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                _ = request
+                self.submit_calls += 1
+                raise RuntimeError(
+                    "RPC sendTransaction failed: {'message': 'Transaction simulation failed: Error processing Instruction 4: custom program error: 0x1771'}"
+                )
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=False, error="unused")
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return 1.0
+
+        execution = SlippageExecution()
+        with patch("pybot.app.usecases.open_position.time.sleep", return_value=None):
+            opened = open_position(
+                OpenPositionDependencies(
+                    execution=execution,
+                    lock=lock,
+                    logger=logger,
+                    persistence=persistence,
+                ),
+                OpenPositionInput(
+                    config=config,
+                    signal=signal,
+                    bar_close_time_iso="2026-02-21T10:00:00.000Z",
+                    model_id="core_long_v0",
+                ),
+            )
+
+        self.assertEqual("SKIPPED", opened.status)
+        self.assertEqual(1, execution.submit_calls)
+        self.assertIn("custom program error: 0x1771", opened.summary)
+        self.assertNotIn("'message':", opened.summary)
+        trade = persistence.trades[opened.trade_id]
+        self.assertEqual("CANCELED", trade["state"])
+        self.assertEqual("CLOSED", trade["position"]["status"])
+        self.assertIn("0x1771", trade["execution"]["entry_error"])
 
     def test_open_position_prefers_balance_snapshot_for_long_position_size(self) -> None:
         config = _build_config()

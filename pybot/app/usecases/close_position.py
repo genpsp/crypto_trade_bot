@@ -10,6 +10,7 @@ from pybot.app.ports.persistence_port import PersistencePort
 from pybot.app.usecases.usecase_utils import (
     now_iso,
     resolve_tx_fee_lamports,
+    summarize_error_for_log,
     should_retry_error,
     strip_none,
     to_error_message,
@@ -99,6 +100,9 @@ def close_position(
             trade["trade_id"],
             strip_none({"execution": trade["execution"], "updated_at": trade["updated_at"]}),
         )
+
+    def failed_summary(message: str) -> str:
+        return f"FAILED: {summarize_error_for_log(message)}"
 
     def snapshot_balances() -> tuple[float, float] | None:
         try:
@@ -253,7 +257,7 @@ def close_position(
                 return ClosePositionResult(
                     status="FAILED",
                     trade_id=trade["trade_id"],
-                    summary=f"FAILED: exit tx not confirmed ({last_error_message})",
+                    summary=failed_summary(f"exit tx not confirmed ({last_error_message})"),
                 )
 
             if side == "SELL_SOL_FOR_USDC":
@@ -365,11 +369,11 @@ def close_position(
             return ClosePositionResult(
                 status="FAILED",
                 trade_id=trade["trade_id"],
-                summary=f"FAILED: {last_error_message}",
+                summary=failed_summary(last_error_message),
             )
 
     return ClosePositionResult(
         status="FAILED",
         trade_id=trade["trade_id"],
-        summary=f"FAILED: {last_error_message}",
+        summary=failed_summary(last_error_message),
     )
