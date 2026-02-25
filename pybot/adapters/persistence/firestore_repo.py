@@ -25,6 +25,8 @@ def sanitize_firestore_value(value: Any) -> Any:
 
 
 SKIP_RUN_RESULTS = {"SKIPPED", "SKIPPED_ENTRY"}
+TRADE_SKIP_STATES = {"FAILED", "CANCELED"}
+LEGACY_TRADE_CACHE_MARKER = "__legacy_trade_storage__"
 
 
 def _extract_run_date(run: RunRecord) -> str:
@@ -36,6 +38,54 @@ def _extract_run_date(run: RunRecord) -> str:
         except ValueError:
             pass
     return datetime.now(tz=UTC).date().isoformat()
+
+
+def _parse_iso_date(value: str) -> str | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.date().isoformat()
+    except ValueError:
+        return None
+
+
+def _extract_trade_date_from_trade_id(trade_id: str) -> str | None:
+    timestamp_head = trade_id.split("_", 1)[0]
+    return _parse_iso_date(timestamp_head)
+
+
+def _extract_trade_date_from_payload(payload: dict[str, Any]) -> str:
+    for key in ("trade_date", "created_at", "bar_close_time_iso"):
+        raw_value = payload.get(key)
+        if isinstance(raw_value, str):
+            parsed_date = _parse_iso_date(raw_value)
+            if parsed_date is not None:
+                return parsed_date
+    trade_id = payload.get("trade_id")
+    if isinstance(trade_id, str):
+        parsed_from_trade_id = _extract_trade_date_from_trade_id(trade_id)
+        if parsed_from_trade_id is not None:
+            return parsed_from_trade_id
+    return datetime.now(tz=UTC).date().isoformat()
+
+
+def _extract_day_date(day_start_iso: str, day_end_iso: str) -> str:
+    parsed_start = _parse_iso_date(day_start_iso)
+    if parsed_start is not None:
+        return parsed_start
+    parsed_end = _parse_iso_date(day_end_iso)
+    if parsed_end is not None:
+        return parsed_end
+    return datetime.now(tz=UTC).date().isoformat()
+
+
+def _is_day_doc_id(doc_id: str) -> bool:
+    if len(doc_id) != 10:
+        return False
+    try:
+        datetime.fromisoformat(doc_id)
+    except ValueError:
+        return False
+    return True
 
 
 def _build_skip_run_doc_id(run: RunRecord) -> str:
@@ -59,6 +109,7 @@ class FirestoreRepository(PersistencePort):
         self.model_id = model_id
         self.trades_collection_name = "paper_trades" if mode == "PAPER" else "trades"
         self.runs_collection_name = "paper_runs" if mode == "PAPER" else "runs"
+        self._trade_storage_cache: dict[str, str] = {}
 
     def _model_doc(self):
         return self.firestore.collection("models").document(self.model_id)
@@ -78,6 +129,57 @@ class FirestoreRepository(PersistencePort):
     def _trades_collection(self):
         return self._model_doc().collection(self.trades_collection_name)
 
+    def _trade_day_doc(self, trade_date: str):
+        return self._trades_collection().document(trade_date)
+
+    def _trade_items_collection_for_date(self, trade_date: str):
+        return self._trade_day_doc(trade_date).collection("items")
+
+    def _legacy_trade_doc(self, trade_id: str):
+        return self._trades_collection().document(trade_id)
+
+    def _touch_trade_day(self, trade_date: str, updated_at_iso: str | None = None) -> None:
+        self._trade_day_doc(trade_date).set(
+            sanitize_firestore_value(
+                {
+                    "trade_date": trade_date,
+                    "updated_at_iso": updated_at_iso or datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
+                }
+            ),
+            merge=True,
+        )
+
+    def _cache_trade_day(self, trade_id: str, trade_date: str) -> None:
+        self._trade_storage_cache[trade_id] = trade_date
+
+    def _cache_legacy_trade(self, trade_id: str) -> None:
+        self._trade_storage_cache[trade_id] = LEGACY_TRADE_CACHE_MARKER
+
+    def _resolve_trade_update_target(self, trade_id: str, payload: dict[str, Any]) -> tuple[str, str | None]:
+        cached = self._trade_storage_cache.get(trade_id)
+        if cached == LEGACY_TRADE_CACHE_MARKER:
+            return "LEGACY", None
+        if isinstance(cached, str) and cached:
+            return "DAY", cached
+
+        payload_trade_date = payload.get("trade_date")
+        if isinstance(payload_trade_date, str):
+            normalized_payload_trade_date = payload_trade_date.strip()
+            if normalized_payload_trade_date:
+                return "DAY", normalized_payload_trade_date
+
+        parsed_trade_date = _extract_trade_date_from_trade_id(trade_id)
+        trade_date = parsed_trade_date or datetime.now(tz=UTC).date().isoformat()
+        day_doc = self._trade_items_collection_for_date(trade_date).document(trade_id).get()
+        if day_doc.exists:
+            return "DAY", trade_date
+
+        legacy_doc = self._legacy_trade_doc(trade_id).get()
+        if legacy_doc.exists:
+            return "LEGACY", None
+
+        return "DAY", trade_date
+
     def _runs_collection(self):
         return self._model_doc().collection(self.runs_collection_name)
 
@@ -88,46 +190,137 @@ class FirestoreRepository(PersistencePort):
         self._touch_model_metadata()
         payload: TradeRecord = dict(trade)
         payload.setdefault("model_id", self.model_id)
-        self._trades_collection().document(trade["trade_id"]).set(sanitize_firestore_value(payload))
+        trade_date = _extract_trade_date_from_payload(payload)
+        payload["trade_date"] = trade_date
+        updated_at_iso = payload.get("updated_at")
+        updated_at_iso_value = updated_at_iso if isinstance(updated_at_iso, str) else None
+        self._touch_trade_day(trade_date, updated_at_iso_value)
+        self._trade_items_collection_for_date(trade_date).document(trade["trade_id"]).set(sanitize_firestore_value(payload))
+        self._cache_trade_day(trade["trade_id"], trade_date)
 
     def update_trade(self, trade_id: str, updates: dict) -> None:
         self._touch_model_metadata()
         payload = dict(updates)
         payload.setdefault("model_id", self.model_id)
-        self._trades_collection().document(trade_id).set(sanitize_firestore_value(payload), merge=True)
+        target_type, target_trade_date = self._resolve_trade_update_target(trade_id, payload)
+        if target_type == "LEGACY":
+            self._legacy_trade_doc(trade_id).set(sanitize_firestore_value(payload), merge=True)
+            self._cache_legacy_trade(trade_id)
+            return
+
+        trade_date = target_trade_date or datetime.now(tz=UTC).date().isoformat()
+        payload.setdefault("trade_date", trade_date)
+        updated_at_iso = payload.get("updated_at")
+        updated_at_iso_value = updated_at_iso if isinstance(updated_at_iso, str) else None
+        self._touch_trade_day(trade_date, updated_at_iso_value)
+        self._trade_items_collection_for_date(trade_date).document(trade_id).set(
+            sanitize_firestore_value(payload),
+            merge=True,
+        )
+        self._cache_trade_day(trade_id, trade_date)
 
     def find_open_trade(self, pair: Pair) -> TradeRecord | None:
-        snapshot = (
+        candidates_by_trade_id: dict[str, tuple[TradeRecord, str]] = {}
+
+        day_snapshots = self._trades_collection().stream()
+        trade_day_ids = sorted((doc.id for doc in day_snapshots if _is_day_doc_id(doc.id)), reverse=True)
+        for trade_date in trade_day_ids:
+            snapshot = (
+                self._trade_items_collection_for_date(trade_date)
+                .where(filter=FieldFilter("state", "==", "CONFIRMED"))
+                .where(filter=FieldFilter("pair", "==", pair))
+                .get()
+            )
+            for doc in snapshot:
+                trade = doc.to_dict()
+                if not isinstance(trade, dict):
+                    continue
+                if trade.get("pair") != pair:
+                    continue
+                if trade.get("state") != "CONFIRMED":
+                    continue
+                trade_id = trade.get("trade_id")
+                if not isinstance(trade_id, str):
+                    continue
+                trade.setdefault("trade_date", trade_date)
+                candidates_by_trade_id[trade_id] = (trade, "DAY")
+
+        legacy_snapshot = (
             self._trades_collection()
             .where(filter=FieldFilter("state", "==", "CONFIRMED"))
             .get()
         )
-        if len(snapshot) == 0:
-            return None
-
-        candidates = [
-            doc.to_dict()
-            for doc in snapshot
-            if isinstance(doc.to_dict(), dict) and doc.to_dict().get("pair") == pair
-        ]
-        candidates.sort(key=lambda trade: trade.get("created_at", ""), reverse=True)
-        return candidates[0] if candidates else None
-
-    def count_trades_for_utc_day(self, pair: Pair, day_start_iso: str, day_end_iso: str) -> int:
-        snapshot = (
-            self._trades_collection()
-            .where(filter=FieldFilter("created_at", ">=", day_start_iso))
-            .where(filter=FieldFilter("created_at", "<=", day_end_iso))
-            .get()
-        )
-        count = 0
-        for doc in snapshot:
+        for doc in legacy_snapshot:
             trade = doc.to_dict()
             if not isinstance(trade, dict):
                 continue
             if trade.get("pair") != pair:
                 continue
-            if trade.get("state") in {"FAILED", "CANCELED"}:
+            trade_id = trade.get("trade_id")
+            if not isinstance(trade_id, str):
+                continue
+            if trade_id in candidates_by_trade_id:
+                continue
+            candidates_by_trade_id[trade_id] = (trade, "LEGACY")
+
+        if not candidates_by_trade_id:
+            return None
+
+        candidates = [entry for entry in candidates_by_trade_id.values() if isinstance(entry[0], dict)]
+        candidates.sort(key=lambda entry: entry[0].get("created_at", ""), reverse=True)
+        selected_trade, selected_source = candidates[0]
+        selected_trade_id = selected_trade.get("trade_id")
+        if isinstance(selected_trade_id, str):
+            if selected_source == "LEGACY":
+                self._cache_legacy_trade(selected_trade_id)
+            else:
+                selected_trade_date = selected_trade.get("trade_date")
+                if isinstance(selected_trade_date, str):
+                    self._cache_trade_day(selected_trade_id, selected_trade_date)
+        return selected_trade
+
+    def count_trades_for_utc_day(self, pair: Pair, day_start_iso: str, day_end_iso: str) -> int:
+        trade_date = _extract_day_date(day_start_iso, day_end_iso)
+        trades_by_id: dict[str, TradeRecord] = {}
+
+        day_snapshot = (
+            self._trade_items_collection_for_date(trade_date)
+            .where(filter=FieldFilter("pair", "==", pair))
+            .get()
+        )
+        for doc in day_snapshot:
+            trade = doc.to_dict()
+            if not isinstance(trade, dict):
+                continue
+            if trade.get("pair") != pair:
+                continue
+            trade_id = trade.get("trade_id")
+            if not isinstance(trade_id, str):
+                continue
+            trades_by_id[trade_id] = trade
+
+        legacy_snapshot = (
+            self._trades_collection()
+            .where(filter=FieldFilter("created_at", ">=", day_start_iso))
+            .where(filter=FieldFilter("created_at", "<=", day_end_iso))
+            .get()
+        )
+        for doc in legacy_snapshot:
+            trade = doc.to_dict()
+            if not isinstance(trade, dict):
+                continue
+            if trade.get("pair") != pair:
+                continue
+            trade_id = trade.get("trade_id")
+            if not isinstance(trade_id, str):
+                continue
+            if trade_id in trades_by_id:
+                continue
+            trades_by_id[trade_id] = trade
+
+        count = 0
+        for trade in trades_by_id.values():
+            if trade.get("state") in TRADE_SKIP_STATES:
                 continue
             count += 1
         return count
