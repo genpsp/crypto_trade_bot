@@ -16,7 +16,11 @@ from pybot.adapters.persistence.firestore_repo import FirestoreRepository
 from pybot.app.ports.execution_port import ExecutionPort
 from pybot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
 from pybot.infra.config.env import load_env
-from pybot.infra.config.firestore_config_repo import FirestoreConfigRepository
+from pybot.infra.config.firestore_config_repo import (
+    GLOBAL_CONTROL_MODEL_DOC_ID,
+    GLOBAL_CONTROL_PAUSE_FIELD,
+    FirestoreConfigRepository,
+)
 from pybot.infra.logging.logger import create_logger
 from pybot.infra.scheduler.cron_cycle import CronController, create_cron_cycle
 
@@ -44,6 +48,19 @@ class ModelRuntimeSpec:
     direction: str
     strategy: str
     wallet_key_path: str
+
+
+def _should_execute_cycle(
+    *,
+    is_five_minute_window: bool,
+    has_open_trade: bool,
+    pause_all: bool,
+) -> bool:
+    if pause_all:
+        return has_open_trade
+    if is_five_minute_window:
+        return True
+    return has_open_trade
 
 
 def bootstrap() -> AppRuntime:
@@ -80,6 +97,7 @@ def bootstrap() -> AppRuntime:
     runtime_specs: dict[str, ModelRuntimeSpec] = {}
     warned_no_models = False
     warned_no_enabled_models = False
+    global_pause_state: bool | None = None
 
     def _build_runtime_summary(spec: ModelRuntimeSpec) -> dict[str, str]:
         return {
@@ -210,6 +228,49 @@ def bootstrap() -> AppRuntime:
 
         return [model_contexts[mid] for mid in sorted(model_contexts.keys())]
 
+    def _is_runtime_paused() -> bool:
+        nonlocal global_pause_state
+        try:
+            paused = config_repo.is_global_pause_enabled()
+        except Exception as error:
+            logger.error(
+                "failed to load global pause flag",
+                {"error": str(error)},
+            )
+            paused = False
+
+        if global_pause_state is None:
+            global_pause_state = paused
+            if paused:
+                logger.warn(
+                    "runtime globally paused",
+                    {
+                        "control_doc": f"models/{GLOBAL_CONTROL_MODEL_DOC_ID}",
+                        "field": GLOBAL_CONTROL_PAUSE_FIELD,
+                    },
+                )
+            return paused
+
+        if paused != global_pause_state:
+            if paused:
+                logger.warn(
+                    "runtime globally paused",
+                    {
+                        "control_doc": f"models/{GLOBAL_CONTROL_MODEL_DOC_ID}",
+                        "field": GLOBAL_CONTROL_PAUSE_FIELD,
+                    },
+                )
+            else:
+                logger.info(
+                    "runtime global pause released",
+                    {
+                        "control_doc": f"models/{GLOBAL_CONTROL_MODEL_DOC_ID}",
+                        "field": GLOBAL_CONTROL_PAUSE_FIELD,
+                    },
+                )
+            global_pause_state = paused
+        return paused
+
     def should_suppress_run_cycle_log(result: dict[str, str]) -> bool:
         return result.get("result") == "SKIPPED_ENTRY" and result.get("summary") in (
             "SKIPPED_ENTRY: entry already evaluated for this bar",
@@ -242,22 +303,34 @@ def bootstrap() -> AppRuntime:
 
     def execute_cycle_for_all_models() -> None:
         contexts = _refresh_model_contexts()
+        paused = _is_runtime_paused()
+        is_five_minute_window = True
         for context in contexts:
+            has_open_trade = context.persistence.find_open_trade(context.pair) is not None
+            if not _should_execute_cycle(
+                is_five_minute_window=is_five_minute_window,
+                has_open_trade=has_open_trade,
+                pause_all=paused,
+            ):
+                continue
             execute_cycle_for_model(context)
 
     def execute_scheduled_cycle() -> None:
         from datetime import UTC, datetime
 
         contexts = _refresh_model_contexts()
+        paused = _is_runtime_paused()
         now = datetime.now(tz=UTC)
         is_five_minute_window = now.minute % 5 == 0
         for context in contexts:
-            if is_five_minute_window:
-                execute_cycle_for_model(context)
+            has_open_trade = context.persistence.find_open_trade(context.pair) is not None
+            if not _should_execute_cycle(
+                is_five_minute_window=is_five_minute_window,
+                has_open_trade=has_open_trade,
+                pause_all=paused,
+            ):
                 continue
-            open_trade = context.persistence.find_open_trade(context.pair)
-            if open_trade is not None:
-                execute_cycle_for_model(context)
+            execute_cycle_for_model(context)
 
     scheduler: CronController | None = None
 
@@ -265,7 +338,16 @@ def bootstrap() -> AppRuntime:
         nonlocal scheduler
         logger.info("bot startup: run first cycle immediately")
         contexts = _refresh_model_contexts(force_log_runtime_summary=True)
+        paused = _is_runtime_paused()
+        is_five_minute_window = True
         for context in contexts:
+            has_open_trade = context.persistence.find_open_trade(context.pair) is not None
+            if not _should_execute_cycle(
+                is_five_minute_window=is_five_minute_window,
+                has_open_trade=has_open_trade,
+                pause_all=paused,
+            ):
+                continue
             execute_cycle_for_model(context)
         scheduler = create_cron_cycle(execute_scheduled_cycle, logger)
         scheduler.start()
