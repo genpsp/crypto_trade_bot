@@ -13,6 +13,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from pybot.domain.model.types import BotConfig
+from pybot.infra.config.firestore_config_repo import (
+    GLOBAL_CONTROL_COLLECTION_ID,
+    GLOBAL_CONTROL_DOC_ID,
+    GLOBAL_CONTROL_PAUSE_FIELD,
+)
 from pybot.infra.config.schema import parse_config
 
 
@@ -35,6 +40,14 @@ def parse_args() -> argparse.Namespace:
         "--wallet-key-path",
         type=str,
         help="Optional wallet_key_path to set in models/{model_id}",
+    )
+    parser.add_argument(
+        "--control-only",
+        action="store_true",
+        help=(
+            "Only seed "
+            f"{GLOBAL_CONTROL_COLLECTION_ID}/{GLOBAL_CONTROL_DOC_ID} default fields and skip model config writes"
+        ),
     )
     return parser.parse_args()
 
@@ -211,6 +224,31 @@ def _build_model_doc_payload(
     return payload
 
 
+def seed_global_control_defaults(firestore: Client) -> bool:
+    control_ref = firestore.collection(GLOBAL_CONTROL_COLLECTION_ID).document(GLOBAL_CONTROL_DOC_ID)
+    snapshot = control_ref.get()
+    if not snapshot.exists:
+        control_ref.set(
+            {
+                GLOBAL_CONTROL_PAUSE_FIELD: False,
+            },
+            merge=True,
+        )
+        return True
+
+    payload = snapshot.to_dict()
+    if not isinstance(payload, dict) or not isinstance(payload.get(GLOBAL_CONTROL_PAUSE_FIELD), bool):
+        control_ref.set(
+            {
+                GLOBAL_CONTROL_PAUSE_FIELD: False,
+            },
+            merge=True,
+        )
+        return True
+
+    return False
+
+
 def _build_model_config_payload(config: BotConfig) -> dict:
     execution = dict(config["execution"])
     execution.pop("mode", None)
@@ -244,6 +282,10 @@ def main() -> int:
         raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS is required")
 
     firestore = Client.from_service_account_json(credentials_path)
+    seeded_control = seed_global_control_defaults(firestore)
+    if args.control_only:
+        print(f"Seeded global control defaults (global_control_seeded={seeded_control})")
+        return 0
 
     if args.config_path:
         model_id, config = load_single_model_config(args.config_path, args.model_id)
@@ -256,7 +298,7 @@ def main() -> int:
         print(
             "Seeded Firestore model config "
             f"(model_id={model_id}, mode={config['execution']['mode']}, wallet_key_path={args.wallet_key_path}) "
-            f"from {args.config_path}"
+            f"from {args.config_path}; global_control_seeded={seeded_control}"
         )
         return 0
 
@@ -267,7 +309,7 @@ def main() -> int:
 
     print(
         "Seeded Firestore model configs "
-        f"(models={seeded_model_ids}, mode={args.mode}, config/current is not used)"
+        f"(models={seeded_model_ids}, mode={args.mode}, global_control_seeded={seeded_control})"
     )
     return 0
 

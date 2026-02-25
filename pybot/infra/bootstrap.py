@@ -17,7 +17,8 @@ from pybot.app.ports.execution_port import ExecutionPort
 from pybot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
 from pybot.infra.config.env import load_env
 from pybot.infra.config.firestore_config_repo import (
-    GLOBAL_CONTROL_MODEL_DOC_ID,
+    GLOBAL_CONTROL_COLLECTION_ID,
+    GLOBAL_CONTROL_DOC_ID,
     GLOBAL_CONTROL_PAUSE_FIELD,
     FirestoreConfigRepository,
 )
@@ -245,7 +246,7 @@ def bootstrap() -> AppRuntime:
                 logger.warn(
                     "runtime globally paused",
                     {
-                        "control_doc": f"models/{GLOBAL_CONTROL_MODEL_DOC_ID}",
+                        "control_doc": f"{GLOBAL_CONTROL_COLLECTION_ID}/{GLOBAL_CONTROL_DOC_ID}",
                         "field": GLOBAL_CONTROL_PAUSE_FIELD,
                     },
                 )
@@ -256,7 +257,7 @@ def bootstrap() -> AppRuntime:
                 logger.warn(
                     "runtime globally paused",
                     {
-                        "control_doc": f"models/{GLOBAL_CONTROL_MODEL_DOC_ID}",
+                        "control_doc": f"{GLOBAL_CONTROL_COLLECTION_ID}/{GLOBAL_CONTROL_DOC_ID}",
                         "field": GLOBAL_CONTROL_PAUSE_FIELD,
                     },
                 )
@@ -264,7 +265,7 @@ def bootstrap() -> AppRuntime:
                 logger.info(
                     "runtime global pause released",
                     {
-                        "control_doc": f"models/{GLOBAL_CONTROL_MODEL_DOC_ID}",
+                        "control_doc": f"{GLOBAL_CONTROL_COLLECTION_ID}/{GLOBAL_CONTROL_DOC_ID}",
                         "field": GLOBAL_CONTROL_PAUSE_FIELD,
                     },
                 )

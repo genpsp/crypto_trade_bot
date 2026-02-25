@@ -4,7 +4,8 @@ import unittest
 from typing import Any
 
 from pybot.infra.config.firestore_config_repo import (
-    GLOBAL_CONTROL_MODEL_DOC_ID,
+    GLOBAL_CONTROL_COLLECTION_ID,
+    GLOBAL_CONTROL_DOC_ID,
     GLOBAL_CONTROL_PAUSE_FIELD,
     FirestoreConfigRepository,
 )
@@ -43,21 +44,23 @@ class _FakeCollectionRef:
 
 
 class _FakeFirestore:
-    def __init__(self, models_docs: dict[str, Any]):
+    def __init__(self, models_docs: dict[str, Any], control_docs: dict[str, Any] | None = None):
         self._models_docs = models_docs
+        self._control_docs = control_docs or {}
 
     def collection(self, collection_name: str) -> _FakeCollectionRef:
-        if collection_name != "models":
-            raise KeyError(collection_name)
-        return _FakeCollectionRef(self._models_docs)
+        if collection_name == "models":
+            return _FakeCollectionRef(self._models_docs)
+        if collection_name == GLOBAL_CONTROL_COLLECTION_ID:
+            return _FakeCollectionRef(self._control_docs)
+        raise KeyError(collection_name)
 
 
 class FirestoreConfigRepositoryGlobalControlTest(unittest.TestCase):
-    def test_list_model_ids_excludes_control_doc(self) -> None:
+    def test_list_model_ids_returns_model_ids(self) -> None:
         repo = FirestoreConfigRepository(
             _FakeFirestore(
                 {
-                    GLOBAL_CONTROL_MODEL_DOC_ID: {GLOBAL_CONTROL_PAUSE_FIELD: False},
                     "core_long_v0": {},
                     "storm_short_v0": {},
                 }
@@ -69,23 +72,25 @@ class FirestoreConfigRepositoryGlobalControlTest(unittest.TestCase):
     def test_is_global_pause_enabled_true(self) -> None:
         repo = FirestoreConfigRepository(
             _FakeFirestore(
+                {},
                 {
-                    GLOBAL_CONTROL_MODEL_DOC_ID: {GLOBAL_CONTROL_PAUSE_FIELD: True},
-                }
+                    GLOBAL_CONTROL_DOC_ID: {GLOBAL_CONTROL_PAUSE_FIELD: True},
+                },
             )  # type: ignore[arg-type]
         )
 
         self.assertTrue(repo.is_global_pause_enabled())
 
     def test_is_global_pause_enabled_false_when_doc_missing(self) -> None:
-        repo = FirestoreConfigRepository(_FakeFirestore({}))  # type: ignore[arg-type]
+        repo = FirestoreConfigRepository(_FakeFirestore({}, {}))  # type: ignore[arg-type]
         self.assertFalse(repo.is_global_pause_enabled())
 
     def test_is_global_pause_enabled_false_when_payload_invalid(self) -> None:
         repo = FirestoreConfigRepository(
             _FakeFirestore(
+                {},
                 {
-                    GLOBAL_CONTROL_MODEL_DOC_ID: "invalid",
+                    GLOBAL_CONTROL_DOC_ID: "invalid",
                 }
             )  # type: ignore[arg-type]
         )
@@ -94,8 +99,9 @@ class FirestoreConfigRepositoryGlobalControlTest(unittest.TestCase):
     def test_is_global_pause_enabled_false_when_field_is_not_true(self) -> None:
         repo = FirestoreConfigRepository(
             _FakeFirestore(
+                {},
                 {
-                    GLOBAL_CONTROL_MODEL_DOC_ID: {GLOBAL_CONTROL_PAUSE_FIELD: "true"},
+                    GLOBAL_CONTROL_DOC_ID: {GLOBAL_CONTROL_PAUSE_FIELD: "true"},
                 }
             )  # type: ignore[arg-type]
         )

@@ -8,7 +8,8 @@ from google.cloud.firestore import Client
 from pybot.domain.model.types import BotConfig
 from pybot.infra.config.schema import parse_config
 
-GLOBAL_CONTROL_MODEL_DOC_ID = "__control__"
+GLOBAL_CONTROL_COLLECTION_ID = "control"
+GLOBAL_CONTROL_DOC_ID = "global"
 GLOBAL_CONTROL_PAUSE_FIELD = "pause_all"
 
 
@@ -26,12 +27,14 @@ class FirestoreConfigRepository:
 
     def list_model_ids(self) -> list[str]:
         model_docs = list(self.firestore.collection("models").stream())
-        model_ids = [doc.id for doc in model_docs if doc.id != GLOBAL_CONTROL_MODEL_DOC_ID]
+        model_ids = [doc.id for doc in model_docs]
         model_ids.sort()
         return model_ids
 
     def is_global_pause_enabled(self) -> bool:
-        control_snapshot = self.firestore.collection("models").document(GLOBAL_CONTROL_MODEL_DOC_ID).get()
+        control_snapshot = self.firestore.collection(GLOBAL_CONTROL_COLLECTION_ID).document(
+            GLOBAL_CONTROL_DOC_ID
+        ).get()
         if not control_snapshot.exists:
             return False
         control_payload = control_snapshot.to_dict()

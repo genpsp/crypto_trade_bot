@@ -36,7 +36,7 @@ Node.js 実装を Python に全面移行した Solana 現物自動売買Bot で�
 ### 3.1 コレクション
 
 - `models/{model_id}/config/current`
-- `models/__control__`（全体制御）
+- `control/global`（全体制御）
 - `models/{model_id}/trades`（LIVE）
 - `models/{model_id}/runs`（LIVE）
 - `models/{model_id}/paper_trades`（PAPER）
@@ -49,7 +49,7 @@ Node.js 実装を Python に全面移行した Solana 現物自動売買Bot で�
 
 同日・同理由の `SKIPPED` / `SKIPPED_ENTRY` は新規作成せず、同じ `run_doc_id` を更新して `occurrence_count` を加算します。
 
-`models/__control__` に次のフラグを置くと、全モデルの `run_cycle` を一時停止できます。
+`control/global` に次のフラグを置くと、全モデルの `run_cycle` を一時停止できます。
 
 - `pause_all: true` で新規エントリーを全停止（OPENポジションのEXIT監視は継続）
 - `pause_all: false` で通常運転に戻す
