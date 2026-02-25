@@ -156,7 +156,12 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                         close_price=mark_price,
                     ),
                 )
-                run["result"] = "CLOSED" if closed.status == "CLOSED" else "FAILED"
+                if closed.status == "CLOSED":
+                    run["result"] = "CLOSED"
+                elif closed.status == "SKIPPED":
+                    run["result"] = "SKIPPED"
+                else:
+                    run["result"] = "FAILED"
                 run["summary"] = closed.summary
                 return run
 

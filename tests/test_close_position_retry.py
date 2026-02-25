@@ -619,6 +619,254 @@ class ClosePositionRetryTest(unittest.TestCase):
         self.assertEqual(490_000_000, execution.submitted_amounts[0])
         self.assertEqual("CONFIRMED", trade["execution"]["exit_submission_state"])
 
+    def test_take_profit_returns_skipped_when_only_slippage_errors_happen(self) -> None:
+        trade = _build_open_trade()
+        persistence = InMemoryPersistence(trade)
+        lock = SpyLock()
+
+        class AlwaysSlippageExecution:
+            def __init__(self) -> None:
+                self.submit_calls = 0
+                self.submitted_slippage_bps: list[int] = []
+
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                self.submit_calls += 1
+                self.submitted_slippage_bps.append(request.slippage_bps)
+                raise RuntimeError(
+                    "RPC sendTransaction failed: {'code': -32002, 'message': "
+                    "'Transaction simulation failed: Error processing Instruction 5: "
+                    "custom program error: 0x1771'}"
+                )
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=False, error="unused")
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 84.0
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return 1.0
+
+        config = _build_config()
+        config["execution"]["slippage_bps"] = 2
+        execution = AlwaysSlippageExecution()
+        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+            result = close_position(
+                ClosePositionDependencies(
+                    execution=execution,
+                    lock=lock,
+                    logger=InMemoryLogger(),
+                    persistence=persistence,
+                ),
+                ClosePositionInput(
+                    config=config,
+                    trade=trade,
+                    close_reason="TAKE_PROFIT",
+                    close_price=84.0,
+                ),
+            )
+
+        self.assertEqual("SKIPPED", result.status)
+        self.assertIn("slippage exceeded", result.summary)
+        self.assertEqual(2, execution.submit_calls)
+        self.assertEqual([2, 4], execution.submitted_slippage_bps)
+        self.assertEqual("CONFIRMED", trade["state"])
+        self.assertEqual("OPEN", trade["position"]["status"])
+
+    def test_take_profit_returns_skipped_when_exact_out_amount_not_matched_happens(self) -> None:
+        trade = _build_open_trade()
+        persistence = InMemoryPersistence(trade)
+        lock = SpyLock()
+
+        class AlwaysExactOutMismatchExecution:
+            def __init__(self) -> None:
+                self.submit_calls = 0
+                self.submitted_slippage_bps: list[int] = []
+
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                self.submit_calls += 1
+                self.submitted_slippage_bps.append(request.slippage_bps)
+                raise RuntimeError(
+                    "RPC sendTransaction failed: {'code': -32002, 'message': "
+                    "'Transaction simulation failed: Error processing Instruction 5: "
+                    "custom program error: 0x1781'}"
+                )
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=False, error="unused")
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 84.0
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return 1.0
+
+        config = _build_config()
+        config["execution"]["slippage_bps"] = 2
+        execution = AlwaysExactOutMismatchExecution()
+        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+            result = close_position(
+                ClosePositionDependencies(
+                    execution=execution,
+                    lock=lock,
+                    logger=InMemoryLogger(),
+                    persistence=persistence,
+                ),
+                ClosePositionInput(
+                    config=config,
+                    trade=trade,
+                    close_reason="TAKE_PROFIT",
+                    close_price=84.0,
+                ),
+            )
+
+        self.assertEqual("SKIPPED", result.status)
+        self.assertIn("slippage exceeded", result.summary)
+        self.assertEqual(2, execution.submit_calls)
+        self.assertEqual([2, 4], execution.submitted_slippage_bps)
+        self.assertEqual("CONFIRMED", trade["state"])
+        self.assertEqual("OPEN", trade["position"]["status"])
+
+    def test_take_profit_returns_skipped_when_no_route_is_available(self) -> None:
+        trade = _build_open_trade()
+        persistence = InMemoryPersistence(trade)
+        lock = SpyLock()
+
+        class NoRouteExecution:
+            def __init__(self) -> None:
+                self.submit_calls = 0
+
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                _ = request
+                self.submit_calls += 1
+                raise RuntimeError("Jupiter quote request failed: NO_ROUTES_FOUND")
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=False, error="unused")
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 84.0
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return 1.0
+
+        result = close_position(
+            ClosePositionDependencies(
+                execution=NoRouteExecution(),
+                lock=lock,
+                logger=InMemoryLogger(),
+                persistence=persistence,
+            ),
+            ClosePositionInput(
+                config=_build_config(),
+                trade=trade,
+                close_reason="TAKE_PROFIT",
+                close_price=84.0,
+            ),
+        )
+
+        self.assertEqual("SKIPPED", result.status)
+        self.assertIn("route/liquidity unavailable", result.summary)
+        self.assertEqual("CONFIRMED", trade["state"])
+        self.assertEqual("OPEN", trade["position"]["status"])
+
+    def test_stop_loss_widens_slippage_and_closes(self) -> None:
+        trade = _build_open_trade()
+        persistence = InMemoryPersistence(trade)
+        lock = SpyLock()
+
+        class SlippageThenSuccessExecution:
+            def __init__(self) -> None:
+                self.submit_calls = 0
+                self.submitted_slippage_bps: list[int] = []
+
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                self.submit_calls += 1
+                self.submitted_slippage_bps.append(request.slippage_bps)
+                if self.submit_calls < 3:
+                    raise RuntimeError(
+                        "RPC sendTransaction failed: {'code': -32002, 'message': "
+                        "'Transaction simulation failed: Error processing Instruction 5: "
+                        "custom program error: 0x1771'}"
+                    )
+                return SwapSubmission(
+                    tx_signature="exit_sig_stop_loss_after_widen",
+                    in_amount_atomic=500_000_000,
+                    out_amount_atomic=40_000_000,
+                    order={"tx_signature": "exit_sig_stop_loss_after_widen"},
+                    result={
+                        "status": "ESTIMATED",
+                        "avg_fill_price": 80.0,
+                        "spent_quote_usdc": 40.0,
+                        "filled_base_sol": 0.5,
+                    },
+                )
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=True)
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 77.5
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return 1.0
+
+        config = _build_config()
+        config["execution"]["slippage_bps"] = 2
+        execution = SlippageThenSuccessExecution()
+        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+            result = close_position(
+                ClosePositionDependencies(
+                    execution=execution,
+                    lock=lock,
+                    logger=InMemoryLogger(),
+                    persistence=persistence,
+                ),
+                ClosePositionInput(
+                    config=config,
+                    trade=trade,
+                    close_reason="STOP_LOSS",
+                    close_price=77.5,
+                ),
+            )
+
+        self.assertEqual("CLOSED", result.status)
+        self.assertEqual([2, 4, 8], execution.submitted_slippage_bps)
+        self.assertEqual("CLOSED", trade["state"])
+        self.assertEqual("CONFIRMED", trade["execution"]["exit_submission_state"])
+
 
 if __name__ == "__main__":
     unittest.main()

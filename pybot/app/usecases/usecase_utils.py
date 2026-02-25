@@ -4,25 +4,27 @@ from datetime import UTC, datetime
 import re
 from typing import Any
 
+from pybot.app.usecases.execution_error_classifier import classify_execution_error
+
 NON_RETRIABLE_ERROR_MARKERS = (
-    "insufficient funds",
-    "insufficient lamports",
     "invalid params",
     "invalid argument",
     "unsupported pair",
     "must be > 0",
     "must be object",
-    "simulation failed: error processing instruction",
-    "custom program error: 0x1",
     "account not found",
     "owner mismatch",
     "signature verification failed",
+    "simulation failed: error processing instruction 0",
 )
 
 SLIPPAGE_ERROR_MARKERS = (
     "custom program error: 0x1771",
+    "custom program error: 0x1781",
     "custom 6001",
+    "custom 6017",
     "slippage",
+    "exact out amount not matched",
 )
 SUMMARY_ERROR_MAX_LENGTH = 220
 
@@ -42,13 +44,29 @@ def strip_none(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def is_non_retriable_error_message(message: str) -> bool:
+    classified = classify_execution_error(message)
+    if classified.action != "RETRY":
+        return True
+
     normalized = message.strip().lower()
     return any(marker in normalized for marker in NON_RETRIABLE_ERROR_MARKERS)
 
 
 def is_slippage_error_message(message: str) -> bool:
+    classified = classify_execution_error(message)
+    if classified.kind == "SLIPPAGE":
+        return True
+
     normalized = message.strip().lower()
     return any(marker in normalized for marker in SLIPPAGE_ERROR_MARKERS)
+
+
+def is_market_condition_error_message(message: str) -> bool:
+    return classify_execution_error(message).kind == "MARKET_CONDITION"
+
+
+def is_insufficient_funds_error_message(message: str) -> bool:
+    return classify_execution_error(message).kind == "INSUFFICIENT_FUNDS"
 
 
 def summarize_error_for_log(message: str, max_length: int = SUMMARY_ERROR_MAX_LENGTH) -> str:

@@ -8,6 +8,8 @@ from pybot.app.ports.lock_port import LockPort
 from pybot.app.ports.logger_port import LoggerPort
 from pybot.app.ports.persistence_port import PersistencePort
 from pybot.app.usecases.usecase_utils import (
+    is_insufficient_funds_error_message,
+    is_market_condition_error_message,
     is_slippage_error_message,
     now_iso,
     resolve_tx_fee_lamports,
@@ -216,6 +218,16 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
     def failed_summary(message: str) -> str:
         return f"FAILED: {summarize_error_for_log(message)}"
 
+    def skip_entry_summary(message: str) -> str:
+        summarized = summarize_error_for_log(message)
+        if is_slippage_error_message(message):
+            return f"SKIPPED: slippage exceeded ({summarized})"
+        if is_market_condition_error_message(message):
+            return f"SKIPPED: route/liquidity unavailable ({summarized})"
+        if is_insufficient_funds_error_message(message):
+            return f"SKIPPED: insufficient funds ({summarized})"
+        return f"SKIPPED: entry execution skipped ({summarized})"
+
     def snapshot_balances() -> tuple[float, float] | None:
         try:
             quote = float(execution.get_available_quote_usdc(config["pair"]))
@@ -346,12 +358,16 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 last_error_message = confirmation.error or "unknown confirmation error"
                 trade["execution"]["entry_error"] = f"attempt {attempt}/{max_entry_attempts}: {last_error_message}"
                 persist_execution_only()
-                if is_slippage_error_message(last_error_message):
+                if (
+                    is_slippage_error_message(last_error_message)
+                    or is_market_condition_error_message(last_error_message)
+                    or is_insufficient_funds_error_message(last_error_message)
+                ):
                     move_state("CANCELED")
                     return OpenPositionResult(
                         status="SKIPPED",
                         trade_id=trade_id,
-                        summary=f"SKIPPED: slippage exceeded ({summarize_error_for_log(last_error_message)})",
+                        summary=skip_entry_summary(last_error_message),
                     )
                 if should_retry_error(
                     attempt=attempt,
@@ -400,7 +416,11 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                     {"trade_id": trade_id, "error": to_error_message(persist_error)},
                 )
 
-            if is_slippage_error_message(last_error_message):
+            if (
+                is_slippage_error_message(last_error_message)
+                or is_market_condition_error_message(last_error_message)
+                or is_insufficient_funds_error_message(last_error_message)
+            ):
                 try:
                     move_state("CANCELED")
                 except Exception as state_error:
@@ -411,7 +431,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 return OpenPositionResult(
                     status="SKIPPED",
                     trade_id=trade_id,
-                    summary=f"SKIPPED: slippage exceeded ({summarize_error_for_log(last_error_message)})",
+                    summary=skip_entry_summary(last_error_message),
                 )
 
             if should_retry_error(

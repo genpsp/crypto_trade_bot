@@ -5,6 +5,7 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
+from pybot.app.usecases.close_position import ClosePositionResult
 from pybot.app.usecases.open_position import OpenPositionResult
 from pybot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
 from pybot.domain.model.types import BotConfig, EntrySignalDecision, OhlcvBar, Pair, RunRecord, TradeRecord
@@ -109,8 +110,9 @@ class DummyMarketData:
 
 
 class DummyPersistence:
-    def __init__(self, config: BotConfig) -> None:
+    def __init__(self, config: BotConfig, open_trade: TradeRecord | None = None) -> None:
         self.config = config
+        self.open_trade = open_trade
         self.saved_runs: list[RunRecord] = []
 
     def get_current_config(self) -> BotConfig:
@@ -125,7 +127,7 @@ class DummyPersistence:
 
     def find_open_trade(self, pair: Pair) -> TradeRecord | None:
         _ = pair
-        return None
+        return self.open_trade
 
     def count_trades_for_utc_day(self, pair: Pair, day_start_iso: str, day_end_iso: str) -> int:
         _ = pair
@@ -185,6 +187,67 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         self.assertEqual("SKIPPED", run["result"])
         self.assertEqual("SKIPPED: slippage exceeded", run["summary"])
         self.assertEqual("trade_slippage_skip", run["trade_id"])
+        self.assertGreaterEqual(len(persistence.saved_runs), 1)
+        self.assertEqual("SKIPPED", persistence.saved_runs[-1]["result"])
+
+    def test_exit_slippage_skip_is_saved_as_skipped_run(self) -> None:
+        config = _build_config()
+        bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)
+        bars = [
+            OhlcvBar(
+                open_time=bar_close - timedelta(minutes=15),
+                close_time=bar_close,
+                open=99.5,
+                high=100.5,
+                low=99.0,
+                close=100.0,
+                volume=1000.0,
+            )
+        ]
+        open_trade: TradeRecord = {
+            "trade_id": "trade_exit_slippage_skip",
+            "model_id": "core_long_15m_v0",
+            "bar_close_time_iso": "2026-02-25T09:45:00Z",
+            "pair": "SOL/USDC",
+            "direction": "LONG_ONLY",
+            "state": "CONFIRMED",
+            "config_version": 2,
+            "execution": {},
+            "position": {
+                "status": "OPEN",
+                "quantity_sol": 0.4,
+                "entry_price": 99.0,
+                "stop_price": 97.0,
+                "take_profit_price": 99.5,
+                "entry_time_iso": "2026-02-25T09:46:00Z",
+            },
+            "created_at": "2026-02-25T09:46:00Z",
+            "updated_at": "2026-02-25T09:46:00Z",
+        }
+        persistence = DummyPersistence(config, open_trade=open_trade)
+        deps = RunCycleDependencies(
+            execution=DummyExecution(),
+            lock=DummyLock(),
+            logger=DummyLogger(),
+            market_data=DummyMarketData(bars),
+            persistence=persistence,
+            model_id="core_long_15m_v0",
+            now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
+        )
+
+        with patch(
+            "pybot.app.usecases.run_cycle.close_position",
+            return_value=ClosePositionResult(
+                status="SKIPPED",
+                trade_id="trade_exit_slippage_skip",
+                summary="SKIPPED: exit slippage exceeded",
+            ),
+        ):
+            run = run_cycle(deps)
+
+        self.assertEqual("SKIPPED", run["result"])
+        self.assertEqual("SKIPPED: exit slippage exceeded", run["summary"])
+        self.assertEqual("trade_exit_slippage_skip", run["trade_id"])
         self.assertGreaterEqual(len(persistence.saved_runs), 1)
         self.assertEqual("SKIPPED", persistence.saved_runs[-1]["result"])
 

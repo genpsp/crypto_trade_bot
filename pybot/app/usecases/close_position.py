@@ -8,6 +8,8 @@ from pybot.app.ports.lock_port import LockPort
 from pybot.app.ports.logger_port import LoggerPort
 from pybot.app.ports.persistence_port import PersistencePort
 from pybot.app.usecases.usecase_utils import (
+    is_market_condition_error_message,
+    is_slippage_error_message,
     now_iso,
     resolve_tx_fee_lamports,
     summarize_error_for_log,
@@ -28,6 +30,8 @@ DEFAULT_EXIT_RETRY_ATTEMPTS = 2
 STOP_LOSS_EXIT_RETRY_ATTEMPTS = 5
 DEFAULT_EXIT_RETRY_DELAY_SECONDS = 0.8
 STOP_LOSS_EXIT_RETRY_DELAY_SECONDS = 0.15
+TAKE_PROFIT_EXIT_MAX_SLIPPAGE_BPS = 30
+STOP_LOSS_EXIT_MAX_SLIPPAGE_BPS = 120
 
 
 @dataclass
@@ -51,6 +55,13 @@ class ClosePositionDependencies:
     lock: LockPort
     logger: LoggerPort
     persistence: PersistencePort
+
+
+def _next_slippage_bps(current_slippage_bps: int, max_slippage_bps: int) -> int:
+    if current_slippage_bps >= max_slippage_bps:
+        return current_slippage_bps
+    widened = max(current_slippage_bps + 1, current_slippage_bps * 2)
+    return min(widened, max_slippage_bps)
 
 
 def close_position(
@@ -103,6 +114,15 @@ def close_position(
 
     def failed_summary(message: str) -> str:
         return f"FAILED: {summarize_error_for_log(message)}"
+
+    def can_skip_take_profit_error(message: str) -> bool:
+        return is_slippage_error_message(message) or is_market_condition_error_message(message)
+
+    def take_profit_skip_summary(message: str) -> str:
+        summarized = summarize_error_for_log(message)
+        if is_slippage_error_message(message):
+            return f"SKIPPED: exit slippage exceeded ({summarized})"
+        return f"SKIPPED: exit route/liquidity unavailable ({summarized})"
 
     def snapshot_balances() -> tuple[float, float] | None:
         try:
@@ -174,15 +194,24 @@ def close_position(
         if close_reason == "STOP_LOSS"
         else DEFAULT_EXIT_RETRY_DELAY_SECONDS
     )
+    current_slippage_bps = int(config["execution"]["slippage_bps"])
+    max_exit_slippage_bps = (
+        STOP_LOSS_EXIT_MAX_SLIPPAGE_BPS
+        if close_reason == "STOP_LOSS"
+        else TAKE_PROFIT_EXIT_MAX_SLIPPAGE_BPS
+    )
+    if max_exit_slippage_bps < current_slippage_bps:
+        max_exit_slippage_bps = current_slippage_bps
     last_error_message = "unknown error"
 
     for attempt in range(1, max_exit_attempts + 1):
         try:
+            trade["execution"]["exit_slippage_bps"] = current_slippage_bps
             submission = execution.submit_swap(
                 SubmitSwapRequest(
                     side=side,
                     amount_atomic=amount_atomic,
-                    slippage_bps=config["execution"]["slippage_bps"],
+                    slippage_bps=current_slippage_bps,
                     only_direct_routes=config["execution"]["only_direct_routes"],
                 )
             )
@@ -235,6 +264,38 @@ def close_position(
                     f"attempt {attempt}/{max_exit_attempts}: {last_error_message}"
                 )
                 persist_execution_only()
+                if is_slippage_error_message(last_error_message):
+                    next_slippage_bps = _next_slippage_bps(current_slippage_bps, max_exit_slippage_bps)
+                    if attempt < max_exit_attempts:
+                        if next_slippage_bps > current_slippage_bps:
+                            logger.warn(
+                                "close_position widening slippage for retry",
+                                {
+                                    "trade_id": trade["trade_id"],
+                                    "reason": close_reason,
+                                    "attempt": attempt,
+                                    "max_attempts": max_exit_attempts,
+                                    "error": summarize_error_for_log(last_error_message),
+                                    "slippage_bps_from": current_slippage_bps,
+                                    "slippage_bps_to": next_slippage_bps,
+                                },
+                            )
+                            current_slippage_bps = next_slippage_bps
+                        if retry_delay_seconds > 0:
+                            time.sleep(retry_delay_seconds)
+                        continue
+                    if close_reason == "TAKE_PROFIT":
+                        return ClosePositionResult(
+                            status="SKIPPED",
+                            trade_id=trade["trade_id"],
+                            summary=take_profit_skip_summary(last_error_message),
+                        )
+                if can_skip_take_profit_error(last_error_message) and close_reason == "TAKE_PROFIT":
+                    return ClosePositionResult(
+                        status="SKIPPED",
+                        trade_id=trade["trade_id"],
+                        summary=take_profit_skip_summary(last_error_message),
+                    )
                 if should_retry_error(
                     attempt=attempt,
                     max_attempts=max_exit_attempts,
@@ -345,6 +406,38 @@ def close_position(
                 logger.error(
                     "close_position execution persistence failed",
                     {"trade_id": trade["trade_id"], "error": to_error_message(persist_error)},
+                )
+            if is_slippage_error_message(last_error_message):
+                next_slippage_bps = _next_slippage_bps(current_slippage_bps, max_exit_slippage_bps)
+                if attempt < max_exit_attempts:
+                    if next_slippage_bps > current_slippage_bps:
+                        logger.warn(
+                            "close_position widening slippage for retry",
+                            {
+                                "trade_id": trade["trade_id"],
+                                "reason": close_reason,
+                                "attempt": attempt,
+                                "max_attempts": max_exit_attempts,
+                                "error": summarize_error_for_log(last_error_message),
+                                "slippage_bps_from": current_slippage_bps,
+                                "slippage_bps_to": next_slippage_bps,
+                            },
+                        )
+                        current_slippage_bps = next_slippage_bps
+                    if retry_delay_seconds > 0:
+                        time.sleep(retry_delay_seconds)
+                    continue
+                if close_reason == "TAKE_PROFIT":
+                    return ClosePositionResult(
+                        status="SKIPPED",
+                        trade_id=trade["trade_id"],
+                        summary=take_profit_skip_summary(last_error_message),
+                    )
+            if can_skip_take_profit_error(last_error_message) and close_reason == "TAKE_PROFIT":
+                return ClosePositionResult(
+                    status="SKIPPED",
+                    trade_id=trade["trade_id"],
+                    summary=take_profit_skip_summary(last_error_message),
                 )
             if should_retry_error(
                 attempt=attempt,
