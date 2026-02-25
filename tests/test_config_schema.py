@@ -47,6 +47,34 @@ def _build_base_config() -> dict:
 
 
 class ConfigSchemaTest(unittest.TestCase):
+    def test_15m_timeframe_is_allowed(self) -> None:
+        payload = deepcopy(_build_base_config())
+        payload["signal_timeframe"] = "15m"
+        payload["strategy"]["name"] = "ema_trend_pullback_15m_v0"
+        parsed = parse_config(payload)
+        self.assertEqual(parsed["signal_timeframe"], "15m")
+
+    def test_ema_trend_pullback_15m_strategy_name_is_allowed(self) -> None:
+        payload = deepcopy(_build_base_config())
+        payload["signal_timeframe"] = "15m"
+        payload["strategy"]["name"] = "ema_trend_pullback_15m_v0"
+        parsed = parse_config(payload)
+        self.assertEqual(parsed["strategy"]["name"], "ema_trend_pullback_15m_v0")
+
+    def test_ema_trend_pullback_15m_strategy_rejects_non_15m_timeframe(self) -> None:
+        payload = deepcopy(_build_base_config())
+        payload["signal_timeframe"] = "2h"
+        payload["strategy"]["name"] = "ema_trend_pullback_15m_v0"
+        with self.assertRaisesRegex(ValueError, "requires signal_timeframe='15m'"):
+            parse_config(payload)
+
+    def test_ema_trend_pullback_v0_rejects_15m_timeframe(self) -> None:
+        payload = deepcopy(_build_base_config())
+        payload["signal_timeframe"] = "15m"
+        payload["strategy"]["name"] = "ema_trend_pullback_v0"
+        with self.assertRaisesRegex(ValueError, "requires signal_timeframe='2h' or '4h'"):
+            parse_config(payload)
+
     def test_storm_size_multiplier_zero_is_allowed(self) -> None:
         payload = deepcopy(_build_base_config())
         payload["risk"]["storm_size_multiplier"] = 0.0

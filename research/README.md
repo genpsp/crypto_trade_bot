@@ -38,6 +38,16 @@ python -m research.scripts.fetch_ohlcv \
   --output research/data/raw/solusdc_2h.csv
 ```
 
+15m で取得する例:
+
+```bash
+python -m research.scripts.fetch_ohlcv \
+  --pair SOL/USDC \
+  --timeframe 15m \
+  --years 0.5 \
+  --output research/data/raw/solusdc_15m.csv
+```
+
 上記は初回に2年分をCSV保存し、2回目以降は既存CSVを再利用します。  
 強制再取得したい場合のみ `--refresh` を付けてください。
 

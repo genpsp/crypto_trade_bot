@@ -9,7 +9,6 @@ class Env:
     SOLANA_RPC_URL: str
     REDIS_URL: str
     GOOGLE_APPLICATION_CREDENTIALS: str
-    WALLET_KEY_PATH: str
     WALLET_KEY_PASSPHRASE: str
 
 
@@ -17,7 +16,6 @@ REQUIRED_ENV_KEYS = (
     "SOLANA_RPC_URL",
     "REDIS_URL",
     "GOOGLE_APPLICATION_CREDENTIALS",
-    "WALLET_KEY_PATH",
     "WALLET_KEY_PASSPHRASE",
 )
 
@@ -36,7 +34,5 @@ def load_env(source: dict[str, str] | None = None) -> Env:
         SOLANA_RPC_URL=env_source["SOLANA_RPC_URL"],
         REDIS_URL=env_source["REDIS_URL"],
         GOOGLE_APPLICATION_CREDENTIALS=env_source["GOOGLE_APPLICATION_CREDENTIALS"],
-        WALLET_KEY_PATH=env_source["WALLET_KEY_PATH"],
         WALLET_KEY_PASSPHRASE=env_source["WALLET_KEY_PASSPHRASE"],
     )
-

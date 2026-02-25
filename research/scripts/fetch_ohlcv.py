@@ -6,13 +6,13 @@ from pathlib import Path
 from pybot.adapters.market_data.ohlcv_provider import OhlcvProvider
 from research.src.adapters.csv_bar_repository import read_bars_from_csv, write_bars_to_csv
 
-TIMEFRAME_TO_BARS_PER_DAY = {"2h": 12, "4h": 6}
+TIMEFRAME_TO_BARS_PER_DAY = {"15m": 96, "2h": 12, "4h": 6}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fetch OHLCV data for research")
     parser.add_argument("--pair", default="SOL/USDC", choices=["SOL/USDC"])
-    parser.add_argument("--timeframe", default="2h", choices=["2h", "4h"])
+    parser.add_argument("--timeframe", default="2h", choices=["15m", "2h", "4h"])
     parser.add_argument(
         "--years",
         type=float,

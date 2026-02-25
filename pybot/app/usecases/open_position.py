@@ -210,6 +210,18 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             strip_none({"execution": trade["execution"], "updated_at": trade["updated_at"]}),
         )
 
+    def snapshot_balances() -> tuple[float, float] | None:
+        try:
+            quote = float(execution.get_available_quote_usdc(config["pair"]))
+            base = float(execution.get_available_base_sol(config["pair"]))
+            return quote, base
+        except Exception as error:
+            logger.warn(
+                "open_position balance snapshot failed",
+                {"trade_id": trade_id, "error": to_error_message(error)},
+            )
+            return None
+
     if configured_min_notional_usdc <= 0:
         trade["execution"]["entry_error"] = "min_notional_usdc must be > 0"
         move_state("FAILED")
@@ -264,11 +276,13 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
 
     confirmed_submission = None
     confirmed_entry_result = None
+    confirmed_before_balances: tuple[float, float] | None = None
     max_entry_attempts = ENTRY_RETRY_ATTEMPTS
     last_error_message = "unknown entry error"
 
     for attempt in range(1, max_entry_attempts + 1):
         try:
+            attempt_before_balances = snapshot_balances()
             submission = execution.submit_swap(
                 SubmitSwapRequest(
                     side=entry_side,
@@ -348,6 +362,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
 
             confirmed_submission = submission
             confirmed_entry_result = entry_result
+            confirmed_before_balances = attempt_before_balances
             break
         except Exception as error:
             last_error_message = to_error_message(error)
@@ -433,6 +448,23 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
         and isinstance(confirmed_entry_result["spent_quote_usdc"], (int, float))
         else effective_notional_usdc
     )
+
+    after_balances = snapshot_balances() if confirmed_before_balances is not None else None
+    if confirmed_before_balances is not None and after_balances is not None:
+        before_quote, before_base = confirmed_before_balances
+        after_quote, after_base = after_balances
+        if direction == "LONG_ONLY":
+            observed_quote_spent = max(round_to(before_quote - after_quote, 6), 0.0)
+            observed_base_received = max(round_to(after_base - before_base, 9), 0.0)
+            if observed_quote_spent > 0:
+                actual_quote_usdc = observed_quote_spent
+            if observed_base_received > 0:
+                traded_base_sol = observed_base_received
+        else:
+            observed_quote_received = max(round_to(after_quote - before_quote, 6), 0.0)
+            if observed_quote_received > 0:
+                actual_quote_usdc = observed_quote_received
+
     fallback_entry_price = actual_quote_usdc / traded_base_sol
     resolved_entry_price = (
         float(confirmed_entry_result["avg_fill_price"])

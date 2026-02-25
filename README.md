@@ -3,7 +3,7 @@
 Node.js 実装を Python に全面移行した Solana 現物自動売買Bot です。  
 レイヤ分離は `domain / app / adapters / infra` のまま維持しています。
 
-- エントリー: 設定タイムフレーム（`2h` / `4h`）のクローズ時
+- エントリー: 設定タイムフレーム（`15m` / `2h` / `4h`）のクローズ時
 - 複数モデル対応: `models/{model_id}/config/current`
 - ロングモデル + Stormショートモデル（ショートは初期無効）
 - 損切り: スイング安値 + `max_loss_per_trade_pct` で締める
@@ -19,17 +19,16 @@ Node.js 実装を Python に全面移行した Solana 現物自動売買Bot で�
 - Docker / Docker Compose
 - Firestore サービスアカウントJSON
 
-## 2. 環境変数（5個のみ）
+## 2. 環境変数（4個のみ）
 
 `.env.example` を `.env` にコピーして設定:
 
 - `SOLANA_RPC_URL`
 - `REDIS_URL`
 - `GOOGLE_APPLICATION_CREDENTIALS`
-- `WALLET_KEY_PATH`
 - `WALLET_KEY_PASSPHRASE`
 
-`GOOGLE_APPLICATION_CREDENTIALS` と `WALLET_KEY_PATH` は相対/絶対パスどちらでも可。  
+`GOOGLE_APPLICATION_CREDENTIALS` は相対/絶対パスどちらでも可。  
 相対パスは `docker-compose.yml` があるプロジェクトルート基準です。
 
 ## 3. Firestore 事前準備
@@ -59,6 +58,15 @@ LIVE投入:
 
 ```bash
 python scripts/seed-firestore-config.py --mode LIVE
+```
+
+LIVEモデルは `models/{model_id}.wallet_key_path` が必須です。  
+例:
+
+```bash
+python scripts/seed-firestore-config.py \
+  --config-path research/models/core_long_15m_v0/config/current.json \
+  --wallet-key-path /run/secrets/wallet.core_long_15m_v0.enc.json
 ```
 
 ## 4. Wallet 準備（Phantom連携）
@@ -105,6 +113,7 @@ docker compose up --build
 - `model_id` 単位で独立実行されます
 - 例:
   - `core_long_v0` (`LONG_ONLY`, `ema_trend_pullback_v0`)
+  - `core_long_15m_v0` (`LONG_ONLY`, `ema_trend_pullback_15m_v0`)
   - `storm_short_v0` (`SHORT_ONLY`, `storm_short_v0`)
 
 注意:
@@ -132,6 +141,7 @@ docker compose up --build
 
 - データ取得:
   - `python -m research.scripts.fetch_ohlcv --pair SOL/USDC --timeframe 2h --years 2 --output research/data/raw/solusdc_2h.csv`
+  - `python -m research.scripts.fetch_ohlcv --pair SOL/USDC --timeframe 15m --years 0.5 --output research/data/raw/solusdc_15m.csv`
 - バックテスト:
   - `python -m research.scripts.run_backtest --config research/models/core_long_v0/config/current.json --bars research/data/raw/solusdc_2h.csv --output research/data/processed/backtest_latest.json`
 

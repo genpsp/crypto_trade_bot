@@ -49,9 +49,11 @@ def bootstrap() -> AppRuntime:
     paper_execution: ExecutionPort = PaperExecutionAdapter(quote_client, logger)
     live_execution_by_wallet: dict[str, ExecutionPort] = {}
 
-    def resolve_execution(mode: str, wallet_key_path: str) -> ExecutionPort:
+    def resolve_execution(mode: str, wallet_key_path: str | None) -> ExecutionPort:
         if mode == "PAPER":
             return paper_execution
+        if wallet_key_path is None or wallet_key_path.strip() == "":
+            raise RuntimeError("wallet_key_path is required in Firestore model metadata for LIVE mode")
         live_execution = live_execution_by_wallet.get(wallet_key_path)
         if live_execution is None:
             sender = SolanaSender(
@@ -88,7 +90,12 @@ def bootstrap() -> AppRuntime:
             continue
         execution_config = startup_config["execution"]
         mode = execution_config["mode"]
-        wallet_key_path = model_metadata.wallet_key_path or env.WALLET_KEY_PATH
+        wallet_key_path = model_metadata.wallet_key_path
+        if mode == "LIVE" and (wallet_key_path is None or wallet_key_path.strip() == ""):
+            raise RuntimeError(
+                f"models/{model_id}.wallet_key_path is required when execution.mode=LIVE"
+            )
+        wallet_key_path_for_log = wallet_key_path or ""
 
         context = ModelRuntimeContext(
             model_id=model_id,
@@ -104,7 +111,7 @@ def bootstrap() -> AppRuntime:
                 "mode": mode,
                 "direction": startup_config["direction"],
                 "strategy": startup_config["strategy"]["name"],
-                "wallet_key_path": wallet_key_path,
+                "wallet_key_path": wallet_key_path_for_log,
             }
         )
         logger.info(
@@ -116,7 +123,7 @@ def bootstrap() -> AppRuntime:
                 "strategy": startup_config["strategy"]["name"],
                 "trades_path": f"models/{model_id}/{context.persistence.trades_collection_name}",
                 "runs_path": f"models/{model_id}/{context.persistence.runs_collection_name}",
-                "wallet_key_path": wallet_key_path,
+                "wallet_key_path": wallet_key_path_for_log,
             },
         )
 

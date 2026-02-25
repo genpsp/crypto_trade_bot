@@ -779,6 +779,172 @@ class TradeExecutionApiTest(unittest.TestCase):
         self.assertEqual("FAILED", trade["state"])
         self.assertIn("attempt 1/3", trade["execution"]["entry_error"])
 
+    def test_open_position_prefers_balance_snapshot_for_long_position_size(self) -> None:
+        config = _build_config()
+        persistence = InMemoryPersistence(config)
+        lock = InMemoryLock()
+        logger = InMemoryLogger()
+
+        signal = EntrySignalDecision(
+            type="ENTER",
+            summary="balance snapshot long",
+            ema_fast=101.0,
+            ema_slow=100.0,
+            entry_price=100.0,
+            stop_price=98.0,
+            take_profit_price=103.0,
+        )
+
+        class BalanceSnapshotLongExecution:
+            def __init__(self) -> None:
+                self.quote_balances = [200.0, 200.0, 0.012346]
+                self.base_balances = [1.0, 2.999876543]
+
+            @staticmethod
+            def _next(values: list[float]) -> float:
+                if len(values) > 1:
+                    return values.pop(0)
+                return values[0]
+
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                _ = request
+                return SwapSubmission(
+                    tx_signature="entry_sig_long_balance",
+                    in_amount_atomic=200_000_000,
+                    out_amount_atomic=2_000_000_000,
+                    order={"tx_signature": "entry_sig_long_balance"},
+                    result={
+                        "status": "ESTIMATED",
+                        "avg_fill_price": 100.0,
+                        "spent_quote_usdc": 200.0,
+                        "filled_base_sol": 2.0,
+                    },
+                )
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=True)
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return self._next(self.quote_balances)
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return self._next(self.base_balances)
+
+        opened = open_position(
+            OpenPositionDependencies(
+                execution=BalanceSnapshotLongExecution(),
+                lock=lock,
+                logger=logger,
+                persistence=persistence,
+            ),
+            OpenPositionInput(
+                config=config,
+                signal=signal,
+                bar_close_time_iso="2026-02-21T10:00:00.000Z",
+                model_id="core_long_v0",
+            ),
+        )
+
+        self.assertEqual("OPENED", opened.status)
+        trade = persistence.trades[opened.trade_id]
+        self.assertEqual(199.987654, float(trade["position"]["quote_amount_usdc"]))
+        self.assertEqual(1.999876543, float(trade["position"]["quantity_sol"]))
+
+    def test_open_position_prefers_balance_snapshot_for_short_quote_amount(self) -> None:
+        config = _build_config()
+        config["direction"] = "SHORT_ONLY"
+        config["strategy"] = {
+            "name": "storm_short_v0",
+            "ema_fast_period": 12,
+            "ema_slow_period": 34,
+            "swing_low_lookback_bars": 12,
+            "entry": "ON_BAR_CLOSE",
+        }
+        persistence = InMemoryPersistence(config)
+        lock = InMemoryLock()
+        logger = InMemoryLogger()
+
+        signal = EntrySignalDecision(
+            type="ENTER",
+            summary="balance snapshot short",
+            ema_fast=99.0,
+            ema_slow=101.0,
+            entry_price=100.0,
+            stop_price=102.0,
+            take_profit_price=97.0,
+        )
+
+        class BalanceSnapshotShortExecution:
+            def __init__(self) -> None:
+                self.quote_balances = [0.0, 118.371078]
+                self.base_balances = [1.2, 1.2, 0.0199]
+
+            @staticmethod
+            def _next(values: list[float]) -> float:
+                if len(values) > 1:
+                    return values.pop(0)
+                return values[0]
+
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                _ = request
+                return SwapSubmission(
+                    tx_signature="entry_sig_short_balance",
+                    in_amount_atomic=1_180_000_000,
+                    out_amount_atomic=118_396_203,
+                    order={"tx_signature": "entry_sig_short_balance"},
+                    result={
+                        "status": "ESTIMATED",
+                        "avg_fill_price": 100.33576525423728,
+                        "spent_quote_usdc": 118.396203,
+                        "filled_base_sol": 1.18,
+                    },
+                )
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=True)
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 100.0
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return self._next(self.quote_balances)
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return self._next(self.base_balances)
+
+        opened = open_position(
+            OpenPositionDependencies(
+                execution=BalanceSnapshotShortExecution(),
+                lock=lock,
+                logger=logger,
+                persistence=persistence,
+            ),
+            OpenPositionInput(
+                config=config,
+                signal=signal,
+                bar_close_time_iso="2026-02-21T12:00:00.000Z",
+                model_id="storm_short_v0",
+            ),
+        )
+
+        self.assertEqual("OPENED", opened.status)
+        trade = persistence.trades[opened.trade_id]
+        self.assertEqual("SHORT_ONLY", trade["direction"])
+        self.assertEqual(118.371078, float(trade["position"]["quote_amount_usdc"]))
+
     def test_submit_swap_retries_quote_and_swap_http_503(self) -> None:
         quote_count = 0
         swap_count = 0

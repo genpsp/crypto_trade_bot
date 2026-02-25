@@ -31,8 +31,9 @@ def _require(condition: bool, message: str) -> None:
 def _parse_strategy(strategy: Any, prefix: str) -> StrategyConfig:
     _require(isinstance(strategy, dict), f"{prefix} must be object")
     _require(
-        strategy.get("name") in ("ema_trend_pullback_v0", "storm_short_v0"),
-        f"{prefix}.name must be ema_trend_pullback_v0 or storm_short_v0",
+        strategy.get("name")
+        in ("ema_trend_pullback_v0", "ema_trend_pullback_15m_v0", "storm_short_v0"),
+        f"{prefix}.name must be ema_trend_pullback_v0, ema_trend_pullback_15m_v0 or storm_short_v0",
     )
     _require(
         isinstance(strategy.get("ema_fast_period"), int) and strategy["ema_fast_period"] > 0,
@@ -131,9 +132,22 @@ def parse_config(data: Any) -> BotConfig:
     _require(data.get("network") == "mainnet-beta", "network must be 'mainnet-beta'")
     _require(data.get("pair") == "SOL/USDC", "pair must be 'SOL/USDC'")
     _require(data.get("direction") in ("LONG_ONLY", "SHORT_ONLY"), "direction must be LONG_ONLY or SHORT_ONLY")
-    _require(data.get("signal_timeframe") in ("2h", "4h"), "signal_timeframe must be '2h' or '4h'")
+    _require(
+        data.get("signal_timeframe") in ("15m", "2h", "4h"),
+        "signal_timeframe must be '15m', '2h' or '4h'",
+    )
 
     strategy = _parse_strategy(data.get("strategy"), "strategy")
+    if strategy["name"] == "ema_trend_pullback_15m_v0":
+        _require(
+            data["signal_timeframe"] == "15m",
+            "ema_trend_pullback_15m_v0 requires signal_timeframe='15m'",
+        )
+    if strategy["name"] == "ema_trend_pullback_v0":
+        _require(
+            data["signal_timeframe"] in ("2h", "4h"),
+            "ema_trend_pullback_v0 requires signal_timeframe='2h' or '4h'",
+        )
     risk = _parse_risk(data.get("risk"), "risk")
 
     execution = data.get("execution")

@@ -11,7 +11,7 @@ from pybot.domain.utils.time import get_bar_duration_seconds
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 MAX_OHLCV_LIMIT = 1000
 PAIR_SYMBOL_MAP: dict[Pair, str] = {"SOL/USDC": "SOLUSDC"}
-TIMEFRAME_TO_BINANCE_INTERVAL: dict[SignalTimeframe, str] = {"2h": "2h", "4h": "4h"}
+TIMEFRAME_TO_BINANCE_INTERVAL: dict[SignalTimeframe, str] = {"15m": "15m", "2h": "2h", "4h": "4h"}
 
 
 class OhlcvProvider(MarketDataPort):

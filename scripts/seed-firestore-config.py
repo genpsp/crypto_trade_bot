@@ -31,6 +31,11 @@ def parse_args() -> argparse.Namespace:
         type=str,
         help="Override model_id when --config-path is used",
     )
+    parser.add_argument(
+        "--wallet-key-path",
+        type=str,
+        help="Optional wallet_key_path to set in models/{model_id}",
+    )
     return parser.parse_args()
 
 
@@ -118,10 +123,53 @@ def _default_short_config(mode: str) -> BotConfig:
     )
 
 
+def _default_long_15m_config(mode: str) -> BotConfig:
+    return parse_config(
+        {
+            "enabled": False,
+            "network": "mainnet-beta",
+            "pair": "SOL/USDC",
+            "direction": "LONG_ONLY",
+            "signal_timeframe": "15m",
+            "strategy": {
+                "name": "ema_trend_pullback_15m_v0",
+                "ema_fast_period": 9,
+                "ema_slow_period": 34,
+                "swing_low_lookback_bars": 12,
+                "entry": "ON_BAR_CLOSE",
+            },
+            "risk": {
+                "max_loss_per_trade_pct": 1.2,
+                "max_trades_per_day": 4,
+                "volatile_atr_pct_threshold": 0.9,
+                "storm_atr_pct_threshold": 1.4,
+                "volatile_size_multiplier": 0.7,
+                "storm_size_multiplier": 0.35,
+            },
+            "execution": {
+                "mode": mode,
+                "swap_provider": "JUPITER",
+                "slippage_bps": 15,
+                "min_notional_usdc": 20,
+                "only_direct_routes": False,
+            },
+            "exit": {
+                "stop": "SWING_LOW",
+                "take_profit_r_multiple": 1.8,
+            },
+            "meta": {
+                "config_version": 2,
+                "note": "v0 core long 15m model",
+            },
+        }
+    )
+
+
 def build_default_model_configs(mode: str) -> dict[str, BotConfig]:
     return {
         "core_long_v0": _default_long_config(mode),
         "storm_short_v0": _default_short_config(mode),
+        "core_long_15m_v0": _default_long_15m_config(mode),
     }
 
 
@@ -147,13 +195,20 @@ def load_single_model_config(config_path: Path, model_id_override: str | None) -
     return model_id, config
 
 
-def _build_model_doc_payload(model_id: str, config: BotConfig) -> dict:
-    return {
+def _build_model_doc_payload(
+    model_id: str,
+    config: BotConfig,
+    wallet_key_path: str | None = None,
+) -> dict:
+    payload: dict[str, object] = {
         "model_id": model_id,
         "enabled": config["enabled"],
         "direction": config["direction"],
         "mode": config["execution"]["mode"],
     }
+    if wallet_key_path:
+        payload["wallet_key_path"] = wallet_key_path
+    return payload
 
 
 def _build_model_config_payload(config: BotConfig) -> dict:
@@ -171,9 +226,14 @@ def _build_model_config_payload(config: BotConfig) -> dict:
     }
 
 
-def seed_model_config(firestore: Client, model_id: str, config: BotConfig) -> None:
+def seed_model_config(
+    firestore: Client,
+    model_id: str,
+    config: BotConfig,
+    wallet_key_path: str | None = None,
+) -> None:
     model_ref = firestore.document(f"models/{model_id}")
-    model_ref.set(_build_model_doc_payload(model_id, config), merge=True)
+    model_ref.set(_build_model_doc_payload(model_id, config, wallet_key_path), merge=True)
     model_ref.collection("config").document("current").set(_build_model_config_payload(config))
 
 
@@ -187,16 +247,22 @@ def main() -> int:
 
     if args.config_path:
         model_id, config = load_single_model_config(args.config_path, args.model_id)
-        seed_model_config(firestore, model_id, config)
+        seed_model_config(
+            firestore,
+            model_id,
+            config,
+            wallet_key_path=args.wallet_key_path,
+        )
         print(
             "Seeded Firestore model config "
-            f"(model_id={model_id}, mode={config['execution']['mode']}) from {args.config_path}"
+            f"(model_id={model_id}, mode={config['execution']['mode']}, wallet_key_path={args.wallet_key_path}) "
+            f"from {args.config_path}"
         )
         return 0
 
     seeded_model_ids: list[str] = []
     for model_id, config in build_default_model_configs(args.mode).items():
-        seed_model_config(firestore, model_id, config)
+        seed_model_config(firestore, model_id, config, wallet_key_path=args.wallet_key_path)
         seeded_model_ids.append(model_id)
 
     print(

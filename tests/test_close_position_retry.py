@@ -464,6 +464,161 @@ class ClosePositionRetryTest(unittest.TestCase):
         self.assertEqual("CONFIRMED", trade["state"])
         self.assertEqual("OPEN", trade["position"]["status"])
 
+    def test_short_close_caps_exit_amount_to_available_quote_balance(self) -> None:
+        trade = _build_open_trade()
+        trade["trade_id"] = "2026-02-23T18:00:00Z_storm_short_v0_SHORT"
+        trade["model_id"] = "storm_short_v0"
+        trade["direction"] = "SHORT_ONLY"
+        trade["position"] = {
+            "status": "OPEN",
+            "quantity_sol": 1.129395136,
+            "quote_amount_usdc": 88.396203,
+            "entry_price": 78.268624,
+            "stop_price": 81.12,
+            "take_profit_price": 73.706422,
+            "entry_time_iso": "2026-02-23T18:00:04.346166Z",
+        }
+        persistence = InMemoryPersistence(trade)
+        lock = SpyLock()
+
+        class ShortClampExecution:
+            def __init__(self) -> None:
+                self.submitted_amounts: list[int] = []
+                self.quote_balances = [88.371078, 0.0]
+                self.base_balances = [0.018, 1.12]
+
+            @staticmethod
+            def _next(values: list[float]) -> float:
+                if len(values) > 1:
+                    return values.pop(0)
+                return values[0]
+
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                self.submitted_amounts.append(request.amount_atomic)
+                return SwapSubmission(
+                    tx_signature="exit_sig_short_clamped",
+                    in_amount_atomic=request.amount_atomic,
+                    out_amount_atomic=1_120_000_000,
+                    order={"tx_signature": "exit_sig_short_clamped"},
+                    result={
+                        "status": "ESTIMATED",
+                        "avg_fill_price": 78.9,
+                        "spent_quote_usdc": request.amount_atomic / 1_000_000,
+                        "filled_base_sol": 1.12,
+                    },
+                )
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=True)
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 81.5
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return self._next(self.quote_balances)
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return self._next(self.base_balances)
+
+        execution = ShortClampExecution()
+        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+            result = close_position(
+                ClosePositionDependencies(
+                    execution=execution,
+                    lock=lock,
+                    logger=InMemoryLogger(),
+                    persistence=persistence,
+                ),
+                ClosePositionInput(
+                    config=_build_config(),
+                    trade=trade,
+                    close_reason="STOP_LOSS",
+                    close_price=81.5,
+                ),
+            )
+
+        self.assertEqual("CLOSED", result.status)
+        self.assertEqual(1, len(execution.submitted_amounts))
+        self.assertEqual(88_371_078, execution.submitted_amounts[0])
+        self.assertEqual("CONFIRMED", trade["execution"]["exit_submission_state"])
+
+    def test_long_close_caps_exit_amount_to_available_base_balance(self) -> None:
+        trade = _build_open_trade()
+        trade["position"]["quantity_sol"] = 0.5
+        persistence = InMemoryPersistence(trade)
+        lock = SpyLock()
+
+        class LongClampExecution:
+            def __init__(self) -> None:
+                self.submitted_amounts: list[int] = []
+                self.quote_balances = [100.0, 139.2]
+                self.base_balances = [0.49, 0.0]
+
+            @staticmethod
+            def _next(values: list[float]) -> float:
+                if len(values) > 1:
+                    return values.pop(0)
+                return values[0]
+
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                self.submitted_amounts.append(request.amount_atomic)
+                return SwapSubmission(
+                    tx_signature="exit_sig_long_clamped",
+                    in_amount_atomic=request.amount_atomic,
+                    out_amount_atomic=39_200_000,
+                    order={"tx_signature": "exit_sig_long_clamped"},
+                    result={
+                        "status": "ESTIMATED",
+                        "avg_fill_price": 80.0,
+                        "spent_quote_usdc": 39.2,
+                        "filled_base_sol": request.amount_atomic / 1_000_000_000,
+                    },
+                )
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=True)
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 77.5
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return self._next(self.quote_balances)
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return self._next(self.base_balances)
+
+        execution = LongClampExecution()
+        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+            result = close_position(
+                ClosePositionDependencies(
+                    execution=execution,
+                    lock=lock,
+                    logger=InMemoryLogger(),
+                    persistence=persistence,
+                ),
+                ClosePositionInput(
+                    config=_build_config(),
+                    trade=trade,
+                    close_reason="TAKE_PROFIT",
+                    close_price=84.0,
+                ),
+            )
+
+        self.assertEqual("CLOSED", result.status)
+        self.assertEqual(1, len(execution.submitted_amounts))
+        self.assertEqual(490_000_000, execution.submitted_amounts[0])
+        self.assertEqual("CONFIRMED", trade["execution"]["exit_submission_state"])
+
 
 if __name__ == "__main__":
     unittest.main()

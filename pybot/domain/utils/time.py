@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from pybot.domain.model.types import Direction, SignalTimeframe
 
 TIMEFRAME_TO_SECONDS: dict[SignalTimeframe, int] = {
+    "15m": 15 * 60,
     "2h": 2 * 60 * 60,
     "4h": 4 * 60 * 60,
 }

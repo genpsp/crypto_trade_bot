@@ -14,7 +14,6 @@ services:
       SOLANA_RPC_URL: ${SOLANA_RPC_URL}
       REDIS_URL: redis://redis:6379
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-service-account.json
-      WALLET_KEY_PATH: /run/secrets/wallet.core_long_v0.enc.json
       WALLET_KEY_PASSPHRASE: ${WALLET_KEY_PASSPHRASE}
     volumes:
       - type: bind

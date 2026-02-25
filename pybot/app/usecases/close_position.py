@@ -21,6 +21,7 @@ SOL_ATOMIC_MULTIPLIER = 1_000_000_000
 USDC_ATOMIC_MULTIPLIER = 1_000_000
 TX_CONFIRM_TIMEOUT_MS = 75_000
 TX_INFLIGHT_TTL_SECONDS = 180
+MIN_ATOMIC_AMOUNT = 1
 DEFAULT_EXIT_RETRY_ATTEMPTS = 2
 STOP_LOSS_EXIT_RETRY_ATTEMPTS = 5
 DEFAULT_EXIT_RETRY_DELAY_SECONDS = 0.8
@@ -122,15 +123,41 @@ def close_position(
             quote_amount_usdc = quantity_sol * close_price
         amount_atomic = int(float(quote_amount_usdc) * USDC_ATOMIC_MULTIPLIER)
 
-    if amount_atomic <= 0:
+    before_balances = snapshot_balances()
+    if before_balances is not None:
+        before_quote, before_base = before_balances
+        if side == "BUY_SOL_WITH_USDC":
+            available_atomic = int(max(before_quote, 0.0) * USDC_ATOMIC_MULTIPLIER)
+            if 0 < available_atomic < amount_atomic:
+                logger.warn(
+                    "close_position short exit amount reduced to available quote balance",
+                    {
+                        "trade_id": trade["trade_id"],
+                        "requested_amount_atomic": amount_atomic,
+                        "available_amount_atomic": available_atomic,
+                    },
+                )
+                amount_atomic = available_atomic
+        else:
+            available_atomic = int(max(before_base, 0.0) * SOL_ATOMIC_MULTIPLIER)
+            if 0 < available_atomic < amount_atomic:
+                logger.warn(
+                    "close_position long exit amount reduced to available base balance",
+                    {
+                        "trade_id": trade["trade_id"],
+                        "requested_amount_atomic": amount_atomic,
+                        "available_amount_atomic": available_atomic,
+                    },
+                )
+                amount_atomic = available_atomic
+
+    if amount_atomic < MIN_ATOMIC_AMOUNT:
         trade["execution"]["exit_submission_state"] = "FAILED"
         trade["execution"]["exit_error"] = "position close amount is 0"
         move_state("FAILED")
         return ClosePositionResult(
             status="FAILED", trade_id=trade["trade_id"], summary="FAILED: position close amount is 0"
         )
-
-    before_balances = snapshot_balances()
 
     max_exit_attempts = (
         STOP_LOSS_EXIT_RETRY_ATTEMPTS
@@ -249,7 +276,9 @@ def close_position(
                 after_quote, after_base = after_balances
                 if side == "SELL_SOL_FOR_USDC":
                     actual_quote_usdc = max(round_to(after_quote - before_quote, 6), 0.0)
-                    actual_base_sol = max(float(trade["position"].get("quantity_sol") or 0.0), 0.0)
+                    actual_base_sol = max(
+                        round_to(submission.in_amount_atomic / SOL_ATOMIC_MULTIPLIER, 9), 0.0
+                    )
                 else:
                     actual_quote_usdc = max(round_to(before_quote - after_quote, 6), 0.0)
                     actual_base_sol = max(round_to(after_base - before_base, 9), 0.0)
