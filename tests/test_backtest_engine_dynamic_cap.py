@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from pybot.domain.model.types import BotConfig, EntrySignalDecision, OhlcvBar
+from pybot.domain.risk.short_regime_guard import SHORT_REGIME_GUARD_REASON
 from pybot.domain.risk.short_stop_loss_cooldown import SHORT_STOP_LOSS_COOLDOWN_REASON
 from research.src.domain.backtest_engine import run_backtest
 
@@ -177,6 +178,35 @@ class BacktestEngineDynamicCapTest(unittest.TestCase):
         self.assertEqual(1, report.summary.closed_trades)
         self.assertEqual(1, report.summary.losses)
         self.assertEqual(1, report.no_signal_reason_counts[SHORT_STOP_LOSS_COOLDOWN_REASON])
+
+    def test_short_entry_is_blocked_by_short_regime_guard(self) -> None:
+        config = _build_config(strategy_name="ema_trend_pullback_15m_v0")
+        config["risk"]["max_trades_per_day"] = 99
+        bars = _build_bars()[:2]
+        short_enter = EntrySignalDecision(
+            type="ENTER",
+            summary="short enter",
+            ema_fast=99.0,
+            ema_slow=100.0,
+            entry_price=100.0,
+            stop_price=101.0,
+            take_profit_price=98.0,
+            diagnostics={"entry_direction": "SHORT"},
+        )
+
+        with patch(
+            "research.src.domain.backtest_engine.evaluate_strategy_for_model",
+            return_value=short_enter,
+        ) as mocked_strategy, patch(
+            "research.src.domain.backtest_engine.resolve_short_regime_guard_state",
+            return_value=(True, 4, 90, 8, 12.5),
+        ):
+            report = run_backtest(bars=bars, config=config)
+
+        self.assertEqual(2, mocked_strategy.call_count)
+        self.assertEqual(0, report.summary.decision_enter_count)
+        self.assertEqual(0, report.summary.closed_trades)
+        self.assertEqual(2, report.no_signal_reason_counts[SHORT_REGIME_GUARD_REASON])
 
 
 if __name__ == "__main__":

@@ -30,6 +30,10 @@ from pybot.domain.model.types import (
 )
 from pybot.domain.risk.loss_streak_trade_cap import LOSS_STREAK_LOOKBACK_CLOSED_TRADES
 from pybot.domain.risk.loss_streak_trade_cap import resolve_effective_max_trades_per_day_for_strategy
+from pybot.domain.risk.short_regime_guard import (
+    SHORT_REGIME_GUARD_REASON,
+    resolve_short_regime_guard_state,
+)
 from pybot.domain.risk.short_stop_loss_cooldown import (
     SHORT_STOP_LOSS_COOLDOWN_REASON,
     resolve_short_stop_loss_cooldown_state,
@@ -269,6 +273,18 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                 bar_duration_seconds=get_bar_duration_seconds(timeframe),
             )
         )
+        (
+            short_regime_guard_active,
+            short_regime_guard_consecutive_stop_losses,
+            short_regime_guard_remaining_bars,
+            short_regime_guard_recent_short_trades,
+            short_regime_guard_recent_short_win_rate_pct,
+        ) = resolve_short_regime_guard_state(
+            strategy_name=runtime_config["strategy"]["name"],
+            recent_closed_trades=recent_closed_trades,
+            current_bar_close_time=bar_close_time,
+            bar_duration_seconds=get_bar_duration_seconds(timeframe),
+        )
         run["metrics"] = {
             "phase": "ENTRY_CHECK",
             "model_id": model_id,
@@ -283,6 +299,14 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             "short_stop_loss_cooldown_active": short_cooldown_active,
             "short_stop_loss_cooldown_bars_since": short_cooldown_bars_since,
             "short_stop_loss_cooldown_remaining_bars": short_cooldown_remaining_bars,
+            "short_regime_guard_active": short_regime_guard_active,
+            "short_regime_guard_consecutive_stop_losses": short_regime_guard_consecutive_stop_losses,
+            "short_regime_guard_remaining_bars": short_regime_guard_remaining_bars,
+            "short_regime_guard_recent_short_trades": short_regime_guard_recent_short_trades,
+            "short_regime_guard_recent_short_win_rate_pct": _round_metric(
+                short_regime_guard_recent_short_win_rate_pct,
+                4,
+            ),
         }
         if trades_today >= effective_max_trades_per_day:
             run["result"] = "SKIPPED"
@@ -334,6 +358,14 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             "short_stop_loss_cooldown_active": short_cooldown_active,
             "short_stop_loss_cooldown_bars_since": short_cooldown_bars_since,
             "short_stop_loss_cooldown_remaining_bars": short_cooldown_remaining_bars,
+            "short_regime_guard_active": short_regime_guard_active,
+            "short_regime_guard_consecutive_stop_losses": short_regime_guard_consecutive_stop_losses,
+            "short_regime_guard_remaining_bars": short_regime_guard_remaining_bars,
+            "short_regime_guard_recent_short_trades": short_regime_guard_recent_short_trades,
+            "short_regime_guard_recent_short_win_rate_pct": _round_metric(
+                short_regime_guard_recent_short_win_rate_pct,
+                4,
+            ),
             "decision_type": decision.type,
             "ema_fast": _round_metric(decision.ema_fast),
             "ema_slow": _round_metric(decision.ema_slow),
@@ -364,6 +396,15 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             run["reason"] = SHORT_STOP_LOSS_COOLDOWN_REASON
             run["metrics"]["decision_type"] = "NO_SIGNAL"
             run["metrics"]["reason"] = SHORT_STOP_LOSS_COOLDOWN_REASON
+            return run
+
+        if decision.type == "ENTER" and entry_direction == "SHORT" and short_regime_guard_active:
+            lock.mark_entry_attempt(bar_close_time_iso, ENTRY_IDEM_TTL_SECONDS)
+            run["result"] = "NO_SIGNAL"
+            run["summary"] = "NO_SIGNAL: short regime guard is active"
+            run["reason"] = SHORT_REGIME_GUARD_REASON
+            run["metrics"]["decision_type"] = "NO_SIGNAL"
+            run["metrics"]["reason"] = SHORT_REGIME_GUARD_REASON
             return run
 
         if decision.type == "NO_SIGNAL":

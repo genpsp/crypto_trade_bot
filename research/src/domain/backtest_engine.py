@@ -5,9 +5,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from pybot.domain.model.types import BotConfig, Direction, OhlcvBar
+from pybot.domain.model.types import BotConfig, Direction, OhlcvBar, TradeRecord
 from pybot.domain.risk.loss_streak_trade_cap import LOSS_STREAK_LOOKBACK_CLOSED_TRADES
 from pybot.domain.risk.loss_streak_trade_cap import resolve_effective_max_trades_per_day_for_strategy
+from pybot.domain.risk.short_regime_guard import (
+    SHORT_REGIME_GUARD_REASON,
+    resolve_short_regime_guard_state,
+)
 from pybot.domain.risk.short_stop_loss_cooldown import (
     SHORT_STOP_LOSS_COOLDOWN_BARS,
     SHORT_STOP_LOSS_COOLDOWN_REASON,
@@ -23,6 +27,7 @@ from pybot.domain.risk.swing_low_stop import (
 )
 from pybot.domain.strategy.registry import evaluate_strategy_for_model
 from pybot.domain.utils.math import round_to
+from pybot.domain.utils.time import get_bar_duration_seconds
 
 from research.src.domain.backtest_types import BacktestReport, BacktestSummary, BacktestTrade
 
@@ -108,10 +113,12 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
     max_loss_per_trade_pct = float(config["risk"]["max_loss_per_trade_pct"])
     take_profit_r_multiple = float(config["exit"]["take_profit_r_multiple"])
     ohlcv_limit = _resolve_ohlcv_limit(config)
+    bar_duration_seconds = get_bar_duration_seconds(config["signal_timeframe"])
     portfolio_quote_usdc = BASE_PORTFOLIO_NOTIONAL_USDC
 
     open_position: _OpenPosition | None = None
     trades: list[BacktestTrade] = []
+    recent_closed_trades: list[TradeRecord] = []
     closed_exit_reasons: list[str] = []
     latest_short_close_reason: str | None = None
     latest_short_close_index: int | None = None
@@ -182,6 +189,21 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
                     )
                 )
                 closed_exit_reasons.append(exit_reason)
+                normalized_close_reason = (
+                    "STOP_LOSS" if exit_reason == "STOP_LOSS_AND_TP_SAME_BAR" else exit_reason
+                )
+                close_time_iso = _to_utc_iso(current_bar.close_time)
+                recent_closed_trades.insert(
+                    0,
+                    {
+                        "direction": open_position.direction,
+                        "close_reason": normalized_close_reason,
+                        "position": {"exit_time_iso": close_time_iso},
+                        "updated_at": close_time_iso,
+                    },
+                )
+                if len(recent_closed_trades) > LOSS_STREAK_LOOKBACK_CLOSED_TRADES:
+                    recent_closed_trades = recent_closed_trades[:LOSS_STREAK_LOOKBACK_CLOSED_TRADES]
                 if not is_long:
                     latest_short_close_reason = exit_reason
                     latest_short_close_index = index
@@ -229,6 +251,24 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             if bars_since_short_stop_loss < SHORT_STOP_LOSS_COOLDOWN_BARS:
                 no_signal_count += 1
                 no_signal_reasons[SHORT_STOP_LOSS_COOLDOWN_REASON] += 1
+                continue
+
+        if entry_direction == "SHORT":
+            (
+                short_regime_guard_active,
+                _short_regime_guard_consecutive_stop_losses,
+                _short_regime_guard_remaining_bars,
+                _short_regime_guard_recent_short_trades,
+                _short_regime_guard_recent_short_win_rate_pct,
+            ) = resolve_short_regime_guard_state(
+                strategy_name=config["strategy"]["name"],
+                recent_closed_trades=recent_closed_trades,
+                current_bar_close_time=current_bar.close_time,
+                bar_duration_seconds=bar_duration_seconds,
+            )
+            if short_regime_guard_active:
+                no_signal_count += 1
+                no_signal_reasons[SHORT_REGIME_GUARD_REASON] += 1
                 continue
 
         # Live run_cycle counts each ENTER attempt toward max_trades_per_day even if execution later fails.
