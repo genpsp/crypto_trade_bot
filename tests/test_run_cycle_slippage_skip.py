@@ -17,6 +17,7 @@ from pybot.domain.model.types import (
     RunRecord,
     TradeRecord,
 )
+from pybot.domain.risk.short_stop_loss_cooldown import SHORT_STOP_LOSS_COOLDOWN_REASON
 
 
 def _build_config() -> BotConfig:
@@ -415,6 +416,64 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         self.assertEqual("OPENED", run["result"])
         self.assertEqual("SHORT", captured_entry_direction["value"])
         self.assertEqual("SHORT", run["metrics"]["entry_direction"])
+
+    def test_short_entry_is_blocked_during_post_stop_loss_cooldown(self) -> None:
+        config = _build_config()
+        bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)
+        bars = [
+            OhlcvBar(
+                open_time=bar_close - timedelta(minutes=15),
+                close_time=bar_close,
+                open=99.5,
+                high=100.5,
+                low=99.0,
+                close=100.0,
+                volume=1000.0,
+            )
+        ]
+        recent_closed_trades: list[TradeRecord] = [
+            {
+                "trade_id": "short_loss_1",
+                "pair": "SOL/USDC",
+                "state": "CLOSED",
+                "direction": "SHORT",
+                "close_reason": "STOP_LOSS",
+                "position": {"exit_time_iso": "2026-02-25T09:45:00Z"},
+                "updated_at": "2026-02-25T09:45:10Z",
+            }
+        ]
+        persistence = DummyPersistence(config, recent_closed_trades=recent_closed_trades)
+        deps = RunCycleDependencies(
+            execution=DummyExecution(),
+            lock=DummyLock(),
+            logger=DummyLogger(),
+            market_data=DummyMarketData(bars),
+            persistence=persistence,
+            model_id="core_long_15m_v0",
+            now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
+        )
+        decision = EntrySignalDecision(
+            type="ENTER",
+            summary="enter short by upper trend",
+            ema_fast=99.0,
+            ema_slow=100.0,
+            entry_price=100.0,
+            stop_price=101.0,
+            take_profit_price=98.0,
+            diagnostics={"entry_direction": "SHORT"},
+        )
+
+        with patch("pybot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
+            "pybot.app.usecases.run_cycle.open_position",
+            side_effect=AssertionError("open_position should not be called during cooldown"),
+        ):
+            run = run_cycle(deps)
+
+        self.assertEqual("NO_SIGNAL", run["result"])
+        self.assertEqual(SHORT_STOP_LOSS_COOLDOWN_REASON, run["reason"])
+        self.assertEqual(True, run["metrics"]["short_stop_loss_cooldown_active"])
+        self.assertEqual(1, run["metrics"]["short_stop_loss_cooldown_bars_since"])
+        self.assertEqual(7, run["metrics"]["short_stop_loss_cooldown_remaining_bars"])
 
 
 if __name__ == "__main__":

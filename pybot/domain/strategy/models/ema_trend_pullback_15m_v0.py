@@ -31,6 +31,8 @@ from pybot.domain.strategy.shared.market_context import (
 PULLBACK_LOOKBACK_BARS = 6
 # 短期足の高値追いを抑制
 MAX_DISTANCE_FROM_EMA_FAST_PCT = 0.9
+# ショート時はブレイクダウン確認を厳格化（0-7 bars即損切り対策）
+SHORT_BREAKDOWN_LOOKBACK_BARS = 6
 # 15mでは過小ストップを除外するため下限を設定
 MIN_STOP_DISTANCE_PCT = 0.3
 RSI_PERIOD = 14
@@ -38,6 +40,8 @@ RSI_LONG_LOWER_BOUND = 50
 RSI_LONG_UPPER_BOUND = 68
 RSI_SHORT_LOWER_BOUND = 32
 RSI_SHORT_UPPER_BOUND = 50
+# ショート時は4h EMA乖離が小さい弱トレンドを除外
+SHORT_UPPER_TREND_MIN_GAP_PCT = 0.2
 ATR_PERIOD = 14
 ATR_STOP_MULTIPLIER = 1.5
 UPPER_TREND_TIMEFRAME_MINUTES = 240
@@ -103,6 +107,14 @@ def _resolve_position_size_multiplier(atr_pct: float | None, risk: RiskConfig) -
     if atr_pct >= risk["volatile_atr_pct_threshold"]:
         return "VOLATILE", risk["volatile_size_multiplier"]
     return "NORMAL", 1.0
+
+
+def _calculate_ema_gap_pct(ema_fast: float | None, ema_slow: float | None) -> float | None:
+    if ema_fast is None or ema_slow is None or not math.isfinite(ema_fast) or not math.isfinite(ema_slow):
+        return None
+    if ema_slow == 0:
+        return None
+    return (abs(ema_fast - ema_slow) / abs(ema_slow)) * 100
 
 
 def evaluate_ema_trend_pullback_15m_v0(
@@ -171,6 +183,8 @@ def evaluate_ema_trend_pullback_15m_v0(
     diagnostics["upper_trend_ema_fast"] = upper_ema_fast
     diagnostics["upper_trend_ema_slow"] = upper_ema_slow
     diagnostics["upper_trend_state"] = upper_trend_state
+    upper_trend_gap_pct = _calculate_ema_gap_pct(upper_ema_fast, upper_ema_slow)
+    diagnostics["upper_trend_gap_pct"] = upper_trend_gap_pct
     if upper_trend_state == "UNAVAILABLE":
         return build_no_signal(
             "NO_SIGNAL: upper timeframe trend EMA is not stable yet",
@@ -181,6 +195,18 @@ def evaluate_ema_trend_pullback_15m_v0(
         )
     entry_direction = "LONG" if upper_trend_state == "UP" else "SHORT"
     diagnostics["entry_direction"] = entry_direction
+    if entry_direction == "SHORT":
+        if upper_trend_gap_pct is None or upper_trend_gap_pct < SHORT_UPPER_TREND_MIN_GAP_PCT:
+            return build_no_signal(
+                (
+                    "NO_SIGNAL: upper timeframe downtrend is too weak for short "
+                    f"(gap={upper_trend_gap_pct if upper_trend_gap_pct is not None else 'N/A'})"
+                ),
+                "SHORT_UPPER_TREND_TOO_WEAK",
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                diagnostics=diagnostics,
+            )
     if entry_direction == "LONG" and ema_fast <= ema_slow:
         return build_no_signal(
             (
@@ -260,6 +286,24 @@ def evaluate_ema_trend_pullback_15m_v0(
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
+
+    if entry_direction == "SHORT":
+        short_breakdown_start_index = max(0, latest_index - SHORT_BREAKDOWN_LOOKBACK_BARS)
+        short_breakdown_reference_low = min(lows[short_breakdown_start_index:latest_index])
+        short_breakdown_confirmed = entry_price < short_breakdown_reference_low
+        diagnostics["short_breakdown_reference_low"] = short_breakdown_reference_low
+        diagnostics["short_breakdown_confirmed"] = short_breakdown_confirmed
+        if not short_breakdown_confirmed:
+            return build_no_signal(
+                (
+                    "NO_SIGNAL: short breakdown is not confirmed "
+                    f"(close={entry_price:.4f} >= ref_low={short_breakdown_reference_low:.4f})"
+                ),
+                "SHORT_BREAKDOWN_NOT_CONFIRMED",
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                diagnostics=diagnostics,
+            )
 
     if entry_direction == "LONG":
         distance_from_ema_fast_pct = ((entry_price - ema_fast) / entry_price) * 100

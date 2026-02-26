@@ -8,6 +8,11 @@ from typing import Any
 from pybot.domain.model.types import BotConfig, Direction, OhlcvBar
 from pybot.domain.risk.loss_streak_trade_cap import LOSS_STREAK_LOOKBACK_CLOSED_TRADES
 from pybot.domain.risk.loss_streak_trade_cap import resolve_effective_max_trades_per_day_for_strategy
+from pybot.domain.risk.short_stop_loss_cooldown import (
+    SHORT_STOP_LOSS_COOLDOWN_BARS,
+    SHORT_STOP_LOSS_COOLDOWN_REASON,
+    is_short_stop_loss_cooldown_enabled,
+)
 from pybot.domain.risk.swing_low_stop import (
     calculate_max_loss_stop_price,
     calculate_max_loss_stop_price_for_short,
@@ -108,6 +113,8 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
     open_position: _OpenPosition | None = None
     trades: list[BacktestTrade] = []
     closed_exit_reasons: list[str] = []
+    latest_short_close_reason: str | None = None
+    latest_short_close_index: int | None = None
     no_signal_reasons: Counter[str] = Counter()
     daily_entry_counts: dict[str, int] = {}
     enter_count = 0
@@ -175,6 +182,9 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
                     )
                 )
                 closed_exit_reasons.append(exit_reason)
+                if not is_long:
+                    latest_short_close_reason = exit_reason
+                    latest_short_close_index = index
                 portfolio_quote_usdc = round_to(portfolio_after_exit, 10)
                 open_position = None
             continue
@@ -208,10 +218,22 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             no_signal_reasons[decision.reason] += 1
             continue
 
+        entry_direction = _resolve_entry_direction(direction, decision.diagnostics)
+        if (
+            entry_direction == "SHORT"
+            and is_short_stop_loss_cooldown_enabled(config["strategy"]["name"])
+            and latest_short_close_reason == "STOP_LOSS"
+            and latest_short_close_index is not None
+        ):
+            bars_since_short_stop_loss = index - latest_short_close_index
+            if bars_since_short_stop_loss < SHORT_STOP_LOSS_COOLDOWN_BARS:
+                no_signal_count += 1
+                no_signal_reasons[SHORT_STOP_LOSS_COOLDOWN_REASON] += 1
+                continue
+
         # Live run_cycle counts each ENTER attempt toward max_trades_per_day even if execution later fails.
         daily_entry_counts[day_key] = trades_today + 1
 
-        entry_direction = _resolve_entry_direction(direction, decision.diagnostics)
         size_multiplier = _resolve_position_size_multiplier(decision.diagnostics)
         base_notional_usdc = round_to(portfolio_quote_usdc, 6)
         if base_notional_usdc < configured_min_notional_usdc:

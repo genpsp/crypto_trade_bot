@@ -26,12 +26,22 @@ from pybot.domain.model.types import (
     Pair,
     RunRecord,
     StrategyDecision,
+    TradeRecord,
 )
 from pybot.domain.risk.loss_streak_trade_cap import LOSS_STREAK_LOOKBACK_CLOSED_TRADES
 from pybot.domain.risk.loss_streak_trade_cap import resolve_effective_max_trades_per_day_for_strategy
+from pybot.domain.risk.short_stop_loss_cooldown import (
+    SHORT_STOP_LOSS_COOLDOWN_REASON,
+    resolve_short_stop_loss_cooldown_state,
+)
 from pybot.domain.strategy.registry import evaluate_strategy_for_model
 from pybot.domain.utils.math import round_to
-from pybot.domain.utils.time import build_run_id, get_last_closed_bar_close, get_utc_day_range
+from pybot.domain.utils.time import (
+    build_run_id,
+    get_bar_duration_seconds,
+    get_last_closed_bar_close,
+    get_utc_day_range,
+)
 
 RUN_LOCK_TTL_SECONDS = 240
 ENTRY_IDEM_TTL_SECONDS = 12 * 60 * 60
@@ -69,20 +79,19 @@ def _resolve_ohlcv_limit(config: BotConfig) -> int:
 def _resolve_effective_max_trades_per_day(
     *,
     runtime_config: BotConfig,
-    persistence: PersistencePort,
-    pair: Pair,
+    recent_closed_trades: list[TradeRecord],
 ) -> tuple[int, int, str]:
     base_max_trades_per_day = int(runtime_config["risk"]["max_trades_per_day"])
-    recent_closed_trades = persistence.list_recent_closed_trades(
-        pair,
-        LOSS_STREAK_LOOKBACK_CLOSED_TRADES,
-    )
     recent_close_reasons = [trade.get("close_reason") for trade in recent_closed_trades]
     return resolve_effective_max_trades_per_day_for_strategy(
         strategy_name=runtime_config["strategy"]["name"],
         base_max_trades_per_day=base_max_trades_per_day,
         recent_close_reasons=recent_close_reasons,
     )
+
+
+def _resolve_recent_closed_trades(*, persistence: PersistencePort, pair: Pair) -> list[TradeRecord]:
+    return persistence.list_recent_closed_trades(pair, LOSS_STREAK_LOOKBACK_CLOSED_TRADES)
 
 
 def _is_long_direction(direction: str) -> bool:
@@ -242,11 +251,22 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
 
         day_start_iso, day_end_iso = get_utc_day_range(bar_close_time)
         trades_today = persistence.count_trades_for_utc_day(runtime_config["pair"], day_start_iso, day_end_iso)
+        recent_closed_trades = _resolve_recent_closed_trades(
+            persistence=persistence,
+            pair=runtime_config["pair"],
+        )
         effective_max_trades_per_day, consecutive_loss_streak, dynamic_cap_reason = (
             _resolve_effective_max_trades_per_day(
                 runtime_config=runtime_config,
-                persistence=persistence,
-                pair=runtime_config["pair"],
+                recent_closed_trades=recent_closed_trades,
+            )
+        )
+        short_cooldown_active, short_cooldown_bars_since, short_cooldown_remaining_bars = (
+            resolve_short_stop_loss_cooldown_state(
+                strategy_name=runtime_config["strategy"]["name"],
+                recent_closed_trades=recent_closed_trades,
+                current_bar_close_time=bar_close_time,
+                bar_duration_seconds=get_bar_duration_seconds(timeframe),
             )
         )
         run["metrics"] = {
@@ -260,6 +280,9 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             "effective_max_trades_per_day": effective_max_trades_per_day,
             "consecutive_stop_loss_streak": consecutive_loss_streak,
             "dynamic_trade_cap_reason": dynamic_cap_reason,
+            "short_stop_loss_cooldown_active": short_cooldown_active,
+            "short_stop_loss_cooldown_bars_since": short_cooldown_bars_since,
+            "short_stop_loss_cooldown_remaining_bars": short_cooldown_remaining_bars,
         }
         if trades_today >= effective_max_trades_per_day:
             run["result"] = "SKIPPED"
@@ -308,6 +331,9 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             "effective_max_trades_per_day": effective_max_trades_per_day,
             "consecutive_stop_loss_streak": consecutive_loss_streak,
             "dynamic_trade_cap_reason": dynamic_cap_reason,
+            "short_stop_loss_cooldown_active": short_cooldown_active,
+            "short_stop_loss_cooldown_bars_since": short_cooldown_bars_since,
+            "short_stop_loss_cooldown_remaining_bars": short_cooldown_remaining_bars,
             "decision_type": decision.type,
             "ema_fast": _round_metric(decision.ema_fast),
             "ema_slow": _round_metric(decision.ema_slow),
@@ -330,6 +356,15 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             ),
             "reason": decision.reason if decision.type == "NO_SIGNAL" else None,
         }
+
+        if decision.type == "ENTER" and entry_direction == "SHORT" and short_cooldown_active:
+            lock.mark_entry_attempt(bar_close_time_iso, ENTRY_IDEM_TTL_SECONDS)
+            run["result"] = "NO_SIGNAL"
+            run["summary"] = "NO_SIGNAL: short cooldown after stop-loss is active"
+            run["reason"] = SHORT_STOP_LOSS_COOLDOWN_REASON
+            run["metrics"]["decision_type"] = "NO_SIGNAL"
+            run["metrics"]["reason"] = SHORT_STOP_LOSS_COOLDOWN_REASON
+            return run
 
         if decision.type == "NO_SIGNAL":
             lock.mark_entry_attempt(bar_close_time_iso, ENTRY_IDEM_TTL_SECONDS)

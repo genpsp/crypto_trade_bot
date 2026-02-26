@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from pybot.domain.model.types import BotConfig, EntrySignalDecision, OhlcvBar
+from pybot.domain.risk.short_stop_loss_cooldown import SHORT_STOP_LOSS_COOLDOWN_REASON
 from research.src.domain.backtest_engine import run_backtest
 
 
@@ -122,6 +123,60 @@ class BacktestEngineDynamicCapTest(unittest.TestCase):
         self.assertEqual(2, report.summary.closed_trades)
         self.assertEqual(1, report.summary.open_trades)
         self.assertNotIn("MAX_TRADES_PER_DAY_REACHED", report.no_signal_reason_counts)
+
+    def test_short_entry_is_blocked_for_8_bars_after_short_stop_loss(self) -> None:
+        config = _build_config(strategy_name="ema_trend_pullback_15m_v0")
+        bars = [
+            OhlcvBar(
+                open_time=datetime(2026, 1, 2, 0, 0, tzinfo=UTC),
+                close_time=datetime(2026, 1, 2, 0, 15, tzinfo=UTC),
+                open=100.0,
+                high=100.3,
+                low=99.7,
+                close=100.0,
+                volume=1_000.0,
+            ),
+            OhlcvBar(
+                open_time=datetime(2026, 1, 2, 0, 15, tzinfo=UTC),
+                close_time=datetime(2026, 1, 2, 0, 30, tzinfo=UTC),
+                open=100.0,
+                high=101.3,
+                low=99.6,
+                close=100.8,
+                volume=1_000.0,
+            ),
+            OhlcvBar(
+                open_time=datetime(2026, 1, 2, 0, 30, tzinfo=UTC),
+                close_time=datetime(2026, 1, 2, 0, 45, tzinfo=UTC),
+                open=100.8,
+                high=100.9,
+                low=99.9,
+                close=100.1,
+                volume=1_000.0,
+            ),
+        ]
+        short_enter = EntrySignalDecision(
+            type="ENTER",
+            summary="short enter",
+            ema_fast=99.0,
+            ema_slow=100.0,
+            entry_price=100.0,
+            stop_price=101.0,
+            take_profit_price=98.0,
+            diagnostics={"entry_direction": "SHORT"},
+        )
+
+        with patch(
+            "research.src.domain.backtest_engine.evaluate_strategy_for_model",
+            return_value=short_enter,
+        ) as mocked_strategy:
+            report = run_backtest(bars=bars, config=config)
+
+        self.assertEqual(2, mocked_strategy.call_count)
+        self.assertEqual(1, report.summary.decision_enter_count)
+        self.assertEqual(1, report.summary.closed_trades)
+        self.assertEqual(1, report.summary.losses)
+        self.assertEqual(1, report.no_signal_reason_counts[SHORT_STOP_LOSS_COOLDOWN_REASON])
 
 
 if __name__ == "__main__":
