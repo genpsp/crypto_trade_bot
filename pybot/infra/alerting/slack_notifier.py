@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import requests
 
 from pybot.app.ports.logger_port import LoggerPort
+from pybot.infra.alerting.daily_trade_summary import DailyTradeSummaryReport, ModelDailyTradeSummary
 
 _REQUEST_TIMEOUT_SECONDS = 5
 _DEFAULT_DUPLICATE_SUPPRESSION_SECONDS = 300
@@ -181,6 +182,43 @@ class SlackNotifier:
         )
         self._send(message=message, dedupe_key="stale_cycle_recovered")
 
+    def notify_daily_trade_summary_jst(self, *, report: DailyTradeSummaryReport) -> None:
+        if not self.enabled:
+            return
+
+        header = f"*【日次トレード結果サマリ（JST）】* `{report.target_date_jst}`"
+        generated = f"集計時刻: `{report.generated_at_jst}`"
+
+        lines = [
+            "model_id              closed  win  loss  win_rate   pnl_usdc   fee_usdc  avg_slip  fail_run  skip_run fail_trd cancel_trd",
+            "------------------------------------------------------------------------------------------------------------------------------",
+        ]
+        if report.model_summaries:
+            for summary in report.model_summaries:
+                lines.append(self._format_daily_summary_row(summary))
+        else:
+            lines.append("(対象モデルなし)")
+
+        lines.append("------------------------------------------------------------------------------------------------------------------------------")
+        lines.append(
+            self._format_daily_total_row(
+                closed=report.total_closed_trades,
+                win=report.total_win_trades,
+                loss=report.total_loss_trades,
+                win_rate=report.total_win_rate_pct,
+                pnl_usdc=report.total_realized_pnl_usdc,
+                fee_usdc=report.total_estimated_fees_usdc,
+                avg_slip_bps=report.total_avg_slippage_bps,
+                failed_runs=report.total_failed_runs,
+                skipped_runs=report.total_skipped_runs,
+                failed_trades=report.total_failed_trades,
+                canceled_trades=report.total_canceled_trades,
+            )
+        )
+
+        message = f"{header}\n{generated}\n```\n" + "\n".join(lines) + "\n```"
+        self._send(message=message, dedupe_key=f"daily_summary_jst:{report.target_date_jst}")
+
     def _send(self, *, message: str, dedupe_key: str | None) -> None:
         if self._webhook_url is None:
             return
@@ -214,3 +252,50 @@ class SlackNotifier:
     def _format_message(self, title: str, lines: list[str]) -> str:
         detail = "\n".join(lines)
         return f"{title}\n```\n{detail}\n```"
+
+    def _format_daily_summary_row(self, summary: ModelDailyTradeSummary) -> str:
+        model_id = summary.model_id[:20]
+        return (
+            f"{model_id:<20}"
+            f"{summary.closed_trades:>8}"
+            f"{summary.win_trades:>5}"
+            f"{summary.loss_trades:>6}"
+            f"{summary.win_rate_pct:>10.1f}%"
+            f"{summary.realized_pnl_usdc:>11.2f}"
+            f"{summary.estimated_fees_usdc:>11.3f}"
+            f"{summary.avg_slippage_bps:>10.2f}"
+            f"{summary.failed_runs:>10}"
+            f"{summary.skipped_runs:>10}"
+            f"{summary.failed_trades:>9}"
+            f"{summary.canceled_trades:>11}"
+        )
+
+    def _format_daily_total_row(
+        self,
+        *,
+        closed: int,
+        win: int,
+        loss: int,
+        win_rate: float,
+        pnl_usdc: float,
+        fee_usdc: float,
+        avg_slip_bps: float,
+        failed_runs: int,
+        skipped_runs: int,
+        failed_trades: int,
+        canceled_trades: int,
+    ) -> str:
+        return (
+            f"{'TOTAL':<20}"
+            f"{closed:>8}"
+            f"{win:>5}"
+            f"{loss:>6}"
+            f"{win_rate:>10.1f}%"
+            f"{pnl_usdc:>11.2f}"
+            f"{fee_usdc:>11.3f}"
+            f"{avg_slip_bps:>10.2f}"
+            f"{failed_runs:>10}"
+            f"{skipped_runs:>10}"
+            f"{failed_trades:>9}"
+            f"{canceled_trades:>11}"
+        )

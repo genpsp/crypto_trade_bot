@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import threading
-from typing import Callable
+from typing import Any, Callable
 
 from google.cloud.firestore import Client as FirestoreClient
 from redis import Redis
@@ -18,6 +18,12 @@ from pybot.adapters.persistence.firestore_repo import FirestoreRepository
 from pybot.app.ports.execution_port import ExecutionPort
 from pybot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
 from pybot.infra.alerting import SlackAlertConfig, SlackNotifier, is_execution_error_result
+from pybot.infra.alerting.daily_trade_summary import (
+    JST,
+    build_daily_summary_report,
+    build_daily_summary_window,
+    iter_utc_day_ids,
+)
 from pybot.infra.config.env import load_env
 from pybot.infra.config.firestore_config_repo import (
     GLOBAL_CONTROL_COLLECTION_ID,
@@ -31,6 +37,11 @@ from pybot.infra.scheduler.cron_cycle import CronController, create_cron_cycle
 CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 3
 STALE_CYCLE_ALERT_MINUTES = 10
 DUPLICATE_ALERT_SUPPRESSION_SECONDS = 300
+DAILY_SUMMARY_JST_HOUR = 0
+DAILY_SUMMARY_JST_START_MINUTE = 5
+DAILY_SUMMARY_JST_END_MINUTE_EXCLUSIVE = 15
+DAILY_SUMMARY_LOCK_TTL_SECONDS = 60 * 60 * 48
+DAILY_SUMMARY_LOCK_KEY_PREFIX = "alert:daily_summary:jst"
 
 
 @dataclass
@@ -204,6 +215,88 @@ def bootstrap() -> AppRuntime:
                     threshold_minutes=threshold_minutes,
                     model_ids=sorted(runtime_specs.keys()),
                 )
+
+    def _load_items_for_day_docs(model_id: str, collection_name: str, day_doc_ids: list[str]) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        model_ref = firestore.collection("models").document(model_id)
+        for day_doc_id in day_doc_ids:
+            day_ref = model_ref.collection(collection_name).document(day_doc_id)
+            for item_snapshot in day_ref.collection("items").stream():
+                data = item_snapshot.to_dict()
+                if isinstance(data, dict):
+                    items.append(data)
+        return items
+
+    def _maybe_send_daily_trade_summary(now_utc: datetime, contexts: list[ModelRuntimeContext]) -> None:
+        if not notifier.enabled:
+            return
+
+        now_jst = now_utc.astimezone(JST)
+        if (
+            now_jst.hour != DAILY_SUMMARY_JST_HOUR
+            or now_jst.minute < DAILY_SUMMARY_JST_START_MINUTE
+            or now_jst.minute >= DAILY_SUMMARY_JST_END_MINUTE_EXCLUSIVE
+        ):
+            return
+
+        target_date_jst = (now_jst.date() - timedelta(days=1)).isoformat()
+        lock_key = f"{DAILY_SUMMARY_LOCK_KEY_PREFIX}:{target_date_jst}"
+        lock_acquired = False
+        try:
+            lock_acquired = bool(
+                redis.set(lock_key, "1", nx=True, ex=DAILY_SUMMARY_LOCK_TTL_SECONDS)
+            )
+            if not lock_acquired:
+                return
+
+            window = build_daily_summary_window(target_date_jst)
+            day_doc_ids = iter_utc_day_ids(window)
+            model_payloads: list[tuple[str, list[dict[str, Any]], list[dict[str, Any]]]] = []
+
+            for context in contexts:
+                spec = runtime_specs.get(context.model_id)
+                if spec is None or spec.mode != "LIVE":
+                    continue
+                trades = _load_items_for_day_docs(
+                    model_id=context.model_id,
+                    collection_name=context.persistence.trades_collection_name,
+                    day_doc_ids=day_doc_ids,
+                )
+                runs = _load_items_for_day_docs(
+                    model_id=context.model_id,
+                    collection_name=context.persistence.runs_collection_name,
+                    day_doc_ids=day_doc_ids,
+                )
+                model_payloads.append((context.model_id, trades, runs))
+
+            model_payloads.sort(key=lambda payload: payload[0])
+            report = build_daily_summary_report(
+                target_date_jst=target_date_jst,
+                generated_at_utc=now_utc,
+                model_payloads=model_payloads,
+            )
+            notifier.notify_daily_trade_summary_jst(report=report)
+            logger.info(
+                "daily trade summary sent",
+                {
+                    "target_date_jst": target_date_jst,
+                    "model_count": len(model_payloads),
+                    "models": [model_id for model_id, _, _ in model_payloads],
+                },
+            )
+        except Exception as error:
+            logger.error(
+                "daily trade summary failed",
+                {
+                    "target_date_jst": target_date_jst,
+                    "error": str(error),
+                },
+            )
+            if lock_acquired:
+                try:
+                    redis.delete(lock_key)
+                except Exception:
+                    pass
 
     def _create_runtime_context(spec: ModelRuntimeSpec) -> ModelRuntimeContext:
         return ModelRuntimeContext(
@@ -429,6 +522,7 @@ def bootstrap() -> AppRuntime:
             ):
                 continue
             execute_cycle_for_model(context)
+        _maybe_send_daily_trade_summary(now, contexts)
 
     scheduler: CronController | None = None
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 
+from pybot.infra.alerting.daily_trade_summary import build_daily_summary_report
 from pybot.infra.alerting.slack_notifier import SlackAlertConfig, SlackNotifier, is_execution_error_result
 
 
@@ -104,6 +106,53 @@ class SlackNotifierTest(unittest.TestCase):
         with patch("pybot.infra.alerting.slack_notifier.requests.post") as mocked_post:
             notifier.notify_shutdown(reason="test stop")
         self.assertEqual(0, mocked_post.call_count)
+
+    def test_notify_daily_trade_summary_jst_formats_decorated_table(self) -> None:
+        logger = _FakeLogger()
+        notifier = SlackNotifier(
+            config=SlackAlertConfig(webhook_url="https://hooks.slack.com/services/test/test/test"),
+            logger=logger,
+        )
+        report = build_daily_summary_report(
+            target_date_jst="2026-02-26",
+            generated_at_utc=datetime(2026, 2, 26, 15, 5, tzinfo=UTC),
+            model_payloads=[
+                (
+                    "core_long_15m_v0",
+                    [
+                        {
+                            "trade_id": "t1",
+                            "direction": "LONG",
+                            "state": "CLOSED",
+                            "created_at": "2026-02-25T15:10:00Z",
+                            "position": {
+                                "quote_amount_usdc": 100.0,
+                                "quantity_sol": 1.0,
+                                "entry_trigger_price": 100.0,
+                                "entry_price": 100.0,
+                                "exit_trigger_price": 101.0,
+                                "exit_price": 102.0,
+                                "exit_time_iso": "2026-02-25T18:00:00Z",
+                            },
+                            "execution": {"exit_result": {"spent_quote_usdc": 102.0}},
+                        }
+                    ],
+                    [{"result": "NO_SIGNAL", "executed_at_iso": "2026-02-25T16:00:00Z"}],
+                )
+            ],
+        )
+
+        response = Mock()
+        response.raise_for_status.return_value = None
+        with patch("pybot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
+            notifier.notify_daily_trade_summary_jst(report=report)
+
+        self.assertEqual(1, mocked_post.call_count)
+        payload = mocked_post.call_args.kwargs["json"]["text"]  # type: ignore[index]
+        self.assertIn("【日次トレード結果サマリ（JST）】", payload)
+        self.assertIn("TOTAL", payload)
+        self.assertIn("core_long_15m_v0", payload)
+        self.assertIn("```", payload)
 
 
 if __name__ == "__main__":
