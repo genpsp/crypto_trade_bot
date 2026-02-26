@@ -63,7 +63,36 @@ class SlackNotifierTest(unittest.TestCase):
             )
 
         self.assertEqual(1, mocked_post.call_count)
+        payload = mocked_post.call_args.kwargs["json"]["text"]  # type: ignore[index]
+        self.assertIn("売買実行エラー", payload)
+        self.assertIn("```", payload)
+        self.assertIn("model=core_long_15m_v0", payload)
         self.assertEqual(0, len(logger.warnings))
+
+    def test_notify_startup_formats_message_in_japanese_code_block(self) -> None:
+        logger = _FakeLogger()
+        notifier = SlackNotifier(
+            config=SlackAlertConfig(webhook_url="https://hooks.slack.com/services/test/test/test"),
+            logger=logger,
+        )
+        response = Mock()
+        response.raise_for_status.return_value = None
+        with patch("pybot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
+            notifier.notify_startup(
+                [
+                    {
+                        "model_id": "core_long_15m_v0",
+                        "mode": "LIVE",
+                        "strategy": "ema_trend_pullback_15m_v0",
+                    }
+                ]
+            )
+
+        self.assertEqual(1, mocked_post.call_count)
+        payload = mocked_post.call_args.kwargs["json"]["text"]  # type: ignore[index]
+        self.assertIn("Bot起動", payload)
+        self.assertIn("```", payload)
+        self.assertIn("core_long_15m_v0", payload)
 
     def test_disabled_notifier_does_not_post(self) -> None:
         logger = _FakeLogger()

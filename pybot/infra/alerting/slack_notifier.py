@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
 
 import requests
 
@@ -56,20 +55,27 @@ class SlackNotifier:
             return
         model_lines = [
             (
-                f"- {model.get('model_id', '?')} "
+                f"{model.get('model_id', '?')} "
                 f"(mode={model.get('mode', '?')}, strategy={model.get('strategy', '?')})"
             )
             for model in models
         ]
         if not model_lines:
-            model_lines = ["- (no enabled models)"]
-        message = "bot startup\n" + "\n".join(model_lines)
+            model_lines = ["(有効モデルなし)"]
+        message = self._format_message(
+            "Bot起動",
+            model_lines,
+        )
         self._send(message=message, dedupe_key="startup")
 
     def notify_shutdown(self, *, reason: str) -> None:
         if not self.enabled:
             return
-        self._send(message=f"bot stopped: {reason}", dedupe_key="shutdown")
+        message = self._format_message(
+            "Bot停止",
+            [f"reason={reason}"],
+        )
+        self._send(message=message, dedupe_key="shutdown")
 
     def notify_trade_error(
         self,
@@ -83,7 +89,6 @@ class SlackNotifier:
         if not self.enabled:
             return
         lines = [
-            "trade execution error",
             f"model={model_id}",
             f"result={result}",
             f"summary={summary}",
@@ -92,8 +97,12 @@ class SlackNotifier:
             lines.append(f"run_id={run_id}")
         if trade_id:
             lines.append(f"trade_id={trade_id}")
+        message = self._format_message(
+            "売買実行エラー",
+            lines,
+        )
         dedupe_key = f"trade_error:{model_id}:{result}:{summary}"
-        self._send(message="\n".join(lines), dedupe_key=dedupe_key)
+        self._send(message=message, dedupe_key=dedupe_key)
 
     def notify_consecutive_failures(
         self,
@@ -107,7 +116,6 @@ class SlackNotifier:
         if not self.enabled:
             return
         lines = [
-            "consecutive run failures detected",
             f"model={model_id}",
             f"streak={streak}",
             f"threshold={threshold}",
@@ -115,8 +123,12 @@ class SlackNotifier:
         ]
         if run_id:
             lines.append(f"run_id={run_id}")
+        message = self._format_message(
+            "連続失敗を検知",
+            lines,
+        )
         dedupe_key = f"consecutive_failures:{model_id}:{streak}"
-        self._send(message="\n".join(lines), dedupe_key=dedupe_key)
+        self._send(message=message, dedupe_key=dedupe_key)
 
     def notify_failure_streak_recovered(
         self,
@@ -129,13 +141,16 @@ class SlackNotifier:
         if not self.enabled:
             return
         lines = [
-            "failure streak recovered",
             f"model={model_id}",
             f"previous_streak={previous_streak}",
             f"latest_result={latest_result}",
             f"summary={summary}",
         ]
-        self._send(message="\n".join(lines), dedupe_key=f"failure_recovered:{model_id}")
+        message = self._format_message(
+            "連続失敗から復帰",
+            lines,
+        )
+        self._send(message=message, dedupe_key=f"failure_recovered:{model_id}")
 
     def notify_stale_cycle(
         self,
@@ -147,19 +162,22 @@ class SlackNotifier:
         if not self.enabled:
             return
         lines = [
-            "cycle execution stalled",
             f"elapsed_seconds={elapsed_seconds}",
             f"threshold_minutes={threshold_minutes}",
             f"models={','.join(model_ids) if model_ids else '(none)'}",
         ]
-        self._send(message="\n".join(lines), dedupe_key="stale_cycle")
+        message = self._format_message(
+            "run_cycle停滞を検知",
+            lines,
+        )
+        self._send(message=message, dedupe_key="stale_cycle")
 
     def notify_stale_cycle_recovered(self, *, model_ids: list[str]) -> None:
         if not self.enabled:
             return
-        message = (
-            "cycle execution recovered\n"
-            f"models={','.join(model_ids) if model_ids else '(none)'}"
+        message = self._format_message(
+            "run_cycle停滞から復帰",
+            [f"models={','.join(model_ids) if model_ids else '(none)'}"],
         )
         self._send(message=message, dedupe_key="stale_cycle_recovered")
 
@@ -192,3 +210,7 @@ class SlackNotifier:
                 return False
         self._last_sent_by_key[dedupe_key] = now
         return True
+
+    def _format_message(self, title: str, lines: list[str]) -> str:
+        detail = "\n".join(lines)
+        return f"{title}\n```\n{detail}\n```"
