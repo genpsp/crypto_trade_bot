@@ -156,12 +156,11 @@ GitHub Secrets に以下を登録してください。
 - `VPS_HOST`
 - `VPS_USER`
 - `VPS_SSH_KEY`
-- `GOOGLE_APPLICATION_CREDENTIALS`
 - `WALLET_KEY_PASSPHRASE`
 - `SLACK_WEBHOOK_URL`（任意）
 
-`SOLANA_RPC_URL` は `docker-compose.yml` で `https://api.mainnet-beta.solana.com` 固定です。
-通常、`GOOGLE_APPLICATION_CREDENTIALS` には `/run/secrets/firebase-service-account.json` を設定します。
+`SOLANA_RPC_URL` は `docker-compose.yml` で `https://api.mainnet-beta.solana.com` 固定です。  
+`GOOGLE_APPLICATION_CREDENTIALS` は Docker 実行時に `/run/secrets/firebase-service-account.json` 固定です。
 
 この設定で `main` push / 手動実行時に、Secrets がSSH経由でVPSへ渡され、そのまま `docker compose up -d --build` が実行されます。
 
