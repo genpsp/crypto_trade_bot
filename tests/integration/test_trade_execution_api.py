@@ -1090,6 +1090,161 @@ class TradeExecutionApiTest(unittest.TestCase):
         self.assertEqual("SHORT", trade["direction"])
         self.assertEqual(118.371078, float(trade["position"]["quote_amount_usdc"]))
 
+    def test_open_position_long_entry_amount_never_exceeds_available_quote(self) -> None:
+        config = _build_config()
+        config["execution"]["min_notional_usdc"] = 20
+        persistence = InMemoryPersistence(config)
+        lock = InMemoryLock()
+        logger = InMemoryLogger()
+
+        signal = EntrySignalDecision(
+            type="ENTER",
+            summary="amount floor long",
+            ema_fast=88.1,
+            ema_slow=87.9,
+            entry_price=88.01,
+            stop_price=87.23,
+            take_profit_price=89.41,
+        )
+
+        class LongAmountFloorExecution:
+            def __init__(self) -> None:
+                self.submitted_amounts: list[int] = []
+
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                self.submitted_amounts.append(request.amount_atomic)
+                return SwapSubmission(
+                    tx_signature="entry_sig_long_floor",
+                    in_amount_atomic=request.amount_atomic,
+                    out_amount_atomic=440_000_000,
+                    order={"tx_signature": "entry_sig_long_floor"},
+                    result={
+                        "status": "ESTIMATED",
+                        "avg_fill_price": 88.01,
+                        "spent_quote_usdc": request.amount_atomic / 1_000_000,
+                        "filled_base_sol": 0.44,
+                    },
+                )
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=True)
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 88.01
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return 38.717328
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return 1.0
+
+        execution = LongAmountFloorExecution()
+        opened = open_position(
+            OpenPositionDependencies(
+                execution=execution,
+                lock=lock,
+                logger=logger,
+                persistence=persistence,
+            ),
+            OpenPositionInput(
+                config=config,
+                signal=signal,
+                bar_close_time_iso="2026-02-26T10:15:00.000Z",
+                model_id="core_long_15m_v0",
+            ),
+        )
+
+        self.assertEqual("OPENED", opened.status)
+        self.assertEqual([38_717_328], execution.submitted_amounts)
+        trade = persistence.trades[opened.trade_id]
+        self.assertAlmostEqual(38.717328, float(trade["plan"]["notional_usdc"]), places=6)
+
+    def test_open_position_short_entry_amount_never_exceeds_available_base(self) -> None:
+        config = _build_config()
+        config["execution"]["min_notional_usdc"] = 20
+        config["direction"] = "SHORT"
+        config["strategy"] = {
+            "name": "storm_short_v0",
+            "ema_fast_period": 12,
+            "ema_slow_period": 34,
+            "swing_low_lookback_bars": 12,
+            "entry": "ON_BAR_CLOSE",
+        }
+        persistence = InMemoryPersistence(config)
+        lock = InMemoryLock()
+        logger = InMemoryLogger()
+
+        signal = EntrySignalDecision(
+            type="ENTER",
+            summary="amount floor short",
+            ema_fast=87.9,
+            ema_slow=88.3,
+            entry_price=88.01,
+            stop_price=89.2,
+            take_profit_price=86.2,
+        )
+
+        class ShortAmountFloorExecution:
+            def __init__(self) -> None:
+                self.submitted_amounts: list[int] = []
+
+            def submit_swap(self, request: Any) -> SwapSubmission:
+                self.submitted_amounts.append(request.amount_atomic)
+                return SwapSubmission(
+                    tx_signature="entry_sig_short_floor",
+                    in_amount_atomic=request.amount_atomic,
+                    out_amount_atomic=29_300_000,
+                    order={"tx_signature": "entry_sig_short_floor"},
+                    result={
+                        "status": "ESTIMATED",
+                        "avg_fill_price": 88.01,
+                        "spent_quote_usdc": 29.3,
+                        "filled_base_sol": request.amount_atomic / 1_000_000_000,
+                    },
+                )
+
+            def confirm_swap(self, tx_signature: str, timeout_ms: int) -> SwapConfirmation:
+                _ = tx_signature
+                _ = timeout_ms
+                return SwapConfirmation(confirmed=True)
+
+            def get_mark_price(self, pair: str) -> float:
+                _ = pair
+                return 88.01
+
+            def get_available_quote_usdc(self, pair: str) -> float:
+                _ = pair
+                return 0.0
+
+            def get_available_base_sol(self, pair: str) -> float:
+                _ = pair
+                return 0.353333333
+
+        execution = ShortAmountFloorExecution()
+        opened = open_position(
+            OpenPositionDependencies(
+                execution=execution,
+                lock=lock,
+                logger=logger,
+                persistence=persistence,
+            ),
+            OpenPositionInput(
+                config=config,
+                signal=signal,
+                bar_close_time_iso="2026-02-26T10:30:00.000Z",
+                model_id="storm_short_v0",
+            ),
+        )
+
+        self.assertEqual("OPENED", opened.status)
+        self.assertEqual([333_333_333], execution.submitted_amounts)
+        self.assertLessEqual(execution.submitted_amounts[0], 333_333_333)
+
     def test_open_position_persists_entry_fee_lamports_when_supported(self) -> None:
         config = _build_config()
         persistence = InMemoryPersistence(config)

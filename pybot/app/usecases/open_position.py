@@ -28,7 +28,7 @@ from pybot.domain.risk.swing_low_stop import (
     tighten_stop_for_long,
     tighten_stop_for_short,
 )
-from pybot.domain.utils.math import round_to
+from pybot.domain.utils.math import round_to, scale_atomic_amount_down, to_atomic_amount_down
 from pybot.domain.utils.time import build_trade_id
 
 USDC_ATOMIC_MULTIPLIER = 1_000_000
@@ -118,26 +118,40 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
     balance_error: str | None = None
     mark_price = signal.entry_price
     base_notional_usdc = 0.0
+    effective_notional_usdc = 0.0
+    entry_side: SwapSide = "BUY_SOL_WITH_USDC"
+    amount_atomic = 0
 
     try:
         if direction == "LONG":
             available_quote_usdc = float(execution.get_available_quote_usdc(config["pair"]))
-            base_notional_usdc = round_to(available_quote_usdc, 6)
+            available_quote_atomic = to_atomic_amount_down(max(available_quote_usdc, 0.0), USDC_ATOMIC_MULTIPLIER)
+            base_notional_usdc = round_to(available_quote_atomic / USDC_ATOMIC_MULTIPLIER, 6)
+            amount_atomic = min(
+                scale_atomic_amount_down(available_quote_atomic, position_size_multiplier),
+                available_quote_atomic,
+            )
+            effective_notional_usdc = round_to(amount_atomic / USDC_ATOMIC_MULTIPLIER, 6)
         else:
             available_base_sol = float(execution.get_available_base_sol(config["pair"]))
             shortable_sol = max(available_base_sol - SOL_FEE_RESERVE, 0.0)
             mark_price = float(execution.get_mark_price(config["pair"]))
             if mark_price <= 0:
                 raise RuntimeError("mark price for short model is invalid")
-            base_notional_usdc = round_to(shortable_sol * mark_price, 6)
+            available_base_atomic = to_atomic_amount_down(shortable_sol, SOL_ATOMIC_MULTIPLIER)
+            base_notional_usdc = round_to((available_base_atomic / SOL_ATOMIC_MULTIPLIER) * mark_price, 6)
+            amount_atomic = min(
+                scale_atomic_amount_down(available_base_atomic, position_size_multiplier),
+                available_base_atomic,
+            )
+            effective_notional_usdc = round_to((amount_atomic / SOL_ATOMIC_MULTIPLIER) * mark_price, 6)
+            entry_side = "SELL_SOL_FOR_USDC"
     except Exception as error:
         balance_error = f"failed to fetch balance for {direction}: {to_error_message(error)}"
         logger.error(
             "failed to fetch entry balance",
             {"pair": config["pair"], "direction": direction, "error": to_error_message(error)},
         )
-
-    effective_notional_usdc = round_to(base_notional_usdc * position_size_multiplier, 2)
 
     trade: TradeRecord = {
         "trade_id": trade_id,
@@ -280,13 +294,6 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             trade_id=trade_id,
             summary=f"CANCELED: {trade['execution']['entry_error']}",
         )
-
-    entry_side: SwapSide = "BUY_SOL_WITH_USDC"
-    amount_atomic = int(round(effective_notional_usdc * USDC_ATOMIC_MULTIPLIER))
-    if direction == "SHORT":
-        sell_quantity_sol = effective_notional_usdc / mark_price
-        amount_atomic = int(sell_quantity_sol * SOL_ATOMIC_MULTIPLIER)
-        entry_side = "SELL_SOL_FOR_USDC"
 
     if amount_atomic <= 0:
         trade["execution"]["entry_error"] = "entry amount_atomic must be > 0"

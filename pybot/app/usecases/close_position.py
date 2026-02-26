@@ -19,7 +19,7 @@ from pybot.app.usecases.usecase_utils import (
 )
 from pybot.domain.model.trade_state import assert_trade_state_transition
 from pybot.domain.model.types import BotConfig, CloseReason, TradeRecord, TradeState
-from pybot.domain.utils.math import round_to
+from pybot.domain.utils.math import round_to, to_atomic_amount_down
 
 SOL_ATOMIC_MULTIPLIER = 1_000_000_000
 USDC_ATOMIC_MULTIPLIER = 1_000_000
@@ -138,7 +138,7 @@ def close_position(
 
     direction = trade.get("direction", "LONG")
     side: SwapSide = "SELL_SOL_FOR_USDC"
-    amount_atomic = int(trade["position"]["quantity_sol"] * SOL_ATOMIC_MULTIPLIER)
+    amount_atomic = to_atomic_amount_down(float(trade["position"]["quantity_sol"]), SOL_ATOMIC_MULTIPLIER)
 
     if direction == "SHORT":
         side = "BUY_SOL_WITH_USDC"
@@ -146,13 +146,13 @@ def close_position(
         if not isinstance(quote_amount_usdc, (int, float)) or quote_amount_usdc <= 0:
             quantity_sol = float(trade.get("position", {}).get("quantity_sol") or 0)
             quote_amount_usdc = quantity_sol * close_price
-        amount_atomic = int(float(quote_amount_usdc) * USDC_ATOMIC_MULTIPLIER)
+        amount_atomic = to_atomic_amount_down(float(quote_amount_usdc), USDC_ATOMIC_MULTIPLIER)
 
     before_balances = snapshot_balances()
     if before_balances is not None:
         before_quote, before_base = before_balances
         if side == "BUY_SOL_WITH_USDC":
-            available_atomic = int(max(before_quote, 0.0) * USDC_ATOMIC_MULTIPLIER)
+            available_atomic = to_atomic_amount_down(max(before_quote, 0.0), USDC_ATOMIC_MULTIPLIER)
             if 0 < available_atomic < amount_atomic:
                 logger.warn(
                     "close_position short exit amount reduced to available quote balance",
@@ -164,7 +164,7 @@ def close_position(
                 )
                 amount_atomic = available_atomic
         else:
-            available_atomic = int(max(before_base, 0.0) * SOL_ATOMIC_MULTIPLIER)
+            available_atomic = to_atomic_amount_down(max(before_base, 0.0), SOL_ATOMIC_MULTIPLIER)
             if 0 < available_atomic < amount_atomic:
                 logger.warn(
                     "close_position long exit amount reduced to available base balance",
