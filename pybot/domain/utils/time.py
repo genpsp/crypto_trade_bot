@@ -37,7 +37,7 @@ def get_utc_day_range(target: datetime) -> tuple[str, str]:
 
 def build_trade_id(bar_close_time_iso: str, model_id: str, direction: Direction) -> str:
     safe_model_id = "".join(char if char.isalnum() or char in ("-", "_") else "_" for char in model_id)
-    side = "LONG" if direction == "LONG_ONLY" else "SHORT"
+    side = "LONG" if direction == "LONG" else "SHORT"
     return f"{bar_close_time_iso}_{safe_model_id}_{side}"
 
 

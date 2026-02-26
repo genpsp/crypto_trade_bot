@@ -131,7 +131,7 @@ def parse_config(data: Any) -> BotConfig:
     _require(isinstance(data.get("enabled"), bool), "enabled must be boolean")
     _require(data.get("network") == "mainnet-beta", "network must be 'mainnet-beta'")
     _require(data.get("pair") == "SOL/USDC", "pair must be 'SOL/USDC'")
-    _require(data.get("direction") in ("LONG_ONLY", "SHORT_ONLY"), "direction must be LONG_ONLY or SHORT_ONLY")
+    _require(data.get("direction") in ("LONG", "SHORT"), "direction must be LONG or SHORT")
     _require(
         data.get("signal_timeframe") in ("15m", "2h", "4h"),
         "signal_timeframe must be '15m', '2h' or '4h'",

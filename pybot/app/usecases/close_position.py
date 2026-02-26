@@ -136,11 +136,11 @@ def close_position(
             )
             return None
 
-    direction = trade.get("direction", "LONG_ONLY")
+    direction = trade.get("direction", "LONG")
     side: SwapSide = "SELL_SOL_FOR_USDC"
     amount_atomic = int(trade["position"]["quantity_sol"] * SOL_ATOMIC_MULTIPLIER)
 
-    if direction == "SHORT_ONLY":
+    if direction == "SHORT":
         side = "BUY_SOL_WITH_USDC"
         quote_amount_usdc = trade.get("position", {}).get("quote_amount_usdc")
         if not isinstance(quote_amount_usdc, (int, float)) or quote_amount_usdc <= 0:

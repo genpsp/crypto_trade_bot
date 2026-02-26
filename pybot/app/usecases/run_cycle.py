@@ -20,7 +20,15 @@ from pybot.app.usecases.open_position import (
     open_position,
 )
 from pybot.app.usecases.usecase_utils import to_error_message
-from pybot.domain.model.types import BotConfig, Pair, RunRecord, TradeRecord
+from pybot.domain.model.types import (
+    BotConfig,
+    Direction,
+    Pair,
+    RunRecord,
+    StrategyDecision,
+)
+from pybot.domain.risk.loss_streak_trade_cap import LOSS_STREAK_LOOKBACK_CLOSED_TRADES
+from pybot.domain.risk.loss_streak_trade_cap import resolve_effective_max_trades_per_day_for_strategy
 from pybot.domain.strategy.registry import evaluate_strategy_for_model
 from pybot.domain.utils.math import round_to
 from pybot.domain.utils.time import build_run_id, get_last_closed_bar_close, get_utc_day_range
@@ -29,12 +37,6 @@ RUN_LOCK_TTL_SECONDS = 240
 ENTRY_IDEM_TTL_SECONDS = 12 * 60 * 60
 DEFAULT_OHLCV_LIMIT = 300
 OHLCV_LIMIT_FOR_15M_UPPER_TREND = 600
-LOSS_STREAK_DYNAMIC_CAP_STRATEGY_NAMES = frozenset({"ema_trend_pullback_15m_v0"})
-LOSS_STREAK_LOOKBACK_CLOSED_TRADES = 20
-LOSS_STREAK_CAP_LEVEL_1_THRESHOLD = 2
-LOSS_STREAK_CAP_LEVEL_2_THRESHOLD = 3
-LOSS_STREAK_CAP_LEVEL_1_MAX_TRADES = 2
-LOSS_STREAK_CAP_LEVEL_2_MAX_TRADES = 1
 
 
 @dataclass
@@ -64,24 +66,6 @@ def _resolve_ohlcv_limit(config: BotConfig) -> int:
     return DEFAULT_OHLCV_LIMIT
 
 
-def _is_loss_streak_dynamic_cap_enabled(config: BotConfig) -> bool:
-    return config["strategy"]["name"] in LOSS_STREAK_DYNAMIC_CAP_STRATEGY_NAMES
-
-
-def _count_consecutive_stop_losses(recent_closed_trades: list[TradeRecord]) -> int:
-    streak = 0
-    for trade in recent_closed_trades:
-        close_reason = trade.get("close_reason")
-        if close_reason == "STOP_LOSS":
-            streak += 1
-            continue
-        if close_reason == "TAKE_PROFIT":
-            break
-        # Unknown/manual/system closes should not bias the streak.
-        break
-    return streak
-
-
 def _resolve_effective_max_trades_per_day(
     *,
     runtime_config: BotConfig,
@@ -89,25 +73,30 @@ def _resolve_effective_max_trades_per_day(
     pair: Pair,
 ) -> tuple[int, int, str]:
     base_max_trades_per_day = int(runtime_config["risk"]["max_trades_per_day"])
-    if not _is_loss_streak_dynamic_cap_enabled(runtime_config):
-        return base_max_trades_per_day, 0, "DISABLED"
-
     recent_closed_trades = persistence.list_recent_closed_trades(
         pair,
         LOSS_STREAK_LOOKBACK_CLOSED_TRADES,
     )
-    consecutive_loss_streak = _count_consecutive_stop_losses(recent_closed_trades)
+    recent_close_reasons = [trade.get("close_reason") for trade in recent_closed_trades]
+    return resolve_effective_max_trades_per_day_for_strategy(
+        strategy_name=runtime_config["strategy"]["name"],
+        base_max_trades_per_day=base_max_trades_per_day,
+        recent_close_reasons=recent_close_reasons,
+    )
 
-    effective_max_trades_per_day = base_max_trades_per_day
-    dynamic_cap_reason = "BASE"
-    if consecutive_loss_streak >= LOSS_STREAK_CAP_LEVEL_2_THRESHOLD:
-        effective_max_trades_per_day = min(base_max_trades_per_day, LOSS_STREAK_CAP_LEVEL_2_MAX_TRADES)
-        dynamic_cap_reason = "LOSS_STREAK_GE_3"
-    elif consecutive_loss_streak >= LOSS_STREAK_CAP_LEVEL_1_THRESHOLD:
-        effective_max_trades_per_day = min(base_max_trades_per_day, LOSS_STREAK_CAP_LEVEL_1_MAX_TRADES)
-        dynamic_cap_reason = "LOSS_STREAK_GE_2"
 
-    return effective_max_trades_per_day, consecutive_loss_streak, dynamic_cap_reason
+def _is_long_direction(direction: str) -> bool:
+    return direction == "LONG"
+
+
+def _resolve_entry_direction(runtime_config: BotConfig, decision: StrategyDecision) -> Direction:
+    if decision.type != "ENTER":
+        return runtime_config["direction"]
+
+    raw_entry_direction = (decision.diagnostics or {}).get("entry_direction")
+    if raw_entry_direction in ("LONG", "SHORT"):
+        return raw_entry_direction
+    return runtime_config["direction"]
 
 
 def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
@@ -162,7 +151,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             stop_price = open_trade["position"]["stop_price"]
             take_profit_price = open_trade["position"]["take_profit_price"]
 
-            if trade_direction == "LONG_ONLY":
+            if _is_long_direction(str(trade_direction)):
                 if mark_price >= take_profit_price:
                     trigger_reason = "TAKE_PROFIT"
                 elif mark_price <= stop_price:
@@ -176,7 +165,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             run["metrics"] = {
                 "phase": "EXIT_CHECK",
                 "model_id": model_id,
-                "direction": trade_direction,
+                "direction": str(trade_direction),
                 "mark_price": round_to(mark_price, 6),
                 "entry_price": _round_metric(open_trade.get("position", {}).get("entry_price")),
                 "stop_price": _round_metric(stop_price),
@@ -190,7 +179,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                 "exit check",
                 {
                     "model_id": model_id,
-                    "direction": trade_direction,
+                    "direction": str(trade_direction),
                     "markPrice": round_to(mark_price, 6),
                     "stop": round_to(stop_price, 6),
                     "tp": round_to(take_profit_price, 6),
@@ -289,6 +278,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             exit=runtime_config["exit"],
             execution=runtime_config["execution"],
         )
+        entry_direction = _resolve_entry_direction(runtime_config, decision)
         logger.info(
             "strategy evaluation",
             {
@@ -302,6 +292,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                 "entry_price": decision.entry_price if decision.type == "ENTER" else None,
                 "stop_price": decision.stop_price if decision.type == "ENTER" else None,
                 "take_profit_price": decision.take_profit_price if decision.type == "ENTER" else None,
+                "entry_direction": entry_direction if decision.type == "ENTER" else None,
                 "diagnostics": decision.diagnostics,
             },
         )
@@ -323,6 +314,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             "entry_price": _round_metric(decision.entry_price) if decision.type == "ENTER" else None,
             "stop_price": _round_metric(decision.stop_price) if decision.type == "ENTER" else None,
             "take_profit_price": _round_metric(decision.take_profit_price) if decision.type == "ENTER" else None,
+            "entry_direction": entry_direction if decision.type == "ENTER" else None,
             "rsi": _round_metric(diagnostics.get("rsi"), 4),
             "atr": _round_metric(diagnostics.get("atr"), 6),
             "atr_pct": _round_metric(diagnostics.get("atr_pct"), 4),
@@ -365,6 +357,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                 signal=decision,
                 bar_close_time_iso=bar_close_time_iso,
                 model_id=model_id,
+                entry_direction=entry_direction,
             ),
         )
         run["trade_id"] = opened.trade_id

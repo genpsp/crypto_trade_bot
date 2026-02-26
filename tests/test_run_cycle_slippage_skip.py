@@ -24,7 +24,7 @@ def _build_config() -> BotConfig:
         "enabled": True,
         "network": "mainnet-beta",
         "pair": "SOL/USDC",
-        "direction": "LONG_ONLY",
+        "direction": "LONG",
         "signal_timeframe": "15m",
         "strategy": {
             "name": "ema_trend_pullback_15m_v0",
@@ -234,7 +234,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
             "model_id": "core_long_15m_v0",
             "bar_close_time_iso": "2026-02-25T09:45:00Z",
             "pair": "SOL/USDC",
-            "direction": "LONG_ONLY",
+            "direction": "LONG",
             "state": "CONFIRMED",
             "config_version": 2,
             "execution": {},
@@ -361,6 +361,60 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         self.assertEqual(0, run["metrics"]["consecutive_stop_loss_streak"])
         self.assertEqual(3, run["metrics"]["effective_max_trades_per_day"])
         self.assertEqual("BASE", run["metrics"]["dynamic_trade_cap_reason"])
+
+    def test_entry_direction_from_strategy_diagnostics_is_passed_to_open_position(self) -> None:
+        config = _build_config()
+        bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)
+        bars = [
+            OhlcvBar(
+                open_time=bar_close - timedelta(minutes=15),
+                close_time=bar_close,
+                open=99.5,
+                high=100.5,
+                low=99.0,
+                close=100.0,
+                volume=1000.0,
+            )
+        ]
+        persistence = DummyPersistence(config)
+        deps = RunCycleDependencies(
+            execution=DummyExecution(),
+            lock=DummyLock(),
+            logger=DummyLogger(),
+            market_data=DummyMarketData(bars),
+            persistence=persistence,
+            model_id="core_long_15m_v0",
+            now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
+        )
+        decision = EntrySignalDecision(
+            type="ENTER",
+            summary="enter short by upper trend",
+            ema_fast=99.0,
+            ema_slow=100.0,
+            entry_price=100.0,
+            stop_price=101.0,
+            take_profit_price=98.0,
+            diagnostics={"entry_direction": "SHORT"},
+        )
+        captured_entry_direction: dict[str, str | None] = {"value": None}
+
+        def _capture_open_position(_deps: Any, input_data: Any) -> OpenPositionResult:
+            captured_entry_direction["value"] = input_data.entry_direction
+            return OpenPositionResult(
+                status="OPENED",
+                trade_id="trade_opened_short",
+                summary="OPENED: short entry",
+            )
+
+        with patch("pybot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
+            "pybot.app.usecases.run_cycle.open_position",
+            side_effect=_capture_open_position,
+        ):
+            run = run_cycle(deps)
+
+        self.assertEqual("OPENED", run["result"])
+        self.assertEqual("SHORT", captured_entry_direction["value"])
+        self.assertEqual("SHORT", run["metrics"]["entry_direction"])
 
 
 if __name__ == "__main__":

@@ -118,12 +118,12 @@ docker compose up --build
 - モデル設定は `models/{model_id}/config/current` で完結
 - `model_id` 単位で独立実行されます
 - 例:
-  - `core_long_v0` (`LONG_ONLY`, `ema_trend_pullback_v0`)
-  - `core_long_15m_v0` (`LONG_ONLY`, `ema_trend_pullback_15m_v0`)
-  - `storm_short_v0` (`SHORT_ONLY`, `storm_short_v0`)
+  - `core_long_v0` (`LONG`, `ema_trend_pullback_v0`)
+  - `core_long_15m_v0` (`LONG`, `ema_trend_pullback_15m_v0`)
+  - `storm_short_v0` (`SHORT`, `storm_short_v0`)
 
 注意:
-- `SHORT_ONLY` は現物の `SELL_SOL_FOR_USDC -> BUY_SOL_WITH_USDC` で実装
+- `SHORT` は現物の `SELL_SOL_FOR_USDC -> BUY_SOL_WITH_USDC` で実装
 - ショートモデルはSOL在庫を使うため、ウォレットのSOL残高が必要
 
 ## 9. 動作確認ポイント

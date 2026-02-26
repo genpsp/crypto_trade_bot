@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pybot.domain.model.types import BotConfig, Direction, OhlcvBar
+from pybot.domain.risk.loss_streak_trade_cap import LOSS_STREAK_LOOKBACK_CLOSED_TRADES
+from pybot.domain.risk.loss_streak_trade_cap import resolve_effective_max_trades_per_day_for_strategy
 from pybot.domain.risk.swing_low_stop import (
     calculate_max_loss_stop_price,
     calculate_max_loss_stop_price_for_short,
@@ -48,6 +50,16 @@ BASE_PORTFOLIO_NOTIONAL_USDC = 100.0
 SLIPPAGE_BPS_DENOMINATOR = 10_000
 DEFAULT_OHLCV_LIMIT = 300
 OHLCV_LIMIT_FOR_15M_UPPER_TREND = 600
+
+
+def _resolve_entry_direction(
+    config_direction: Direction,
+    diagnostics: dict[str, Any] | None,
+) -> Direction:
+    raw = (diagnostics or {}).get("entry_direction")
+    if raw in ("LONG", "SHORT"):
+        return raw
+    return config_direction
 
 
 def _resolve_position_size_multiplier(diagnostics: dict[str, Any] | None) -> float:
@@ -95,6 +107,7 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
 
     open_position: _OpenPosition | None = None
     trades: list[BacktestTrade] = []
+    closed_exit_reasons: list[str] = []
     no_signal_reasons: Counter[str] = Counter()
     daily_entry_counts: dict[str, int] = {}
     enter_count = 0
@@ -105,7 +118,7 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             if index <= open_position.entry_index:
                 continue
 
-            is_long = open_position.direction == "LONG_ONLY"
+            is_long = open_position.direction == "LONG"
             if is_long:
                 stop_hit = current_bar.low <= open_position.stop_price
                 tp_hit = current_bar.high >= open_position.take_profit_price
@@ -161,13 +174,20 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
                         holding_bars=index - open_position.entry_index,
                     )
                 )
+                closed_exit_reasons.append(exit_reason)
                 portfolio_quote_usdc = round_to(portfolio_after_exit, 10)
                 open_position = None
             continue
 
         day_key = current_bar.close_time.astimezone(UTC).date().isoformat()
         trades_today = daily_entry_counts.get(day_key, 0)
-        if trades_today >= max_trades_per_day:
+        recent_close_reasons = list(reversed(closed_exit_reasons[-LOSS_STREAK_LOOKBACK_CLOSED_TRADES:]))
+        effective_max_trades_per_day, _, _ = resolve_effective_max_trades_per_day_for_strategy(
+            strategy_name=config["strategy"]["name"],
+            base_max_trades_per_day=max_trades_per_day,
+            recent_close_reasons=recent_close_reasons,
+        )
+        if trades_today >= effective_max_trades_per_day:
             no_signal_count += 1
             no_signal_reasons["MAX_TRADES_PER_DAY_REACHED"] += 1
             continue
@@ -191,6 +211,7 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
         # Live run_cycle counts each ENTER attempt toward max_trades_per_day even if execution later fails.
         daily_entry_counts[day_key] = trades_today + 1
 
+        entry_direction = _resolve_entry_direction(direction, decision.diagnostics)
         size_multiplier = _resolve_position_size_multiplier(decision.diagnostics)
         base_notional_usdc = round_to(portfolio_quote_usdc, 6)
         if base_notional_usdc < configured_min_notional_usdc:
@@ -204,7 +225,7 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             no_signal_reasons["ENTRY_DISABLED_BY_POSITION_SIZE_MULTIPLIER"] += 1
             continue
 
-        if direction == "LONG_ONLY":
+        if entry_direction == "LONG":
             resolved_entry_price = _simulate_buy_fill_price(decision.entry_price, slippage_bps)
         else:
             resolved_entry_price = _simulate_sell_fill_price(decision.entry_price, slippage_bps)
@@ -221,7 +242,7 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             continue
 
         swing_stop = float(decision.stop_price)
-        if direction == "LONG_ONLY":
+        if entry_direction == "LONG":
             pct_stop = calculate_max_loss_stop_price(resolved_entry_price, max_loss_per_trade_pct)
             final_stop = tighten_stop_for_long(
                 resolved_entry_price,
@@ -265,7 +286,7 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
         open_position = _OpenPosition(
             entry_index=index,
             entry_time=current_bar.close_time,
-            direction=direction,
+            direction=entry_direction,
             quantity_sol=quantity_sol,
             entry_price=resolved_entry_price,
             stop_price=final_stop,

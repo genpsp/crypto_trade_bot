@@ -6,7 +6,7 @@ from typing import Any, Literal, TypedDict
 
 Network = Literal["mainnet-beta"]
 Pair = Literal["SOL/USDC"]
-Direction = Literal["LONG_ONLY", "SHORT_ONLY"]
+Direction = Literal["LONG", "SHORT"]
 SignalTimeframe = Literal["15m", "2h", "4h"]
 StrategyName = Literal["ema_trend_pullback_v0", "ema_trend_pullback_15m_v0", "storm_short_v0"]
 
@@ -93,6 +93,7 @@ class StrategyDiagnostics(TypedDict, total=False):
     atr_pct: float
     volatility_regime: VolatilityRegime
     position_size_multiplier: float
+    entry_direction: Direction
 
 
 @dataclass

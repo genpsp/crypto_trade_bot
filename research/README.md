@@ -61,6 +61,18 @@ python -m research.scripts.run_backtest \
 `--config` は `research/models/<model_id>/config/current.json` を指定します。  
 モデル設定はこの1ファイルに集約されています。
 
+Walk-forward（複数窓）の例:
+
+```bash
+python -m research.scripts.run_walk_forward \
+  --config research/models/core_long_15m_v0/config/current.json \
+  --bars research/data/raw/solusdc_15m_3y.csv \
+  --train-days 180 \
+  --test-days 90 \
+  --step-days 90 \
+  --output research/data/processed/walk_forward_core_long_15m_6m3m.json
+```
+
 ## Notebook で実行（コピペ不要）
 
 `jupyter lab` を起動したら下記ノートを開いて、`Run -> Run All Cells` を実行してください。

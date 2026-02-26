@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from pybot.domain.model.types import ExecutionConfig, ExitConfig, OhlcvBar, RiskConfig, StrategyConfig
+from pybot.domain.strategy.shared.market_context import EmaMarketContext
 from pybot.domain.strategy.models.ema_trend_pullback_15m_v0 import (
     evaluate_ema_trend_pullback_15m_v0,
 )
@@ -140,21 +141,54 @@ class EmaTrendPullback15mStrategyTest(unittest.TestCase):
         self.assertEqual("NO_SIGNAL", decision.type)
         self.assertEqual("STORM_SIZE_MULTIPLIER_DISABLED", decision.reason)
 
-    def test_no_signal_when_upper_trend_is_down(self) -> None:
-        with patch(
-            "pybot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
-            return_value=("DOWN", 100.0, 101.0, 80),
+    def test_enter_short_when_upper_trend_is_down(self) -> None:
+        short_strategy = dict(self.strategy)
+        short_strategy["swing_low_lookback_bars"] = 6
+        short_context = EmaMarketContext(
+            closes=[101.5, 101.2, 100.8, 100.5, 100.2, 100.0, 99.8],
+            highs=[102.0, 101.7, 101.3, 100.9, 100.6, 100.3, 100.1],
+            lows=[101.0, 100.8, 100.4, 100.1, 99.9, 99.7, 99.5],
+            ema_fast_by_bar=[101.3, 101.0, 100.7, 100.4, 100.2, 100.1, 100.0],
+            ema_fast=100.0,
+            ema_slow=101.0,
+            entry_price=99.8,
+            previous_close=100.0,
+            previous_ema_fast=100.1,
+        )
+        with (
+            patch(
+                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.calculate_minimum_bars",
+                return_value=1,
+            ),
+            patch(
+                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
+                return_value=("DOWN", 99.0, 100.0, 80),
+            ),
+            patch(
+                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.build_ema_market_context",
+                return_value=short_context,
+            ),
+            patch(
+                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.atr_series",
+                return_value=[0.2],
+            ),
+            patch(
+                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.rsi_series",
+                return_value=[45.0],
+            ),
         ):
             decision = evaluate_ema_trend_pullback_15m_v0(
-                bars=self.bars,
-                strategy=self.strategy,
+                bars=self.bars[:7],
+                strategy=short_strategy,
                 risk=self.risk,
                 exit=self.exit,
                 execution=self.execution,
             )
 
-        self.assertEqual("NO_SIGNAL", decision.type)
-        self.assertEqual("UPPER_TREND_FILTER_FAILED", decision.reason)
+        self.assertEqual("ENTER", decision.type)
+        self.assertEqual("SHORT", decision.diagnostics["entry_direction"])
+        self.assertGreater(decision.stop_price, decision.entry_price)
+        self.assertLess(decision.take_profit_price, decision.entry_price)
 
     def test_no_signal_when_upper_trend_is_unavailable(self) -> None:
         with patch(

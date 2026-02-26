@@ -11,7 +11,7 @@ def _build_base_config() -> dict:
         "enabled": True,
         "network": "mainnet-beta",
         "pair": "SOL/USDC",
-        "direction": "LONG_ONLY",
+        "direction": "LONG",
         "signal_timeframe": "2h",
         "strategy": {
             "name": "ema_trend_pullback_v0",
@@ -87,7 +87,7 @@ class ConfigSchemaTest(unittest.TestCase):
             {
                 "model_id": "core_long_v0",
                 "enabled": True,
-                "direction": "LONG_ONLY",
+                "direction": "LONG",
                 "wallet_key_path": "secrets/wallet.long.enc.json",
                 "strategy": payload["strategy"],
                 "risk": payload["risk"],

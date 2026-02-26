@@ -14,9 +14,12 @@ from pybot.domain.model.types import (
     StrategyDecision,
 )
 from pybot.domain.risk.swing_low_stop import (
+    calculate_swing_high,
     calculate_swing_low,
     calculate_take_profit_price,
+    calculate_take_profit_price_for_short,
     tighten_stop_for_long,
+    tighten_stop_for_short,
 )
 from pybot.domain.strategy.shared.decision_builders import build_entry_signal, build_no_signal
 from pybot.domain.strategy.shared.market_context import (
@@ -31,8 +34,10 @@ MAX_DISTANCE_FROM_EMA_FAST_PCT = 0.9
 # 15mでは過小ストップを除外するため下限を設定
 MIN_STOP_DISTANCE_PCT = 0.3
 RSI_PERIOD = 14
-RSI_LOWER_BOUND = 50
-RSI_UPPER_BOUND = 68
+RSI_LONG_LOWER_BOUND = 50
+RSI_LONG_UPPER_BOUND = 68
+RSI_SHORT_LOWER_BOUND = 32
+RSI_SHORT_UPPER_BOUND = 50
 ATR_PERIOD = 14
 ATR_STOP_MULTIPLIER = 1.5
 UPPER_TREND_TIMEFRAME_MINUTES = 240
@@ -160,15 +165,6 @@ def evaluate_ema_trend_pullback_15m_v0(
             diagnostics=diagnostics,
         )
 
-    if ema_fast <= ema_slow:
-        return build_no_signal(
-            f"NO_SIGNAL: trend filter failed (EMA{strategy['ema_fast_period']}={ema_fast:.4f} <= EMA{strategy['ema_slow_period']}={ema_slow:.4f})",
-            "EMA_TREND_FILTER_FAILED",
-            ema_fast=ema_fast,
-            ema_slow=ema_slow,
-            diagnostics=diagnostics,
-        )
-
     upper_trend_state, upper_ema_fast, upper_ema_slow, upper_bars_count = _evaluate_upper_timeframe_trend(bars)
     diagnostics["upper_trend_timeframe"] = "4h"
     diagnostics["upper_trend_bars_count"] = upper_bars_count
@@ -183,14 +179,28 @@ def evaluate_ema_trend_pullback_15m_v0(
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
-    if upper_trend_state == "DOWN":
+    entry_direction = "LONG" if upper_trend_state == "UP" else "SHORT"
+    diagnostics["entry_direction"] = entry_direction
+    if entry_direction == "LONG" and ema_fast <= ema_slow:
         return build_no_signal(
             (
-                "NO_SIGNAL: upper timeframe trend filter failed "
-                f"(4h EMA{UPPER_TREND_EMA_FAST_PERIOD}={upper_ema_fast:.4f} <= "
-                f"EMA{UPPER_TREND_EMA_SLOW_PERIOD}={upper_ema_slow:.4f})"
+                "NO_SIGNAL: trend filter failed for long "
+                f"(EMA{strategy['ema_fast_period']}={ema_fast:.4f} <= "
+                f"EMA{strategy['ema_slow_period']}={ema_slow:.4f})"
             ),
-            "UPPER_TREND_FILTER_FAILED",
+            "EMA_TREND_FILTER_FAILED",
+            ema_fast=ema_fast,
+            ema_slow=ema_slow,
+            diagnostics=diagnostics,
+        )
+    if entry_direction == "SHORT" and ema_fast >= ema_slow:
+        return build_no_signal(
+            (
+                "NO_SIGNAL: trend filter failed for short "
+                f"(EMA{strategy['ema_fast_period']}={ema_fast:.4f} >= "
+                f"EMA{strategy['ema_slow_period']}={ema_slow:.4f})"
+            ),
+            "EMA_SHORT_TREND_FILTER_FAILED",
             ema_fast=ema_fast,
             ema_slow=ema_slow,
             diagnostics=diagnostics,
@@ -202,40 +212,69 @@ def evaluate_ema_trend_pullback_15m_v0(
     for index in range(pullback_start_index, latest_index):
         bar_ema_fast = ema_fast_by_bar[index]
         low = lows[index]
+        high = highs[index]
         close = closes[index]
         if bar_ema_fast is None or math.isnan(bar_ema_fast):
             continue
-        if low <= bar_ema_fast or close < bar_ema_fast:
-            has_pullback = True
-            break
+        if entry_direction == "LONG":
+            if low <= bar_ema_fast or close < bar_ema_fast:
+                has_pullback = True
+                break
+        else:
+            if high >= bar_ema_fast or close > bar_ema_fast:
+                has_pullback = True
+                break
 
     diagnostics["pullback_found"] = has_pullback
     if not has_pullback:
+        no_signal_summary = "NO_SIGNAL: pullback condition not found"
+        no_signal_reason = "PULLBACK_NOT_FOUND"
+        if entry_direction == "SHORT":
+            no_signal_summary = "NO_SIGNAL: short pullback condition not found"
+            no_signal_reason = "SHORT_PULLBACK_NOT_FOUND"
         return build_no_signal(
-            "NO_SIGNAL: pullback condition not found",
-            "PULLBACK_NOT_FOUND",
+            no_signal_summary,
+            no_signal_reason,
             ema_fast=ema_fast,
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
 
-    has_reclaim = entry_price > ema_fast
+    has_reclaim = entry_price > ema_fast if entry_direction == "LONG" else entry_price < ema_fast
     diagnostics["reclaim_found"] = has_reclaim
     if not has_reclaim:
+        no_signal_summary = (
+            f"NO_SIGNAL: reclaim condition not found (close={entry_price:.4f} <= EMA{strategy['ema_fast_period']}={ema_fast:.4f})"
+        )
+        no_signal_reason = "RECLAIM_NOT_FOUND"
+        if entry_direction == "SHORT":
+            no_signal_summary = (
+                f"NO_SIGNAL: short reclaim condition not found "
+                f"(close={entry_price:.4f} >= EMA{strategy['ema_fast_period']}={ema_fast:.4f})"
+            )
+            no_signal_reason = "SHORT_RECLAIM_NOT_FOUND"
         return build_no_signal(
-            f"NO_SIGNAL: reclaim condition not found (close={entry_price:.4f} <= EMA{strategy['ema_fast_period']}={ema_fast:.4f})",
-            "RECLAIM_NOT_FOUND",
+            no_signal_summary,
+            no_signal_reason,
             ema_fast=ema_fast,
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
 
-    distance_from_ema_fast_pct = ((entry_price - ema_fast) / entry_price) * 100
+    if entry_direction == "LONG":
+        distance_from_ema_fast_pct = ((entry_price - ema_fast) / entry_price) * 100
+    else:
+        distance_from_ema_fast_pct = ((ema_fast - entry_price) / entry_price) * 100
     diagnostics["distance_from_ema_fast_pct"] = distance_from_ema_fast_pct
     if distance_from_ema_fast_pct > MAX_DISTANCE_FROM_EMA_FAST_PCT:
+        no_signal_summary = "NO_SIGNAL: entry is too far from EMA fast"
+        no_signal_reason = "CHASE_ENTRY_TOO_FAR_FROM_EMA"
+        if entry_direction == "SHORT":
+            no_signal_summary = "NO_SIGNAL: short entry is too far from EMA fast"
+            no_signal_reason = "SHORT_CHASE_ENTRY_TOO_FAR_FROM_EMA"
         return build_no_signal(
-            "NO_SIGNAL: entry is too far from EMA fast",
-            "CHASE_ENTRY_TOO_FAR_FROM_EMA",
+            no_signal_summary,
+            no_signal_reason,
             ema_fast=ema_fast,
             ema_slow=ema_slow,
             diagnostics=diagnostics,
@@ -252,7 +291,7 @@ def evaluate_ema_trend_pullback_15m_v0(
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
-    if rsi_value < RSI_LOWER_BOUND:
+    if entry_direction == "LONG" and rsi_value < RSI_LONG_LOWER_BOUND:
         return build_no_signal(
             "NO_SIGNAL: RSI is too low",
             "RSI_TOO_LOW",
@@ -260,7 +299,7 @@ def evaluate_ema_trend_pullback_15m_v0(
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
-    if rsi_value > RSI_UPPER_BOUND:
+    if entry_direction == "LONG" and rsi_value > RSI_LONG_UPPER_BOUND:
         return build_no_signal(
             "NO_SIGNAL: RSI is too high",
             "RSI_TOO_HIGH",
@@ -268,15 +307,27 @@ def evaluate_ema_trend_pullback_15m_v0(
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
+    if entry_direction == "SHORT" and rsi_value < RSI_SHORT_LOWER_BOUND:
+        return build_no_signal(
+            "NO_SIGNAL: RSI is too low for short",
+            "SHORT_RSI_TOO_LOW",
+            ema_fast=ema_fast,
+            ema_slow=ema_slow,
+            diagnostics=diagnostics,
+        )
+    if entry_direction == "SHORT" and rsi_value > RSI_SHORT_UPPER_BOUND:
+        return build_no_signal(
+            "NO_SIGNAL: RSI is too high for short",
+            "SHORT_RSI_TOO_HIGH",
+            ema_fast=ema_fast,
+            ema_slow=ema_slow,
+            diagnostics=diagnostics,
+        )
 
-    swing_low_stop = calculate_swing_low(lows, strategy["swing_low_lookback_bars"])
-    stop_candidate = tighten_stop_for_long(entry_price, swing_low_stop, risk["max_loss_per_trade_pct"])
     atr_values = atr_series(highs, lows, closes, ATR_PERIOD)
     latest_atr = atr_values[-1] if atr_values else None
     atr_pct = ((latest_atr / entry_price) * 100) if latest_atr is not None else None
     volatility_regime, position_size_multiplier = _resolve_position_size_multiplier(atr_pct, risk)
-    diagnostics["swing_low_stop"] = swing_low_stop
-    diagnostics["stop_candidate"] = stop_candidate
     diagnostics["atr"] = latest_atr
     diagnostics["atr_pct"] = atr_pct
     diagnostics["volatility_regime"] = volatility_regime
@@ -289,20 +340,41 @@ def evaluate_ema_trend_pullback_15m_v0(
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
-    if latest_atr is not None and math.isfinite(latest_atr) and latest_atr > 0:
-        atr_stop = entry_price - latest_atr * ATR_STOP_MULTIPLIER
-        if atr_stop < stop_candidate:
-            return build_no_signal(
-                "NO_SIGNAL: ATR stop conflicts with max loss cap",
-                "ATR_STOP_CONFLICT_MAX_LOSS",
-                ema_fast=ema_fast,
-                ema_slow=ema_slow,
-                diagnostics=diagnostics,
-            )
+    if entry_direction == "LONG":
+        swing_low_stop = calculate_swing_low(lows, strategy["swing_low_lookback_bars"])
+        stop_candidate = tighten_stop_for_long(entry_price, swing_low_stop, risk["max_loss_per_trade_pct"])
+        diagnostics["swing_low_stop"] = swing_low_stop
+        diagnostics["stop_candidate"] = stop_candidate
+        if latest_atr is not None and math.isfinite(latest_atr) and latest_atr > 0:
+            atr_stop = entry_price - latest_atr * ATR_STOP_MULTIPLIER
+            if atr_stop < stop_candidate:
+                return build_no_signal(
+                    "NO_SIGNAL: ATR stop conflicts with max loss cap",
+                    "ATR_STOP_CONFLICT_MAX_LOSS",
+                    ema_fast=ema_fast,
+                    ema_slow=ema_slow,
+                    diagnostics=diagnostics,
+                )
+        final_stop = stop_candidate
+    else:
+        swing_high_stop = calculate_swing_high(highs, strategy["swing_low_lookback_bars"])
+        stop_candidate = tighten_stop_for_short(entry_price, swing_high_stop, risk["max_loss_per_trade_pct"])
+        diagnostics["swing_high_stop"] = swing_high_stop
+        diagnostics["stop_candidate"] = stop_candidate
+        if latest_atr is not None and math.isfinite(latest_atr) and latest_atr > 0:
+            atr_stop = entry_price + latest_atr * ATR_STOP_MULTIPLIER
+            if atr_stop > stop_candidate:
+                return build_no_signal(
+                    "NO_SIGNAL: ATR stop conflicts with max loss cap",
+                    "ATR_STOP_CONFLICT_MAX_LOSS",
+                    ema_fast=ema_fast,
+                    ema_slow=ema_slow,
+                    diagnostics=diagnostics,
+                )
+        final_stop = stop_candidate
 
-    final_stop = stop_candidate
     diagnostics["final_stop"] = final_stop
-    if final_stop >= entry_price:
+    if entry_direction == "LONG" and final_stop >= entry_price:
         return build_no_signal(
             "NO_SIGNAL: stop is not below entry",
             "INVALID_RISK_STRUCTURE",
@@ -310,26 +382,52 @@ def evaluate_ema_trend_pullback_15m_v0(
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
-
-    stop_distance_pct = ((entry_price - final_stop) / entry_price) * 100
-    diagnostics["stop_distance_pct"] = stop_distance_pct
-    if stop_distance_pct < MIN_STOP_DISTANCE_PCT:
+    if entry_direction == "SHORT" and final_stop <= entry_price:
         return build_no_signal(
-            "NO_SIGNAL: stop is too tight",
-            "STOP_TOO_TIGHT",
+            "NO_SIGNAL: short stop is not above entry",
+            "INVALID_SHORT_RISK_STRUCTURE",
             ema_fast=ema_fast,
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
 
-    take_profit_price = calculate_take_profit_price(
-        entry_price, final_stop, exit["take_profit_r_multiple"]
-    )
+    if entry_direction == "LONG":
+        stop_distance_pct = ((entry_price - final_stop) / entry_price) * 100
+    else:
+        stop_distance_pct = ((final_stop - entry_price) / entry_price) * 100
+    diagnostics["stop_distance_pct"] = stop_distance_pct
+    if stop_distance_pct < MIN_STOP_DISTANCE_PCT:
+        no_signal_summary = "NO_SIGNAL: stop is too tight"
+        no_signal_reason = "STOP_TOO_TIGHT"
+        if entry_direction == "SHORT":
+            no_signal_summary = "NO_SIGNAL: short stop is too tight"
+            no_signal_reason = "SHORT_STOP_TOO_TIGHT"
+        return build_no_signal(
+            no_signal_summary,
+            no_signal_reason,
+            ema_fast=ema_fast,
+            ema_slow=ema_slow,
+            diagnostics=diagnostics,
+        )
+
+    if entry_direction == "LONG":
+        take_profit_price = calculate_take_profit_price(
+            entry_price,
+            final_stop,
+            exit["take_profit_r_multiple"],
+        )
+    else:
+        take_profit_price = calculate_take_profit_price_for_short(
+            entry_price,
+            final_stop,
+            exit["take_profit_r_multiple"],
+        )
     diagnostics["take_profit_price"] = take_profit_price
 
     return build_entry_signal(
         (
             "ENTER: 15m trend/pullback/reclaim with 4h trend gate, "
+            f"direction={entry_direction}, "
             f"entry={entry_price:.4f}, stop={final_stop:.4f}, tp={take_profit_price:.4f}, "
             f"rsi={rsi_value:.2f}, regime={volatility_regime}, size_x={position_size_multiplier:.2f}"
         ),

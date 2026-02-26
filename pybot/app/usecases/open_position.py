@@ -19,7 +19,7 @@ from pybot.app.usecases.usecase_utils import (
     to_error_message,
 )
 from pybot.domain.model.trade_state import assert_trade_state_transition
-from pybot.domain.model.types import BotConfig, EntrySignalDecision, TradeRecord, TradeState
+from pybot.domain.model.types import BotConfig, Direction, EntrySignalDecision, TradeRecord, TradeState
 from pybot.domain.risk.swing_low_stop import (
     calculate_max_loss_stop_price,
     calculate_max_loss_stop_price_for_short,
@@ -46,6 +46,7 @@ class OpenPositionInput:
     signal: EntrySignalDecision
     bar_close_time_iso: str
     model_id: str
+    entry_direction: Direction | None = None
 
 
 @dataclass
@@ -88,7 +89,7 @@ def _build_plan_summary(
     stop_price: float,
     take_profit_price: float,
 ) -> str:
-    action = "Buy SOL" if direction == "LONG_ONLY" else "Sell SOL"
+    action = "Buy SOL" if direction == "LONG" else "Sell SOL"
     return (
         f"{action} with {effective_notional_usdc} USDC "
         f"(base={base_notional_usdc}, regime={volatility_regime}, size_x={position_size_multiplier:.2f}), "
@@ -108,7 +109,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
     bar_close_time_iso = input_data.bar_close_time_iso
     model_id = input_data.model_id
 
-    direction = config["direction"]
+    direction = input_data.entry_direction or config["direction"]
     trade_id = build_trade_id(bar_close_time_iso, model_id, direction)
     now = now_iso()
     configured_min_notional_usdc = float(config["execution"]["min_notional_usdc"])
@@ -119,7 +120,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
     base_notional_usdc = 0.0
 
     try:
-        if direction == "LONG_ONLY":
+        if direction == "LONG":
             available_quote_usdc = float(execution.get_available_quote_usdc(config["pair"]))
             base_notional_usdc = round_to(available_quote_usdc, 6)
         else:
@@ -282,7 +283,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
 
     entry_side: SwapSide = "BUY_SOL_WITH_USDC"
     amount_atomic = int(round(effective_notional_usdc * USDC_ATOMIC_MULTIPLIER))
-    if direction == "SHORT_ONLY":
+    if direction == "SHORT":
         sell_quantity_sol = effective_notional_usdc / mark_price
         amount_atomic = int(sell_quantity_sol * SOL_ATOMIC_MULTIPLIER)
         entry_side = "SELL_SOL_FOR_USDC"
@@ -554,7 +555,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
     if confirmed_before_balances is not None and after_balances is not None:
         before_quote, before_base = confirmed_before_balances
         after_quote, after_base = after_balances
-        if direction == "LONG_ONLY":
+        if direction == "LONG":
             observed_quote_spent = max(round_to(before_quote - after_quote, 6), 0.0)
             observed_base_received = max(round_to(after_base - before_base, 9), 0.0)
             if observed_quote_spent > 0:
@@ -575,7 +576,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
     )
 
     swing_stop = float(signal.stop_price)
-    if direction == "LONG_ONLY":
+    if direction == "LONG":
         pct_stop = calculate_max_loss_stop_price(resolved_entry_price, config["risk"]["max_loss_per_trade_pct"])
         final_stop = tighten_stop_for_long(
             resolved_entry_price,

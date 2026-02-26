@@ -58,7 +58,7 @@ def _default_long_config(mode: str) -> BotConfig:
             "enabled": True,
             "network": "mainnet-beta",
             "pair": "SOL/USDC",
-            "direction": "LONG_ONLY",
+            "direction": "LONG",
             "signal_timeframe": "2h",
             "strategy": {
                 "name": "ema_trend_pullback_v0",
@@ -100,7 +100,7 @@ def _default_short_config(mode: str) -> BotConfig:
             "enabled": True,
             "network": "mainnet-beta",
             "pair": "SOL/USDC",
-            "direction": "SHORT_ONLY",
+            "direction": "SHORT",
             "signal_timeframe": "2h",
             "strategy": {
                 "name": "storm_short_v0",
@@ -142,7 +142,7 @@ def _default_long_15m_config(mode: str) -> BotConfig:
             "enabled": False,
             "network": "mainnet-beta",
             "pair": "SOL/USDC",
-            "direction": "LONG_ONLY",
+            "direction": "LONG",
             "signal_timeframe": "15m",
             "strategy": {
                 "name": "ema_trend_pullback_15m_v0",

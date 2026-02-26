@@ -2,7 +2,7 @@
   "enabled": true,
   "network": "mainnet-beta",
   "pair": "SOL/USDC",
-  "direction": "SHORT_ONLY",
+  "direction": "SHORT",
   "signal_timeframe": "2h",
   "strategy": {
     "name": "storm_short_v0",

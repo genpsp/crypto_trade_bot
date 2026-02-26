@@ -72,7 +72,7 @@ def _build_config() -> BotConfig:
         "enabled": True,
         "network": "mainnet-beta",
         "pair": "SOL/USDC",
-        "direction": "LONG_ONLY",
+        "direction": "LONG",
         "signal_timeframe": "2h",
         "strategy": {
             "name": "ema_trend_pullback_v0",
@@ -107,7 +107,7 @@ def _build_open_trade() -> TradeRecord:
         "model_id": "core_long_v0",
         "bar_close_time_iso": "2026-02-22T20:00:00Z",
         "pair": "SOL/USDC",
-        "direction": "LONG_ONLY",
+        "direction": "LONG",
         "state": "CONFIRMED",
         "config_version": 2,
         "execution": {"entry_tx_signature": "entry_sig_1"},
@@ -471,7 +471,7 @@ class ClosePositionRetryTest(unittest.TestCase):
         trade = _build_open_trade()
         trade["trade_id"] = "2026-02-23T18:00:00Z_storm_short_v0_SHORT"
         trade["model_id"] = "storm_short_v0"
-        trade["direction"] = "SHORT_ONLY"
+        trade["direction"] = "SHORT"
         trade["position"] = {
             "status": "OPEN",
             "quantity_sol": 1.129395136,

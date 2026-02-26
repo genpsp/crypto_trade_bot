@@ -230,7 +230,7 @@ def _build_config() -> BotConfig:
         "enabled": True,
         "network": "mainnet-beta",
         "pair": "SOL/USDC",
-        "direction": "LONG_ONLY",
+        "direction": "LONG",
         "signal_timeframe": "2h",
         "strategy": {
             "name": "ema_trend_pullback_v0",
@@ -473,7 +473,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                 swap_url,
             ):
                 config = _build_config()
-                config["direction"] = "SHORT_ONLY"
+                config["direction"] = "SHORT"
                 config["strategy"] = {
                     "name": "storm_short_v0",
                     "ema_fast_period": 12,
@@ -515,7 +515,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                 self.assertEqual("OPENED", opened.status)
 
                 trade = persistence.trades[opened.trade_id]
-                self.assertEqual("SHORT_ONLY", trade["direction"])
+                self.assertEqual("SHORT", trade["direction"])
                 self.assertGreater(float(trade["position"]["quote_amount_usdc"]), 0.0)
 
                 close_price = float(trade["position"]["take_profit_price"])
@@ -560,7 +560,7 @@ class TradeExecutionApiTest(unittest.TestCase):
             "model_id": "core_long_v0",
             "bar_close_time_iso": "2026-02-22T20:00:00Z",
             "pair": "SOL/USDC",
-            "direction": "LONG_ONLY",
+            "direction": "LONG",
             "state": "CONFIRMED",
             "config_version": 2,
             "execution": {"entry_tx_signature": "entry_sig_1"},
@@ -1005,7 +1005,7 @@ class TradeExecutionApiTest(unittest.TestCase):
 
     def test_open_position_prefers_balance_snapshot_for_short_quote_amount(self) -> None:
         config = _build_config()
-        config["direction"] = "SHORT_ONLY"
+        config["direction"] = "SHORT"
         config["strategy"] = {
             "name": "storm_short_v0",
             "ema_fast_period": 12,
@@ -1087,7 +1087,7 @@ class TradeExecutionApiTest(unittest.TestCase):
 
         self.assertEqual("OPENED", opened.status)
         trade = persistence.trades[opened.trade_id]
-        self.assertEqual("SHORT_ONLY", trade["direction"])
+        self.assertEqual("SHORT", trade["direction"])
         self.assertEqual(118.371078, float(trade["position"]["quote_amount_usdc"]))
 
     def test_open_position_persists_entry_fee_lamports_when_supported(self) -> None:
@@ -1173,7 +1173,7 @@ class TradeExecutionApiTest(unittest.TestCase):
             "model_id": "core_long_v0",
             "bar_close_time_iso": "2026-02-22T20:00:00Z",
             "pair": "SOL/USDC",
-            "direction": "LONG_ONLY",
+            "direction": "LONG",
             "state": "CONFIRMED",
             "config_version": 2,
             "execution": {"entry_tx_signature": "entry_sig_1"},

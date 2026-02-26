@@ -66,8 +66,8 @@ class FirestoreConfigRepository:
         if not isinstance(enabled, bool):
             raise RuntimeError(f"models/{model_id}.enabled must be boolean")
         direction = model_data.get("direction")
-        if direction not in ("LONG_ONLY", "SHORT_ONLY"):
-            raise RuntimeError(f"models/{model_id}.direction must be LONG_ONLY or SHORT_ONLY")
+        if direction not in ("LONG", "SHORT"):
+            raise RuntimeError(f"models/{model_id}.direction must be LONG or SHORT")
         mode = model_data.get("mode")
         if mode not in ("PAPER", "LIVE"):
             raise RuntimeError(f"models/{model_id}.mode must be PAPER or LIVE")
