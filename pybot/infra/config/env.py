@@ -10,6 +10,7 @@ class Env:
     REDIS_URL: str
     GOOGLE_APPLICATION_CREDENTIALS: str
     WALLET_KEY_PASSPHRASE: str
+    SLACK_WEBHOOK_URL: str | None
 
 
 REQUIRED_ENV_KEYS = (
@@ -18,6 +19,13 @@ REQUIRED_ENV_KEYS = (
     "GOOGLE_APPLICATION_CREDENTIALS",
     "WALLET_KEY_PASSPHRASE",
 )
+
+def _load_optional_str(source: dict[str, str], key: str) -> str | None:
+    raw = source.get(key)
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    return stripped if stripped else None
 
 
 def load_env(source: dict[str, str] | None = None) -> Env:
@@ -35,4 +43,5 @@ def load_env(source: dict[str, str] | None = None) -> Env:
         REDIS_URL=env_source["REDIS_URL"],
         GOOGLE_APPLICATION_CREDENTIALS=env_source["GOOGLE_APPLICATION_CREDENTIALS"],
         WALLET_KEY_PASSPHRASE=env_source["WALLET_KEY_PASSPHRASE"],
+        SLACK_WEBHOOK_URL=_load_optional_str(env_source, "SLACK_WEBHOOK_URL"),
     )

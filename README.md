@@ -19,7 +19,7 @@ Node.js 実装を Python に全面移行した Solana 現物自動売買Bot で�
 - Docker / Docker Compose
 - Firestore サービスアカウントJSON
 
-## 2. 環境変数（4個のみ）
+## 2. 環境変数（必須4 + 任意1）
 
 `.env.example` を `.env` にコピーして設定:
 
@@ -27,9 +27,16 @@ Node.js 実装を Python に全面移行した Solana 現物自動売買Bot で�
 - `REDIS_URL`
 - `GOOGLE_APPLICATION_CREDENTIALS`
 - `WALLET_KEY_PASSPHRASE`
+- `SLACK_WEBHOOK_URL`（任意: 未設定なら通知無効）
 
 `GOOGLE_APPLICATION_CREDENTIALS` は相対/絶対パスどちらでも可。  
 相対パスは `docker-compose.yml` があるプロジェクトルート基準です。
+
+Slack通知の対象:
+- 売買エラー（`FAILED` と、実行系 `SKIPPED`）
+- 同一モデルの連続 `FAILED`（デフォルト3回）
+- run_cycle 停滞（デフォルト10分）
+- 起動 / 停止
 
 ## 3. Firestore 事前準備
 
@@ -137,9 +144,26 @@ docker compose up --build
 
 1. VPSにこのリポジトリを配置
 2. Docker / Docker Compose をインストール
-3. `.env` と認証ファイルを配置
+3. 認証ファイル（`secrets/firebase-service-account.json` とウォレット鍵）を配置
 4. `docker compose up -d --build`
 5. Firestoreコレクションを監視
+
+### 10.1 GitHub Actions で環境変数を管理（推奨）
+
+`.env` をVPSに手作業で置かず、`Deploy Bot` ワークフローから環境変数を直接注入できます。  
+GitHub Secrets に以下を登録してください。
+
+- `VPS_HOST`
+- `VPS_USER`
+- `VPS_SSH_KEY`
+- `GOOGLE_APPLICATION_CREDENTIALS`
+- `WALLET_KEY_PASSPHRASE`
+- `SLACK_WEBHOOK_URL`（任意）
+
+`SOLANA_RPC_URL` は `docker-compose.yml` で `https://api.mainnet-beta.solana.com` 固定です。
+通常、`GOOGLE_APPLICATION_CREDENTIALS` には `/run/secrets/firebase-service-account.json` を設定します。
+
+この設定で `main` push / 手動実行時に、Secrets がSSH経由でVPSへ渡され、そのまま `docker compose up -d --build` が実行されます。
 
 ## 11. Research（分析専用）
 

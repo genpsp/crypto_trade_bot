@@ -11,6 +11,7 @@ from pybot.infra.config.schema import parse_config
 GLOBAL_CONTROL_COLLECTION_ID = "control"
 GLOBAL_CONTROL_DOC_ID = "global"
 GLOBAL_CONTROL_PAUSE_FIELD = "pause_all"
+_FALLBACK_LONG_DIRECTION_STRATEGY = "ema_trend_pullback_15m_v0"
 
 
 @dataclass(frozen=True)
@@ -61,13 +62,37 @@ class FirestoreConfigRepository:
 
         return model_data, config_payload
 
-    def _parse_model_metadata(self, model_id: str, model_data: dict[str, Any]) -> ModelMetadata:
+    @staticmethod
+    def _extract_strategy_name(config_payload: dict[str, Any] | None) -> str | None:
+        if not isinstance(config_payload, dict):
+            return None
+        strategy_payload = config_payload.get("strategy")
+        if not isinstance(strategy_payload, dict):
+            return None
+        strategy_name = strategy_payload.get("name")
+        if isinstance(strategy_name, str):
+            return strategy_name
+        return None
+
+    def _parse_model_metadata(
+        self,
+        model_id: str,
+        model_data: dict[str, Any],
+        config_payload: dict[str, Any] | None = None,
+    ) -> ModelMetadata:
         enabled = model_data.get("enabled")
         if not isinstance(enabled, bool):
             raise RuntimeError(f"models/{model_id}.enabled must be boolean")
         direction = model_data.get("direction")
         if direction not in ("LONG", "SHORT"):
-            raise RuntimeError(f"models/{model_id}.direction must be LONG or SHORT")
+            strategy_name = self._extract_strategy_name(config_payload)
+            if direction is None and strategy_name == _FALLBACK_LONG_DIRECTION_STRATEGY:
+                direction = "LONG"
+            else:
+                raise RuntimeError(
+                    f"models/{model_id}.direction must be LONG or SHORT "
+                    f"(strategy={strategy_name})"
+                )
         mode = model_data.get("mode")
         if mode not in ("PAPER", "LIVE"):
             raise RuntimeError(f"models/{model_id}.mode must be PAPER or LIVE")
@@ -87,18 +112,12 @@ class FirestoreConfigRepository:
         )
 
     def get_model_metadata(self, model_id: str) -> ModelMetadata:
-        model_ref = self.firestore.collection("models").document(model_id)
-        model_snapshot = model_ref.get()
-        if not model_snapshot.exists:
-            raise RuntimeError(f"models/{model_id} document is missing")
-        model_data = model_snapshot.to_dict()
-        if not isinstance(model_data, dict):
-            raise RuntimeError(f"models/{model_id} payload is invalid")
-        return self._parse_model_metadata(model_id, model_data)
+        model_data, config_payload = self._load_model_payload(model_id)
+        return self._parse_model_metadata(model_id, model_data, config_payload)
 
     def get_current_config(self, model_id: str) -> BotConfig:
         model_data, config_payload = self._load_model_payload(model_id)
-        model_metadata = self._parse_model_metadata(model_id, model_data)
+        model_metadata = self._parse_model_metadata(model_id, model_data, config_payload)
 
         normalized: dict[str, Any] = dict(config_payload)
         normalized.pop("enabled", None)

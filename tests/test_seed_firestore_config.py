@@ -109,6 +109,16 @@ class SeedGlobalControlDefaultsTest(unittest.TestCase):
         self.assertTrue(changed)
         self.assertFalse(store[self._control_doc_path()][seed_firestore_config.GLOBAL_CONTROL_PAUSE_FIELD])
 
+    def test_model_doc_payload_omits_direction_for_15m_strategy(self) -> None:
+        config = seed_firestore_config._default_long_15m_config("LIVE")
+        payload = seed_firestore_config._build_model_doc_payload("core_long_15m_v0", config)
+        self.assertNotIn("direction", payload)
+
+    def test_model_doc_payload_keeps_direction_for_non_15m_strategy(self) -> None:
+        config = seed_firestore_config._default_long_config("LIVE")
+        payload = seed_firestore_config._build_model_doc_payload("core_long_v0", config)
+        self.assertEqual("LONG", payload["direction"])
+
 
 if __name__ == "__main__":
     unittest.main()

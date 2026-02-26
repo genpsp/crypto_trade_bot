@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
+import threading
 from typing import Callable
 
 from google.cloud.firestore import Client as FirestoreClient
@@ -15,6 +17,7 @@ from pybot.adapters.market_data.ohlcv_provider import OhlcvProvider
 from pybot.adapters.persistence.firestore_repo import FirestoreRepository
 from pybot.app.ports.execution_port import ExecutionPort
 from pybot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
+from pybot.infra.alerting import SlackAlertConfig, SlackNotifier, is_execution_error_result
 from pybot.infra.config.env import load_env
 from pybot.infra.config.firestore_config_repo import (
     GLOBAL_CONTROL_COLLECTION_ID,
@@ -24,6 +27,10 @@ from pybot.infra.config.firestore_config_repo import (
 )
 from pybot.infra.logging.logger import create_logger
 from pybot.infra.scheduler.cron_cycle import CronController, create_cron_cycle
+
+CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 3
+STALE_CYCLE_ALERT_MINUTES = 10
+DUPLICATE_ALERT_SUPPRESSION_SECONDS = 300
 
 
 @dataclass
@@ -99,6 +106,21 @@ def bootstrap() -> AppRuntime:
     warned_no_models = False
     warned_no_enabled_models = False
     global_pause_state: bool | None = None
+    notifier = SlackNotifier(
+        config=SlackAlertConfig(
+            webhook_url=env.SLACK_WEBHOOK_URL,
+            consecutive_failure_threshold=CONSECUTIVE_FAILURE_ALERT_THRESHOLD,
+            stale_minutes=STALE_CYCLE_ALERT_MINUTES,
+            duplicate_suppression_seconds=DUPLICATE_ALERT_SUPPRESSION_SECONDS,
+        ),
+        logger=logger,
+    )
+    failure_streaks_by_model: dict[str, int] = {}
+    last_cycle_completed_at = datetime.now(tz=UTC)
+    stale_cycle_alert_active = False
+    cycle_state_lock = threading.Lock()
+    watchdog_stop_event = threading.Event()
+    watchdog_thread: threading.Thread | None = None
 
     def _build_runtime_summary(spec: ModelRuntimeSpec) -> dict[str, str]:
         return {
@@ -108,6 +130,80 @@ def bootstrap() -> AppRuntime:
             "strategy": spec.strategy,
             "wallet_key_path": spec.wallet_key_path,
         }
+
+    def _current_runtime_summaries() -> list[dict[str, str]]:
+        return [_build_runtime_summary(runtime_specs[mid]) for mid in sorted(runtime_specs.keys())]
+
+    def _mark_cycle_completed() -> None:
+        nonlocal last_cycle_completed_at, stale_cycle_alert_active
+        with cycle_state_lock:
+            last_cycle_completed_at = datetime.now(tz=UTC)
+            recovered = stale_cycle_alert_active
+            stale_cycle_alert_active = False
+        if recovered:
+            notifier.notify_stale_cycle_recovered(model_ids=sorted(runtime_specs.keys()))
+
+    def _apply_failure_streak_and_alert(result: dict[str, str | None], model_id: str) -> None:
+        run_result = str(result.get("result") or "")
+        summary = str(result.get("summary") or "")
+        run_id = result.get("run_id")
+        trade_id = result.get("trade_id")
+
+        if is_execution_error_result(run_result, summary):
+            notifier.notify_trade_error(
+                model_id=model_id,
+                result=run_result,
+                summary=summary,
+                run_id=run_id,
+                trade_id=trade_id,
+            )
+
+        threshold = CONSECUTIVE_FAILURE_ALERT_THRESHOLD
+        if run_result == "FAILED":
+            streak = failure_streaks_by_model.get(model_id, 0) + 1
+            failure_streaks_by_model[model_id] = streak
+            if streak >= threshold and (streak == threshold or streak % threshold == 0):
+                notifier.notify_consecutive_failures(
+                    model_id=model_id,
+                    streak=streak,
+                    threshold=threshold,
+                    run_id=run_id,
+                    summary=summary,
+                )
+            return
+
+        previous_streak = failure_streaks_by_model.get(model_id, 0)
+        if previous_streak >= threshold:
+            notifier.notify_failure_streak_recovered(
+                model_id=model_id,
+                previous_streak=previous_streak,
+                latest_result=run_result,
+                summary=summary,
+            )
+        failure_streaks_by_model[model_id] = 0
+
+    def _watchdog_runner() -> None:
+        nonlocal stale_cycle_alert_active
+        threshold_minutes = STALE_CYCLE_ALERT_MINUTES
+        threshold_seconds = threshold_minutes * 60
+        interval_seconds = max(15, min(60, threshold_seconds // 3))
+        if interval_seconds <= 0:
+            interval_seconds = 15
+
+        while not watchdog_stop_event.wait(interval_seconds):
+            if not runtime_specs:
+                continue
+            with cycle_state_lock:
+                elapsed_seconds = int((datetime.now(tz=UTC) - last_cycle_completed_at).total_seconds())
+                should_alert = elapsed_seconds >= threshold_seconds and not stale_cycle_alert_active
+                if should_alert:
+                    stale_cycle_alert_active = True
+            if should_alert:
+                notifier.notify_stale_cycle(
+                    elapsed_seconds=elapsed_seconds,
+                    threshold_minutes=threshold_minutes,
+                    model_ids=sorted(runtime_specs.keys()),
+                )
 
     def _create_runtime_context(spec: ModelRuntimeSpec) -> ModelRuntimeContext:
         return ModelRuntimeContext(
@@ -176,6 +272,7 @@ def bootstrap() -> AppRuntime:
             previous_spec = runtime_specs.get(model_id)
             model_contexts.pop(model_id, None)
             runtime_specs.pop(model_id, None)
+            failure_streaks_by_model.pop(model_id, None)
             changed = True
             logger.info(
                 "model runtime removed",
@@ -272,7 +369,7 @@ def bootstrap() -> AppRuntime:
             global_pause_state = paused
         return paused
 
-    def should_suppress_run_cycle_log(result: dict[str, str]) -> bool:
+    def should_suppress_run_cycle_log(result: dict[str, str | None]) -> bool:
         return result.get("result") == "SKIPPED_ENTRY" and result.get("summary") in (
             "SKIPPED_ENTRY: entry already evaluated for this bar",
             "SKIPPED_ENTRY: idem entry key already exists for this bar",
@@ -289,6 +386,8 @@ def bootstrap() -> AppRuntime:
                 model_id=context.model_id,
             )
         )
+        _apply_failure_streak_and_alert(result, context.model_id)
+        _mark_cycle_completed()
         if should_suppress_run_cycle_log(result):  # type: ignore[arg-type]
             return
         logger.info(
@@ -317,8 +416,6 @@ def bootstrap() -> AppRuntime:
             execute_cycle_for_model(context)
 
     def execute_scheduled_cycle() -> None:
-        from datetime import UTC, datetime
-
         contexts = _refresh_model_contexts()
         paused = _is_runtime_paused()
         now = datetime.now(tz=UTC)
@@ -336,9 +433,10 @@ def bootstrap() -> AppRuntime:
     scheduler: CronController | None = None
 
     def start() -> None:
-        nonlocal scheduler
+        nonlocal scheduler, watchdog_thread
         logger.info("bot startup: run first cycle immediately")
         contexts = _refresh_model_contexts(force_log_runtime_summary=True)
+        notifier.notify_startup(_current_runtime_summaries())
         paused = _is_runtime_paused()
         is_five_minute_window = True
         for context in contexts:
@@ -350,12 +448,22 @@ def bootstrap() -> AppRuntime:
             ):
                 continue
             execute_cycle_for_model(context)
+
+        if notifier.enabled and STALE_CYCLE_ALERT_MINUTES > 0:
+            watchdog_stop_event.clear()
+            watchdog_thread = threading.Thread(target=_watchdog_runner, daemon=True)
+            watchdog_thread.start()
+
         scheduler = create_cron_cycle(execute_scheduled_cycle, logger)
         scheduler.start()
 
     def stop() -> None:
+        notifier.notify_shutdown(reason="shutdown signal received")
         if scheduler is not None:
             scheduler.stop()
+        watchdog_stop_event.set()
+        if watchdog_thread is not None:
+            watchdog_thread.join(timeout=5)
         try:
             redis.close()
         except Exception:
