@@ -137,6 +137,7 @@ class DummyPersistence:
         self.trades_today = trades_today
         self.recent_closed_trades = recent_closed_trades or []
         self.saved_runs: list[RunRecord] = []
+        self.find_open_trade_calls = 0
 
     def get_current_config(self) -> BotConfig:
         return self.config
@@ -150,6 +151,7 @@ class DummyPersistence:
 
     def find_open_trade(self, pair: Pair) -> TradeRecord | None:
         _ = pair
+        self.find_open_trade_calls += 1
         return self.open_trade
 
     def count_trades_for_utc_day(self, pair: Pair, day_start_iso: str, day_end_iso: str) -> int:
@@ -167,6 +169,66 @@ class DummyPersistence:
 
 
 class RunCycleSlippageSkipTest(unittest.TestCase):
+    def test_prefetched_open_trade_skips_persistence_lookup(self) -> None:
+        config = _build_config()
+        bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)
+        bars = [
+            OhlcvBar(
+                open_time=bar_close - timedelta(minutes=15),
+                close_time=bar_close,
+                open=99.5,
+                high=100.5,
+                low=99.0,
+                close=100.0,
+                volume=1000.0,
+            )
+        ]
+        open_trade: TradeRecord = {
+            "trade_id": "trade_prefetched_open",
+            "model_id": "core_long_15m_v0",
+            "bar_close_time_iso": "2026-02-25T09:45:00Z",
+            "pair": "SOL/USDC",
+            "direction": "LONG",
+            "state": "CONFIRMED",
+            "config_version": 2,
+            "execution": {},
+            "position": {
+                "status": "OPEN",
+                "quantity_sol": 0.4,
+                "entry_price": 99.0,
+                "stop_price": 97.0,
+                "take_profit_price": 99.5,
+                "entry_time_iso": "2026-02-25T09:46:00Z",
+            },
+            "created_at": "2026-02-25T09:46:00Z",
+            "updated_at": "2026-02-25T09:46:00Z",
+        }
+        persistence = DummyPersistence(config, open_trade=None)
+        deps = RunCycleDependencies(
+            execution=DummyExecution(),
+            lock=DummyLock(),
+            logger=DummyLogger(),
+            market_data=DummyMarketData(bars),
+            persistence=persistence,
+            model_id="core_long_15m_v0",
+            now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
+            prefetched_open_trade=open_trade,
+            use_prefetched_open_trade=True,
+        )
+
+        with patch(
+            "pybot.app.usecases.run_cycle.close_position",
+            return_value=ClosePositionResult(
+                status="CLOSED",
+                trade_id="trade_prefetched_open",
+                summary="CLOSED: mocked",
+            ),
+        ):
+            run = run_cycle(deps)
+
+        self.assertEqual("CLOSED", run["result"])
+        self.assertEqual(0, persistence.find_open_trade_calls)
+
     def test_slippage_skip_from_open_position_is_saved_as_skipped_run(self) -> None:
         config = _build_config()
         bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)

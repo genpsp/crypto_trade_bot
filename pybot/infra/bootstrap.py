@@ -17,6 +17,7 @@ from pybot.adapters.market_data.ohlcv_provider import OhlcvProvider
 from pybot.adapters.persistence.firestore_repo import FirestoreRepository
 from pybot.app.ports.execution_port import ExecutionPort
 from pybot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
+from pybot.domain.model.types import TradeRecord
 from pybot.infra.alerting import SlackAlertConfig, SlackNotifier, is_execution_error_result
 from pybot.infra.alerting.daily_trade_summary import (
     JST,
@@ -116,7 +117,7 @@ def bootstrap() -> AppRuntime:
     runtime_specs: dict[str, ModelRuntimeSpec] = {}
     warned_no_models = False
     warned_no_enabled_models = False
-    global_pause_state: bool | None = None
+    runtime_pause_state: bool | None = None
     notifier = SlackNotifier(
         config=SlackAlertConfig(
             webhook_url=env.SLACK_WEBHOOK_URL,
@@ -144,6 +145,9 @@ def bootstrap() -> AppRuntime:
 
     def _current_runtime_summaries() -> list[dict[str, str]]:
         return [_build_runtime_summary(runtime_specs[mid]) for mid in sorted(runtime_specs.keys())]
+
+    def _active_model_contexts() -> list[ModelRuntimeContext]:
+        return [model_contexts[mid] for mid in sorted(model_contexts.keys())]
 
     def _mark_cycle_completed() -> None:
         nonlocal last_cycle_completed_at, stale_cycle_alert_active
@@ -262,12 +266,7 @@ def bootstrap() -> AppRuntime:
                     collection_name=context.persistence.trades_collection_name,
                     day_doc_ids=day_doc_ids,
                 )
-                runs = _load_items_for_day_docs(
-                    model_id=context.model_id,
-                    collection_name=context.persistence.runs_collection_name,
-                    day_doc_ids=day_doc_ids,
-                )
-                model_payloads.append((context.model_id, trades, runs))
+                model_payloads.append((context.model_id, trades, []))
 
             model_payloads.sort(key=lambda payload: payload[0])
             report = build_daily_summary_report(
@@ -417,10 +416,13 @@ def bootstrap() -> AppRuntime:
                 },
             )
 
-        return [model_contexts[mid] for mid in sorted(model_contexts.keys())]
+        return _active_model_contexts()
 
     def _is_runtime_paused() -> bool:
-        nonlocal global_pause_state
+        nonlocal runtime_pause_state
+        if runtime_pause_state is not None:
+            return runtime_pause_state
+
         try:
             paused = config_repo.is_global_pause_enabled()
         except Exception as error:
@@ -430,36 +432,15 @@ def bootstrap() -> AppRuntime:
             )
             paused = False
 
-        if global_pause_state is None:
-            global_pause_state = paused
-            if paused:
-                logger.warn(
-                    "runtime globally paused",
-                    {
-                        "control_doc": f"{GLOBAL_CONTROL_COLLECTION_ID}/{GLOBAL_CONTROL_DOC_ID}",
-                        "field": GLOBAL_CONTROL_PAUSE_FIELD,
-                    },
-                )
-            return paused
-
-        if paused != global_pause_state:
-            if paused:
-                logger.warn(
-                    "runtime globally paused",
-                    {
-                        "control_doc": f"{GLOBAL_CONTROL_COLLECTION_ID}/{GLOBAL_CONTROL_DOC_ID}",
-                        "field": GLOBAL_CONTROL_PAUSE_FIELD,
-                    },
-                )
-            else:
-                logger.info(
-                    "runtime global pause released",
-                    {
-                        "control_doc": f"{GLOBAL_CONTROL_COLLECTION_ID}/{GLOBAL_CONTROL_DOC_ID}",
-                        "field": GLOBAL_CONTROL_PAUSE_FIELD,
-                    },
-                )
-            global_pause_state = paused
+        runtime_pause_state = paused
+        if paused:
+            logger.warn(
+                "runtime globally paused",
+                {
+                    "control_doc": f"{GLOBAL_CONTROL_COLLECTION_ID}/{GLOBAL_CONTROL_DOC_ID}",
+                    "field": GLOBAL_CONTROL_PAUSE_FIELD,
+                },
+            )
         return paused
 
     def should_suppress_run_cycle_log(result: dict[str, str | None]) -> bool:
@@ -468,7 +449,10 @@ def bootstrap() -> AppRuntime:
             "SKIPPED_ENTRY: idem entry key already exists for this bar",
         )
 
-    def execute_cycle_for_model(context: ModelRuntimeContext) -> None:
+    def execute_cycle_for_model(
+        context: ModelRuntimeContext,
+        prefetched_open_trade: TradeRecord | None = None,
+    ) -> None:
         result = run_cycle(
             RunCycleDependencies(
                 execution=context.execution,
@@ -477,6 +461,8 @@ def bootstrap() -> AppRuntime:
                 market_data=market_data,
                 persistence=context.persistence,
                 model_id=context.model_id,
+                prefetched_open_trade=prefetched_open_trade,
+                use_prefetched_open_trade=True,
             )
         )
         _apply_failure_streak_and_alert(result, context.model_id)
@@ -495,33 +481,35 @@ def bootstrap() -> AppRuntime:
         )
 
     def execute_cycle_for_all_models() -> None:
-        contexts = _refresh_model_contexts()
+        contexts = _active_model_contexts()
         paused = _is_runtime_paused()
         is_five_minute_window = True
         for context in contexts:
-            has_open_trade = context.persistence.find_open_trade(context.pair) is not None
+            open_trade = context.persistence.find_open_trade(context.pair)
+            has_open_trade = open_trade is not None
             if not _should_execute_cycle(
                 is_five_minute_window=is_five_minute_window,
                 has_open_trade=has_open_trade,
                 pause_all=paused,
             ):
                 continue
-            execute_cycle_for_model(context)
+            execute_cycle_for_model(context, open_trade)
 
     def execute_scheduled_cycle() -> None:
-        contexts = _refresh_model_contexts()
+        contexts = _active_model_contexts()
         paused = _is_runtime_paused()
         now = datetime.now(tz=UTC)
         is_five_minute_window = now.minute % 5 == 0
         for context in contexts:
-            has_open_trade = context.persistence.find_open_trade(context.pair) is not None
+            open_trade = context.persistence.find_open_trade(context.pair)
+            has_open_trade = open_trade is not None
             if not _should_execute_cycle(
                 is_five_minute_window=is_five_minute_window,
                 has_open_trade=has_open_trade,
                 pause_all=paused,
             ):
                 continue
-            execute_cycle_for_model(context)
+            execute_cycle_for_model(context, open_trade)
         _maybe_send_daily_trade_summary(now, contexts)
 
     scheduler: CronController | None = None
@@ -534,14 +522,15 @@ def bootstrap() -> AppRuntime:
         paused = _is_runtime_paused()
         is_five_minute_window = True
         for context in contexts:
-            has_open_trade = context.persistence.find_open_trade(context.pair) is not None
+            open_trade = context.persistence.find_open_trade(context.pair)
+            has_open_trade = open_trade is not None
             if not _should_execute_cycle(
                 is_five_minute_window=is_five_minute_window,
                 has_open_trade=has_open_trade,
                 pause_all=paused,
             ):
                 continue
-            execute_cycle_for_model(context)
+            execute_cycle_for_model(context, open_trade)
 
         if notifier.enabled and STALE_CYCLE_ALERT_MINUTES > 0:
             watchdog_stop_event.clear()

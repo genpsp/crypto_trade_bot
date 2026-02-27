@@ -62,6 +62,8 @@ class RunCycleDependencies:
     persistence: PersistencePort
     model_id: str
     now_provider: Callable[[], datetime] | None = None
+    prefetched_open_trade: TradeRecord | None = None
+    use_prefetched_open_trade: bool = False
 
 
 def _round_metric(value: Any, digits: int = 6) -> float | None:
@@ -155,7 +157,10 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
         run["bar_close_time_iso"] = bar_close_time_iso
         run["config_version"] = runtime_config["meta"]["config_version"]
 
-        open_trade = persistence.find_open_trade(runtime_config["pair"])
+        if dependencies.use_prefetched_open_trade:
+            open_trade = dependencies.prefetched_open_trade
+        else:
+            open_trade = persistence.find_open_trade(runtime_config["pair"])
         if open_trade:
             run["trade_id"] = open_trade["trade_id"]
             mark_price = execution.get_mark_price(runtime_config["pair"])
