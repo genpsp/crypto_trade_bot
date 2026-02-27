@@ -85,7 +85,7 @@ class ConfigSchemaTest(unittest.TestCase):
         payload = deepcopy(_build_base_config())
         payload["models"] = [
             {
-                "model_id": "core_long_v0",
+                "model_id": "ema_pullback_2h_long_v0",
                 "enabled": True,
                 "direction": "LONG",
                 "wallet_key_path": "secrets/wallet.long.enc.json",

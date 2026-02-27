@@ -88,7 +88,7 @@ def _default_long_config(mode: str) -> BotConfig:
             },
             "meta": {
                 "config_version": 2,
-                "note": "v0 core long model",
+                "note": "v0 ema pullback 2h long model",
             },
         }
     )
@@ -130,7 +130,7 @@ def _default_short_config(mode: str) -> BotConfig:
             },
             "meta": {
                 "config_version": 2,
-                "note": "v0 storm short model",
+                "note": "v0 storm 2h short model",
             },
         }
     )
@@ -172,7 +172,7 @@ def _default_long_15m_config(mode: str) -> BotConfig:
             },
             "meta": {
                 "config_version": 2,
-                "note": "v0 core long 15m model",
+                "note": "v0 ema pullback 15m both model",
             },
         }
     )
@@ -180,9 +180,9 @@ def _default_long_15m_config(mode: str) -> BotConfig:
 
 def build_default_model_configs(mode: str) -> dict[str, BotConfig]:
     return {
-        "core_long_v0": _default_long_config(mode),
-        "storm_short_v0": _default_short_config(mode),
-        "core_long_15m_v0": _default_long_15m_config(mode),
+        "ema_pullback_2h_long_v0": _default_long_config(mode),
+        "storm_2h_short_v0": _default_short_config(mode),
+        "ema_pullback_15m_both_v0": _default_long_15m_config(mode),
     }
 
 

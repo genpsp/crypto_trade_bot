@@ -28,7 +28,7 @@ class RedisLockAdapterTest(unittest.TestCase):
         redis.set.return_value = True
         redis.eval.return_value = 1
         logger = StubLogger()
-        lock = RedisLockAdapter(redis, logger, lock_namespace="core_long_v0")
+        lock = RedisLockAdapter(redis, logger, lock_namespace="ema_pullback_2h_long_v0")
 
         acquired = lock.acquire_runner_lock(120)
         self.assertTrue(acquired)
@@ -40,7 +40,7 @@ class RedisLockAdapterTest(unittest.TestCase):
         redis.eval.assert_called_once_with(
             RUNNER_LOCK_RELEASE_SCRIPT,
             1,
-            "lock:runner:core_long_v0",
+            "lock:runner:ema_pullback_2h_long_v0",
             token,
         )
         self.assertIsNone(lock.runner_lock_token)
@@ -49,10 +49,10 @@ class RedisLockAdapterTest(unittest.TestCase):
         redis = Mock()
         redis.get.return_value = "1"
         logger = StubLogger()
-        lock = RedisLockAdapter(redis, logger, lock_namespace="core_long_15m_v0")
+        lock = RedisLockAdapter(redis, logger, lock_namespace="ema_pullback_15m_both_v0")
 
         self.assertTrue(lock.has_inflight_tx("sig-123"))
-        redis.get.assert_called_once_with("tx:inflight:core_long_15m_v0:sig-123")
+        redis.get.assert_called_once_with("tx:inflight:ema_pullback_15m_both_v0:sig-123")
 
 
 if __name__ == "__main__":

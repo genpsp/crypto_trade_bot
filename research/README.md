@@ -53,7 +53,7 @@ python -m research.scripts.fetch_ohlcv \
 
 ```bash
 python -m research.scripts.run_backtest \
-  --config research/models/core_long_v0/config/current.json \
+  --config research/models/ema_pullback_2h_long_v0/config/current.json \
   --bars research/data/raw/solusdc_2h.csv \
   --output research/data/processed/backtest_latest.json
 ```
@@ -65,7 +65,7 @@ Walk-forward（複数窓）の例:
 
 ```bash
 python -m research.scripts.run_walk_forward \
-  --config research/models/core_long_15m_v0/config/current.json \
+  --config research/models/ema_pullback_15m_both_v0/config/current.json \
   --bars research/data/raw/solusdc_15m_3y.csv \
   --train-days 180 \
   --test-days 90 \

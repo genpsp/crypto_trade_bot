@@ -95,15 +95,15 @@ class DailyTradeSummaryTest(unittest.TestCase):
             target_date_jst="2026-02-26",
             generated_at_utc=datetime(2026, 2, 26, 15, 5, tzinfo=UTC),
             model_payloads=[
-                ("core_long_15m_v0", trades_model_a, runs_model_a),
-                ("storm_short_v0", trades_model_b, runs_model_b),
+                ("ema_pullback_15m_both_v0", trades_model_a, runs_model_a),
+                ("storm_2h_short_v0", trades_model_b, runs_model_b),
             ],
         )
 
         self.assertEqual(2, len(report.model_summaries))
 
         model_a = report.model_summaries[0]
-        self.assertEqual("core_long_15m_v0", model_a.model_id)
+        self.assertEqual("ema_pullback_15m_both_v0", model_a.model_id)
         self.assertEqual(1, model_a.closed_trades)
         self.assertEqual(1, model_a.win_trades)
         self.assertEqual(0, model_a.loss_trades)
@@ -116,7 +116,7 @@ class DailyTradeSummaryTest(unittest.TestCase):
         self.assertEqual(2, model_a.slippage_samples)
 
         model_b = report.model_summaries[1]
-        self.assertEqual("storm_short_v0", model_b.model_id)
+        self.assertEqual("storm_2h_short_v0", model_b.model_id)
         self.assertEqual(1, model_b.closed_trades)
         self.assertEqual(0, model_b.win_trades)
         self.assertEqual(1, model_b.loss_trades)

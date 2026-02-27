@@ -50,14 +50,14 @@ class SlackNotifierTest(unittest.TestCase):
         response.raise_for_status.return_value = None
         with patch("pybot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
             notifier.notify_trade_error(
-                model_id="core_long_15m_v0",
+                model_id="ema_pullback_15m_both_v0",
                 result="FAILED",
                 summary="FAILED: sendTransaction failed",
                 run_id="run_1",
                 trade_id="trade_1",
             )
             notifier.notify_trade_error(
-                model_id="core_long_15m_v0",
+                model_id="ema_pullback_15m_both_v0",
                 result="FAILED",
                 summary="FAILED: sendTransaction failed",
                 run_id="run_2",
@@ -68,7 +68,7 @@ class SlackNotifierTest(unittest.TestCase):
         payload = mocked_post.call_args.kwargs["json"]["text"]  # type: ignore[index]
         self.assertIn("売買実行エラー", payload)
         self.assertIn("```", payload)
-        self.assertIn("model=core_long_15m_v0", payload)
+        self.assertIn("model=ema_pullback_15m_both_v0", payload)
         self.assertEqual(0, len(logger.warnings))
 
     def test_notify_startup_formats_message_in_japanese_code_block(self) -> None:
@@ -83,7 +83,7 @@ class SlackNotifierTest(unittest.TestCase):
             notifier.notify_startup(
                 [
                     {
-                        "model_id": "core_long_15m_v0",
+                        "model_id": "ema_pullback_15m_both_v0",
                         "mode": "LIVE",
                         "strategy": "ema_trend_pullback_15m_v0",
                     }
@@ -94,7 +94,7 @@ class SlackNotifierTest(unittest.TestCase):
         payload = mocked_post.call_args.kwargs["json"]["text"]  # type: ignore[index]
         self.assertIn("Bot起動", payload)
         self.assertIn("```", payload)
-        self.assertIn("core_long_15m_v0", payload)
+        self.assertIn("ema_pullback_15m_both_v0", payload)
 
     def test_disabled_notifier_does_not_post(self) -> None:
         logger = _FakeLogger()
@@ -118,7 +118,7 @@ class SlackNotifierTest(unittest.TestCase):
             generated_at_utc=datetime(2026, 2, 26, 15, 5, tzinfo=UTC),
             model_payloads=[
                 (
-                    "core_long_15m_v0",
+                    "ema_pullback_15m_both_v0",
                     [
                         {
                             "trade_id": "t1",
@@ -151,7 +151,7 @@ class SlackNotifierTest(unittest.TestCase):
         payload = mocked_post.call_args.kwargs["json"]["text"]  # type: ignore[index]
         self.assertIn("【日次トレード結果サマリ（JST）】", payload)
         self.assertIn("TOTAL", payload)
-        self.assertIn("core_long_15m_v0", payload)
+        self.assertIn("ema_pullback_15m_both_v0", payload)
         self.assertIn("```", payload)
 
 

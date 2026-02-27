@@ -14,6 +14,7 @@ from pybot.app.usecases.close_position import (
     ClosePositionInput,
     close_position,
 )
+from pybot.app.usecases.execution_error_classifier import classify_execution_error
 from pybot.app.usecases.open_position import (
     OpenPositionDependencies,
     OpenPositionInput,
@@ -51,6 +52,14 @@ RUN_LOCK_TTL_SECONDS = 240
 ENTRY_IDEM_TTL_SECONDS = 12 * 60 * 60
 DEFAULT_OHLCV_LIMIT = 300
 OHLCV_LIMIT_FOR_15M_UPPER_TREND = 600
+_EXECUTION_ERROR_SKIP_MARKERS = (
+    "insufficient funds",
+    "slippage exceeded",
+    "route/liquidity unavailable",
+    "entry execution skipped",
+    "exit slippage exceeded",
+    "exit route/liquidity unavailable",
+)
 
 
 @dataclass
@@ -112,6 +121,24 @@ def _resolve_entry_direction(runtime_config: BotConfig, decision: StrategyDecisi
     if raw_entry_direction in ("LONG", "SHORT"):
         return raw_entry_direction
     return runtime_config["direction"]
+
+
+def _is_execution_error_skip_summary(summary: str) -> bool:
+    normalized = summary.strip().lower()
+    if not normalized.startswith("skipped:"):
+        return False
+    if any(marker in normalized for marker in _EXECUTION_ERROR_SKIP_MARKERS):
+        return True
+    return classify_execution_error(normalized).action == "SKIP"
+
+
+def _should_persist_run_record(run: RunRecord) -> bool:
+    result = str(run.get("result") or "")
+    if result in ("OPENED", "CLOSED", "FAILED"):
+        return True
+    if result != "SKIPPED":
+        return False
+    return _is_execution_error_skip_summary(str(run.get("summary") or ""))
 
 
 def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
@@ -461,7 +488,8 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
         return run
     finally:
         try:
-            persistence.save_run(run)
+            if _should_persist_run_record(run):
+                persistence.save_run(run)
         except Exception as save_error:
             logger.error(
                 "failed to save run record",

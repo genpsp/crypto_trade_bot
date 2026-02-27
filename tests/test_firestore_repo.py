@@ -94,7 +94,7 @@ class _SaveRunRepo(FirestoreRepository):
             firestore=None,  # type: ignore[arg-type]
             config_repo=None,  # type: ignore[arg-type]
             mode="LIVE",
-            model_id="core_long_15m_v0",
+            model_id="ema_pullback_15m_both_v0",
         )
         self.runs_collection = _SetOnlyCollection()
 
@@ -111,7 +111,7 @@ class _OpenTradeStateCachingRepo(FirestoreRepository):
             firestore=None,  # type: ignore[arg-type]
             config_repo=None,  # type: ignore[arg-type]
             mode="LIVE",
-            model_id="core_long_15m_v0",
+            model_id="ema_pullback_15m_both_v0",
         )
         self.state_trade = state_trade
         self.load_state_calls = 0
@@ -179,7 +179,7 @@ class FirestoreRepositoryTradeIdDateParseTest(unittest.TestCase):
     def test_extract_trade_date_from_trade_id(self) -> None:
         self.assertEqual(
             "2026-02-25",
-            _extract_trade_date_from_trade_id("2026-02-25T08:45:00Z_core_long_15m_v0_LONG"),
+            _extract_trade_date_from_trade_id("2026-02-25T08:45:00Z_ema_pullback_15m_both_v0_LONG"),
         )
 
     def test_extract_trade_date_from_trade_id_returns_none_when_invalid(self) -> None:
@@ -201,7 +201,7 @@ class FirestoreRepositoryConfigCacheTest(unittest.TestCase):
             firestore=None,  # type: ignore[arg-type]
             config_repo=config_repo,  # type: ignore[arg-type]
             mode="LIVE",
-            model_id="core_long_15m_v0",
+            model_id="ema_pullback_15m_both_v0",
         )
 
         first = repo.get_current_config()
@@ -238,7 +238,7 @@ class FirestoreRepositoryRunSaveNoReadTest(unittest.TestCase):
 class FirestoreRepositoryOpenTradeStateCacheTest(unittest.TestCase):
     def test_find_open_trade_reads_state_once_and_uses_memory_cache(self) -> None:
         state_trade = {
-            "trade_id": "2026-02-27T00:00:00Z_core_long_15m_v0_LONG",
+            "trade_id": "2026-02-27T00:00:00Z_ema_pullback_15m_both_v0_LONG",
             "trade_date": "2026-02-27",
             "pair": "SOL/USDC",
             "state": "CONFIRMED",

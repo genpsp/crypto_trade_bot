@@ -137,17 +137,17 @@ class FirestoreConfigRepositoryDirectionFallbackTest(unittest.TestCase):
     def test_get_model_metadata_allows_missing_direction_for_15m_strategy(self) -> None:
         firestore = _FakeFirestore(
             {
-                "models/core_long_15m_v0": {
-                    "model_id": "core_long_15m_v0",
+                "models/ema_pullback_15m_both_v0": {
+                    "model_id": "ema_pullback_15m_both_v0",
                     "enabled": True,
                     "mode": "LIVE",
                 },
-                "models/core_long_15m_v0/config/current": _build_15m_current_config(),
+                "models/ema_pullback_15m_both_v0/config/current": _build_15m_current_config(),
             }
         )
         repo = FirestoreConfigRepository(firestore)  # type: ignore[arg-type]
 
-        metadata = repo.get_model_metadata("core_long_15m_v0")
+        metadata = repo.get_model_metadata("ema_pullback_15m_both_v0")
 
         self.assertEqual("LONG", metadata.direction)
         self.assertTrue(metadata.enabled)
@@ -156,17 +156,17 @@ class FirestoreConfigRepositoryDirectionFallbackTest(unittest.TestCase):
     def test_get_current_config_uses_fallback_direction_for_15m_strategy(self) -> None:
         firestore = _FakeFirestore(
             {
-                "models/core_long_15m_v0": {
-                    "model_id": "core_long_15m_v0",
+                "models/ema_pullback_15m_both_v0": {
+                    "model_id": "ema_pullback_15m_both_v0",
                     "enabled": True,
                     "mode": "LIVE",
                 },
-                "models/core_long_15m_v0/config/current": _build_15m_current_config(),
+                "models/ema_pullback_15m_both_v0/config/current": _build_15m_current_config(),
             }
         )
         repo = FirestoreConfigRepository(firestore)  # type: ignore[arg-type]
 
-        config = repo.get_current_config("core_long_15m_v0")
+        config = repo.get_current_config("ema_pullback_15m_both_v0")
 
         self.assertEqual("LONG", config["direction"])
         self.assertEqual("ema_trend_pullback_15m_v0", config["strategy"]["name"])
@@ -174,18 +174,18 @@ class FirestoreConfigRepositoryDirectionFallbackTest(unittest.TestCase):
     def test_missing_direction_still_errors_for_non_15m_strategy(self) -> None:
         firestore = _FakeFirestore(
             {
-                "models/core_long_v0": {
-                    "model_id": "core_long_v0",
+                "models/ema_pullback_2h_long_v0": {
+                    "model_id": "ema_pullback_2h_long_v0",
                     "enabled": True,
                     "mode": "LIVE",
                 },
-                "models/core_long_v0/config/current": _build_2h_current_config(),
+                "models/ema_pullback_2h_long_v0/config/current": _build_2h_current_config(),
             }
         )
         repo = FirestoreConfigRepository(firestore)  # type: ignore[arg-type]
 
         with self.assertRaises(RuntimeError):
-            repo.get_model_metadata("core_long_v0")
+            repo.get_model_metadata("ema_pullback_2h_long_v0")
 
 
 if __name__ == "__main__":

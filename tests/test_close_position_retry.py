@@ -103,8 +103,8 @@ def _build_config() -> BotConfig:
 
 def _build_open_trade() -> TradeRecord:
     return {
-        "trade_id": "2026-02-22T20:00:00Z_core_long_v0_LONG",
-        "model_id": "core_long_v0",
+        "trade_id": "2026-02-22T20:00:00Z_ema_pullback_2h_long_v0_LONG",
+        "model_id": "ema_pullback_2h_long_v0",
         "bar_close_time_iso": "2026-02-22T20:00:00Z",
         "pair": "SOL/USDC",
         "direction": "LONG",
@@ -469,8 +469,8 @@ class ClosePositionRetryTest(unittest.TestCase):
 
     def test_short_close_caps_exit_amount_to_available_quote_balance(self) -> None:
         trade = _build_open_trade()
-        trade["trade_id"] = "2026-02-23T18:00:00Z_storm_short_v0_SHORT"
-        trade["model_id"] = "storm_short_v0"
+        trade["trade_id"] = "2026-02-23T18:00:00Z_storm_2h_short_v0_SHORT"
+        trade["model_id"] = "storm_2h_short_v0"
         trade["direction"] = "SHORT"
         trade["position"] = {
             "status": "OPEN",

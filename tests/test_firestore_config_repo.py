@@ -61,13 +61,13 @@ class FirestoreConfigRepositoryGlobalControlTest(unittest.TestCase):
         repo = FirestoreConfigRepository(
             _FakeFirestore(
                 {
-                    "core_long_v0": {},
-                    "storm_short_v0": {},
+                    "ema_pullback_2h_long_v0": {},
+                    "storm_2h_short_v0": {},
                 }
             )  # type: ignore[arg-type]
         )
 
-        self.assertEqual(["core_long_v0", "storm_short_v0"], repo.list_model_ids())
+        self.assertEqual(["ema_pullback_2h_long_v0", "storm_2h_short_v0"], repo.list_model_ids())
 
     def test_is_global_pause_enabled_true(self) -> None:
         repo = FirestoreConfigRepository(

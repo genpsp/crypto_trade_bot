@@ -185,7 +185,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         ]
         open_trade: TradeRecord = {
             "trade_id": "trade_prefetched_open",
-            "model_id": "core_long_15m_v0",
+            "model_id": "ema_pullback_15m_both_v0",
             "bar_close_time_iso": "2026-02-25T09:45:00Z",
             "pair": "SOL/USDC",
             "direction": "LONG",
@@ -210,7 +210,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
             logger=DummyLogger(),
             market_data=DummyMarketData(bars),
             persistence=persistence,
-            model_id="core_long_15m_v0",
+            model_id="ema_pullback_15m_both_v0",
             now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
             prefetched_open_trade=open_trade,
             use_prefetched_open_trade=True,
@@ -250,7 +250,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
             logger=DummyLogger(),
             market_data=DummyMarketData(bars),
             persistence=persistence,
-            model_id="core_long_15m_v0",
+            model_id="ema_pullback_15m_both_v0",
             now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
         )
         decision = EntrySignalDecision(
@@ -295,7 +295,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         ]
         open_trade: TradeRecord = {
             "trade_id": "trade_exit_slippage_skip",
-            "model_id": "core_long_15m_v0",
+            "model_id": "ema_pullback_15m_both_v0",
             "bar_close_time_iso": "2026-02-25T09:45:00Z",
             "pair": "SOL/USDC",
             "direction": "LONG",
@@ -320,7 +320,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
             logger=DummyLogger(),
             market_data=DummyMarketData(bars),
             persistence=persistence,
-            model_id="core_long_15m_v0",
+            model_id="ema_pullback_15m_both_v0",
             now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
         )
 
@@ -370,7 +370,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
             logger=DummyLogger(),
             market_data=DummyMarketData(bars),
             persistence=persistence,
-            model_id="core_long_15m_v0",
+            model_id="ema_pullback_15m_both_v0",
             now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
         )
 
@@ -382,6 +382,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         self.assertIn("LOSS_STREAK_GE_2", run["reason"])
         self.assertEqual(2, run["metrics"]["effective_max_trades_per_day"])
         self.assertEqual(2, run["metrics"]["consecutive_stop_loss_streak"])
+        self.assertEqual(0, len(persistence.saved_runs))
 
     def test_recent_take_profit_resets_loss_streak_for_dynamic_cap(self) -> None:
         config = _build_config()
@@ -413,7 +414,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
             logger=DummyLogger(),
             market_data=DummyMarketData(bars),
             persistence=persistence,
-            model_id="core_long_15m_v0",
+            model_id="ema_pullback_15m_both_v0",
             now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
         )
         no_signal = NoSignalDecision(type="NO_SIGNAL", summary="NO_SIGNAL: test", reason="TEST_REASON")
@@ -425,6 +426,39 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         self.assertEqual(0, run["metrics"]["consecutive_stop_loss_streak"])
         self.assertEqual(3, run["metrics"]["effective_max_trades_per_day"])
         self.assertEqual("BASE", run["metrics"]["dynamic_trade_cap_reason"])
+        self.assertEqual(0, len(persistence.saved_runs))
+
+    def test_skipped_entry_run_is_not_persisted(self) -> None:
+        config = _build_config()
+        bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)
+        bars = [
+            OhlcvBar(
+                open_time=bar_close - timedelta(minutes=15),
+                close_time=bar_close,
+                open=99.5,
+                high=100.5,
+                low=99.0,
+                close=100.0,
+                volume=1000.0,
+            )
+        ]
+        lock = DummyLock()
+        lock.entry_attempts.add("2026-02-25T10:00:00Z")
+        persistence = DummyPersistence(config)
+        deps = RunCycleDependencies(
+            execution=DummyExecution(),
+            lock=lock,
+            logger=DummyLogger(),
+            market_data=DummyMarketData(bars),
+            persistence=persistence,
+            model_id="ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
+        )
+
+        run = run_cycle(deps)
+
+        self.assertEqual("SKIPPED_ENTRY", run["result"])
+        self.assertEqual(0, len(persistence.saved_runs))
 
     def test_entry_direction_from_strategy_diagnostics_is_passed_to_open_position(self) -> None:
         config = _build_config()
@@ -447,7 +481,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
             logger=DummyLogger(),
             market_data=DummyMarketData(bars),
             persistence=persistence,
-            model_id="core_long_15m_v0",
+            model_id="ema_pullback_15m_both_v0",
             now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
         )
         decision = EntrySignalDecision(
@@ -512,7 +546,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
             logger=DummyLogger(),
             market_data=DummyMarketData(bars),
             persistence=persistence,
-            model_id="core_long_15m_v0",
+            model_id="ema_pullback_15m_both_v0",
             now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
         )
         decision = EntrySignalDecision(
@@ -615,7 +649,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
             logger=DummyLogger(),
             market_data=DummyMarketData(bars),
             persistence=persistence,
-            model_id="core_long_15m_v0",
+            model_id="ema_pullback_15m_both_v0",
             now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
         )
         decision = EntrySignalDecision(

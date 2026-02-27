@@ -10,6 +10,7 @@ from pybot.infra.alerting.daily_trade_summary import DailyTradeSummaryReport, Mo
 
 _REQUEST_TIMEOUT_SECONDS = 5
 _DEFAULT_DUPLICATE_SUPPRESSION_SECONDS = 300
+_MODEL_ID_COLUMN_WIDTH = 28
 _EXECUTION_ERROR_SKIP_MARKERS = (
     "insufficient funds",
     "slippage exceeded",
@@ -188,10 +189,12 @@ class SlackNotifier:
 
         header = f"*【日次トレード結果サマリ（JST）】* `{report.target_date_jst}`"
         generated = f"集計時刻: `{report.generated_at_jst}`"
+        separator = "-" * 138
 
         lines = [
-            "model_id              closed  win  loss  win_rate   pnl_usdc   fee_usdc  avg_slip  fail_run  skip_run fail_trd cancel_trd",
-            "------------------------------------------------------------------------------------------------------------------------------",
+            f"{'model_id':<{_MODEL_ID_COLUMN_WIDTH}}"
+            "  closed  win  loss  win_rate   pnl_usdc   fee_usdc  avg_slip  fail_run  skip_run fail_trd cancel_trd",
+            separator,
         ]
         if report.model_summaries:
             for summary in report.model_summaries:
@@ -199,7 +202,7 @@ class SlackNotifier:
         else:
             lines.append("(対象モデルなし)")
 
-        lines.append("------------------------------------------------------------------------------------------------------------------------------")
+        lines.append(separator)
         lines.append(
             self._format_daily_total_row(
                 closed=report.total_closed_trades,
@@ -254,9 +257,9 @@ class SlackNotifier:
         return f"{title}\n```\n{detail}\n```"
 
     def _format_daily_summary_row(self, summary: ModelDailyTradeSummary) -> str:
-        model_id = summary.model_id[:20]
+        model_id = summary.model_id[:_MODEL_ID_COLUMN_WIDTH]
         return (
-            f"{model_id:<20}"
+            f"{model_id:<{_MODEL_ID_COLUMN_WIDTH}}"
             f"{summary.closed_trades:>8}"
             f"{summary.win_trades:>5}"
             f"{summary.loss_trades:>6}"
@@ -286,7 +289,7 @@ class SlackNotifier:
         canceled_trades: int,
     ) -> str:
         return (
-            f"{'TOTAL':<20}"
+            f"{'TOTAL':<{_MODEL_ID_COLUMN_WIDTH}}"
             f"{closed:>8}"
             f"{win:>5}"
             f"{loss:>6}"

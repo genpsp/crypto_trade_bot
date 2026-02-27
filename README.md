@@ -79,8 +79,8 @@ LIVEモデルは `models/{model_id}.wallet_key_path` が必須です。
 
 ```bash
 python scripts/seed-firestore-config.py \
-  --config-path research/models/core_long_15m_v0/config/current.json \
-  --wallet-key-path /run/secrets/wallet.core_long_15m_v0.enc.json
+  --config-path research/models/ema_pullback_15m_both_v0/config/current.json \
+  --wallet-key-path /run/secrets/wallet.ema_pullback_15m_both_v0.enc.json
 ```
 
 ## 4. Wallet 準備（Phantom連携）
@@ -88,11 +88,11 @@ python scripts/seed-firestore-config.py \
 `id.json` または Phantom base58 秘密鍵を暗号化:
 
 ```bash
-python scripts/encrypt-wallet.py --input /path/to/id.json --output /path/to/wallet.core_long_v0.enc.json --passphrase "your-passphrase"
+python scripts/encrypt-wallet.py --input /path/to/id.json --output /path/to/wallet.ema_pullback_2h_long_v0.enc.json --passphrase "your-passphrase"
 ```
 
 ```bash
-python scripts/encrypt-wallet.py --base58 "PHANTOM_BASE58_PRIVATE_KEY" --output /path/to/wallet.core_long_v0.enc.json --passphrase "your-passphrase"
+python scripts/encrypt-wallet.py --base58 "PHANTOM_BASE58_PRIVATE_KEY" --output /path/to/wallet.ema_pullback_2h_long_v0.enc.json --passphrase "your-passphrase"
 ```
 
 ## 5. ローカル実行
@@ -126,9 +126,9 @@ docker compose up --build
 - モデル設定は `models/{model_id}/config/current` で完結
 - `model_id` 単位で独立実行されます
 - 例:
-  - `core_long_v0` (`LONG`, `ema_trend_pullback_v0`)
-  - `core_long_15m_v0` (`LONG`, `ema_trend_pullback_15m_v0`)
-  - `storm_short_v0` (`SHORT`, `storm_short_v0`)
+  - `ema_pullback_2h_long_v0` (`LONG`, `ema_trend_pullback_v0`)
+  - `ema_pullback_15m_both_v0` (`BOTH`, `ema_trend_pullback_15m_v0`)
+  - `storm_2h_short_v0` (`SHORT`, `storm_short_v0`)
 
 注意:
 - `SHORT` は現物の `SELL_SOL_FOR_USDC -> BUY_SOL_WITH_USDC` で実装
@@ -173,6 +173,6 @@ GitHub Secrets に以下を登録してください。
   - `python -m research.scripts.fetch_ohlcv --pair SOL/USDC --timeframe 2h --years 2 --output research/data/raw/solusdc_2h.csv`
   - `python -m research.scripts.fetch_ohlcv --pair SOL/USDC --timeframe 15m --years 0.5 --output research/data/raw/solusdc_15m.csv`
 - バックテスト:
-  - `python -m research.scripts.run_backtest --config research/models/core_long_v0/config/current.json --bars research/data/raw/solusdc_2h.csv --output research/data/processed/backtest_latest.json`
+  - `python -m research.scripts.run_backtest --config research/models/ema_pullback_2h_long_v0/config/current.json --bars research/data/raw/solusdc_2h.csv --output research/data/processed/backtest_latest.json`
 
 詳細は `research/README.md` を参照してください。

@@ -306,7 +306,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                     config=config,
                     signal=signal,
                     bar_close_time_iso="2026-02-21T10:00:00.000Z",
-                    model_id="core_long_v0",
+                    model_id="ema_pullback_2h_long_v0",
                 ),
             )
 
@@ -381,7 +381,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                         config=config,
                         signal=signal,
                         bar_close_time_iso="2026-02-21T10:00:00.000Z",
-                        model_id="core_long_v0",
+                        model_id="ema_pullback_2h_long_v0",
                     ),
                 )
                 self.assertEqual("OPENED", opened.status)
@@ -509,7 +509,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                         config=config,
                         signal=signal,
                         bar_close_time_iso="2026-02-21T12:00:00.000Z",
-                        model_id="storm_short_v0",
+                        model_id="storm_2h_short_v0",
                     ),
                 )
                 self.assertEqual("OPENED", opened.status)
@@ -556,8 +556,8 @@ class TradeExecutionApiTest(unittest.TestCase):
         logger = InMemoryLogger()
 
         trade: TradeRecord = {
-            "trade_id": "2026-02-22T20:00:00Z_core_long_v0_LONG",
-            "model_id": "core_long_v0",
+            "trade_id": "2026-02-22T20:00:00Z_ema_pullback_2h_long_v0_LONG",
+            "model_id": "ema_pullback_2h_long_v0",
             "bar_close_time_iso": "2026-02-22T20:00:00Z",
             "pair": "SOL/USDC",
             "direction": "LONG",
@@ -708,7 +708,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                     config=config,
                     signal=signal,
                     bar_close_time_iso="2026-02-21T10:00:00.000Z",
-                    model_id="core_long_v0",
+                    model_id="ema_pullback_2h_long_v0",
                 ),
             )
 
@@ -773,7 +773,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                     config=config,
                     signal=signal,
                     bar_close_time_iso="2026-02-21T10:00:00.000Z",
-                    model_id="core_long_v0",
+                    model_id="ema_pullback_2h_long_v0",
                 ),
             )
 
@@ -841,7 +841,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                     config=config,
                     signal=signal,
                     bar_close_time_iso="2026-02-21T10:00:00.000Z",
-                    model_id="core_long_v0",
+                    model_id="ema_pullback_2h_long_v0",
                 ),
             )
 
@@ -912,7 +912,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                     config=config,
                     signal=signal,
                     bar_close_time_iso="2026-02-21T10:00:00.000Z",
-                    model_id="core_long_v0",
+                    model_id="ema_pullback_2h_long_v0",
                 ),
             )
 
@@ -994,7 +994,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                 config=config,
                 signal=signal,
                 bar_close_time_iso="2026-02-21T10:00:00.000Z",
-                model_id="core_long_v0",
+                model_id="ema_pullback_2h_long_v0",
             ),
         )
 
@@ -1081,7 +1081,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                 config=config,
                 signal=signal,
                 bar_close_time_iso="2026-02-21T12:00:00.000Z",
-                model_id="storm_short_v0",
+                model_id="storm_2h_short_v0",
             ),
         )
 
@@ -1155,7 +1155,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                 config=config,
                 signal=signal,
                 bar_close_time_iso="2026-02-26T10:15:00.000Z",
-                model_id="core_long_15m_v0",
+                model_id="ema_pullback_15m_both_v0",
             ),
         )
 
@@ -1237,7 +1237,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                 config=config,
                 signal=signal,
                 bar_close_time_iso="2026-02-26T10:30:00.000Z",
-                model_id="storm_short_v0",
+                model_id="storm_2h_short_v0",
             ),
         )
 
@@ -1309,7 +1309,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                 config=config,
                 signal=signal,
                 bar_close_time_iso="2026-02-21T10:00:00.000Z",
-                model_id="core_long_v0",
+                model_id="ema_pullback_2h_long_v0",
             ),
         )
 
@@ -1324,8 +1324,8 @@ class TradeExecutionApiTest(unittest.TestCase):
         logger = InMemoryLogger()
 
         trade: TradeRecord = {
-            "trade_id": "2026-02-22T20:00:00Z_core_long_v0_LONG",
-            "model_id": "core_long_v0",
+            "trade_id": "2026-02-22T20:00:00Z_ema_pullback_2h_long_v0_LONG",
+            "model_id": "ema_pullback_2h_long_v0",
             "bar_close_time_iso": "2026-02-22T20:00:00Z",
             "pair": "SOL/USDC",
             "direction": "LONG",
