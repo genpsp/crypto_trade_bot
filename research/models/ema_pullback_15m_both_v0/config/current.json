@@ -2,7 +2,7 @@
   "enabled": true,
   "network": "mainnet-beta",
   "pair": "SOL/USDC",
-  "direction": "LONG",
+  "direction": "BOTH",
   "signal_timeframe": "15m",
   "strategy": {
     "name": "ema_trend_pullback_15m_v0",

@@ -131,7 +131,7 @@ def parse_config(data: Any) -> BotConfig:
     _require(isinstance(data.get("enabled"), bool), "enabled must be boolean")
     _require(data.get("network") == "mainnet-beta", "network must be 'mainnet-beta'")
     _require(data.get("pair") == "SOL/USDC", "pair must be 'SOL/USDC'")
-    _require(data.get("direction") in ("LONG", "SHORT"), "direction must be LONG or SHORT")
+    _require(data.get("direction") in ("LONG", "SHORT", "BOTH"), "direction must be LONG, SHORT or BOTH")
     _require(
         data.get("signal_timeframe") in ("15m", "2h", "4h"),
         "signal_timeframe must be '15m', '2h' or '4h'",
@@ -147,6 +147,15 @@ def parse_config(data: Any) -> BotConfig:
         _require(
             data["signal_timeframe"] in ("2h", "4h"),
             "ema_trend_pullback_v0 requires signal_timeframe='2h' or '4h'",
+        )
+        _require(
+            data["direction"] == "LONG",
+            "ema_trend_pullback_v0 requires direction='LONG'",
+        )
+    if strategy["name"] == "storm_short_v0":
+        _require(
+            data["direction"] == "SHORT",
+            "storm_short_v0 requires direction='SHORT'",
         )
     risk = _parse_risk(data.get("risk"), "risk")
 

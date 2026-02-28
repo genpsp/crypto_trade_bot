@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from pybot.domain.model.types import (
-    Direction,
     ExecutionConfig,
     ExitConfig,
+    ModelDirection,
     OhlcvBar,
     RiskConfig,
     StrategyConfig,
@@ -17,7 +17,7 @@ from pybot.domain.strategy.models.storm_short_v0 import evaluate_storm_short_v0
 
 
 def evaluate_strategy_for_model(
-    direction: Direction,
+    direction: ModelDirection,
     bars: list[OhlcvBar],
     strategy: StrategyConfig,
     risk: RiskConfig,

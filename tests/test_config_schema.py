@@ -51,8 +51,10 @@ class ConfigSchemaTest(unittest.TestCase):
         payload = deepcopy(_build_base_config())
         payload["signal_timeframe"] = "15m"
         payload["strategy"]["name"] = "ema_trend_pullback_15m_v0"
+        payload["direction"] = "BOTH"
         parsed = parse_config(payload)
         self.assertEqual(parsed["signal_timeframe"], "15m")
+        self.assertEqual(parsed["direction"], "BOTH")
 
     def test_ema_trend_pullback_15m_strategy_name_is_allowed(self) -> None:
         payload = deepcopy(_build_base_config())

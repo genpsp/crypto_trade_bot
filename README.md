@@ -1,81 +1,197 @@
 # crypto_trade_bot (Python v1)
 
-Node.js 実装を Python に全面移行した Solana 現物自動売買Bot です。  
-レイヤ分離は `domain / app / adapters / infra` のまま維持しています。
+Solana `SOL/USDC` 現物向けの自動売買Botです。  
+Node.js 実装から Python に移行し、`domain / app / adapters / infra` のレイヤ構成で運用しています。
 
-- エントリー: 設定タイムフレーム（`15m` / `2h` / `4h`）のクローズ時
-- 複数モデル対応: `models/{model_id}/config/current`
-- ロングモデル + Stormショートモデル（ショートは初期無効）
-- 損切り: スイング安値 + `max_loss_per_trade_pct` で締める
-- 利確: `R` 倍（`take_profit_r_multiple`）
-- 実行: Jupiter quote/swap + Solana署名送信
-- 永続化: Firestore（`models/{model_id}/...`）
-- 重複防止: Redis（`lock:runner:{model_id}`, `idem:entry:{model_id}:*`, `tx:inflight:{model_id}:*`）
+## 概要
 
-## 1. 前提
+- 複数モデルを Firestore から読み込み、`model_id` 単位で独立実行
+- 売買実行は Jupiter (`quote/swap`) + Solana RPC 送信
+- 永続化は Firestore、排他と冪等は Redis
+- 起動時即実行 + 1分周期スケジューラ
+- 15分モデルは `direction=BOTH` をサポート
+
+## 前提
 
 - Python 3.12+
-- pip
 - Docker / Docker Compose
-- Firestore サービスアカウントJSON
+- Firestore サービスアカウント JSON
 
-## 2. 環境変数（必須4 + 任意1）
+## 環境変数
 
-`.env.example` を `.env` にコピーして設定:
+必須:
 
 - `SOLANA_RPC_URL`
 - `REDIS_URL`
 - `GOOGLE_APPLICATION_CREDENTIALS`
 - `WALLET_KEY_PASSPHRASE`
-- `SLACK_WEBHOOK_URL`（任意: 未設定なら通知無効）
 
-`GOOGLE_APPLICATION_CREDENTIALS` は相対/絶対パスどちらでも可。  
-相対パスは `docker-compose.yml` があるプロジェクトルート基準です。
+任意:
 
-Slack通知の対象:
-- 売買エラー（`FAILED` と、実行系 `SKIPPED`）
-- 同一モデルの連続 `FAILED`（デフォルト3回）
-- run_cycle 停滞（デフォルト10分）
-- 起動 / 停止
-- 日次トレード結果サマリ（JST 00:05 に前日分を送信）
+- `SLACK_WEBHOOK_URL`（未設定でSlack通知無効）
 
-## 3. Firestore 事前準備
+補足:
 
-### 3.1 コレクション
-
-- `models/{model_id}/config/current`
-- `control/global`（全体制御）
-- `models/{model_id}/trades`（LIVE）
-- `models/{model_id}/runs`（LIVE）
-- `models/{model_id}/paper_trades`（PAPER）
-- `models/{model_id}/paper_runs`（PAPER）
-
-`runs` / `paper_runs` は日付で分割して保存します
-
-- `models/{model_id}/runs/{YYYY-MM-DD}/items/{run_doc_id}`（LIVE）
-- `models/{model_id}/paper_runs/{YYYY-MM-DD}/items/{run_doc_id}`（PAPER）
-
-同日・同理由の `SKIPPED` / `SKIPPED_ENTRY` は新規作成せず、同じ `run_doc_id` を更新して `occurrence_count` を加算します。
-
-`control/global` に次のフラグを置くと、全モデルの `run_cycle` を一時停止できます。
-
-- `pause_all: true` で新規エントリーを全停止（OPENポジションのEXIT監視は継続）
-- `pause_all: false` で通常運転に戻す
-
-### 3.2 config 投入
+- `pybot.main` は起動時に `load_dotenv(Path(".env"))` を実行します
+- 本番VPSは `.env` を置かず、GitHub Actions から環境注入する運用を推奨
+- ローカルのみ `.env.example` から作成可能
 
 ```bash
-python scripts/seed-firestore-config.py --mode PAPER
+cp .env.example .env
 ```
 
-LIVE投入:
+## Firestore 構成
+
+### 1) モデル設定
+
+- `models/{model_id}`
+  - 例: `enabled`, `mode`, `direction`, `wallet_key_path`
+- `models/{model_id}/config/current`
+  - 戦略・リスク・執行設定
+
+`enabled` / `mode` / `direction` は `models/{model_id}` 側を正として読み込み、`config/current` の同名項目は上書きされます。
+
+### 2) トレード保存（日付分割）
+
+- LIVE: `models/{model_id}/trades/{YYYY-MM-DD}/items/{trade_id}`
+- PAPER: `models/{model_id}/paper_trades/{YYYY-MM-DD}/items/{trade_id}`
+
+状態キャッシュ:
+
+- `models/{model_id}/state/open_trade`
+- `models/{model_id}/state/recent_closed_trades`
+
+`recent_closed_trades` は最大32件を保持します。
+
+### 3) run 保存（日付分割）
+
+- LIVE: `models/{model_id}/runs/{YYYY-MM-DD}/items/{run_doc_id}`
+- PAPER: `models/{model_id}/paper_runs/{YYYY-MM-DD}/items/{run_doc_id}`
+
+保存対象は以下のみ:
+
+- 常時保存: `OPENED`, `CLOSED`, `FAILED`
+- 条件付き保存: 実行系エラー理由の `SKIPPED`（slippage / liquidity / funds など）
+
+保存された `SKIPPED` は同日・同理由で集約され、`occurrence_count` が加算されます。
+
+※ `SKIPPED_ENTRY` は `save_run` 側は対応済みですが、現行 `run_cycle` では通常保存対象外です。
+
+### 4) 全体停止フラグ
+
+- `control/global.pause_all`
+  - `true`: 新規エントリー停止
+  - 既存OPENポジションのEXIT監視は継続
+
+## 実行スケジュールと反映タイミング
+
+- 起動時に1回即時実行
+- その後は UTC 1分周期（`* * * * *`）
+- 新規エントリー判定は「5分境界」または「OPENポジション保有中」のときのみ実行
+- `pause_all=true` 時は OPENポジション保有モデルのみ実行
+
+Firestore 変更反映:
+
+- リアルタイム監視対象
+  - `models` コレクション
+  - `models/{model_id}/config/current`
+  - `control/global`
+- 加えて15分ごとのフォールバック再同期あり
+
+## モデル/戦略制約
+
+許可戦略:
+
+- `ema_trend_pullback_v0`
+- `ema_trend_pullback_15m_v0`
+- `storm_short_v0`
+
+制約:
+
+- `ema_trend_pullback_v0`
+  - `direction=LONG`
+  - `signal_timeframe=2h|4h`
+- `storm_short_v0`
+  - `direction=SHORT`
+- `ema_trend_pullback_15m_v0`
+  - `signal_timeframe=15m`
+  - `direction=LONG|SHORT|BOTH`（`BOTH`時は戦略診断 `entry_direction` を使用）
+
+現行モデルID:
+
+- `ema_pullback_2h_long_v0`
+- `storm_2h_short_v0`
+- `ema_pullback_15m_both_v0`
+
+## 売買ロジック（現行）
+
+- LONG: `BUY_SOL_WITH_USDC` で建て、`SELL_SOL_FOR_USDC` でクローズ
+- SHORT: 現物在庫ベース（`SELL_SOL_FOR_USDC` で建て、`BUY_SOL_WITH_USDC` でクローズ）
+
+エントリー:
+
+- 利用可能残高の `99%` を使用（`ENTRY_BALANCE_USAGE_RATIO=0.99`）
+- `ENTRY_RETRY_ATTEMPTS=3`
+- 最終リトライ時のみ `slippage_bps +1`
+- slippage / liquidity / insufficient funds は `SKIPPED` 扱い（状態は `CANCELED`）
+
+EXIT:
+
+- `TAKE_PROFIT`: 最大2回再試行
+- `STOP_LOSS`: 最大5回再試行
+- EXIT時slippageは段階的に拡大（TP上限30bps, SL上限120bps）
+- TAKE_PROFIT で slippage/liquidity エラーは `SKIPPED`（ポジション維持）
+
+RPC/HTTPタイムアウト:
+
+- Jupiter quote/swap: 8秒
+- Solana RPC: 8秒
+- tx confirm timeout: 20秒
+
+## Redis キー
+
+- `lock:runner:{model_id}`: run_cycle排他
+- `idem:entry:{model_id}:{bar_close_time_iso}`: 同一バー再エントリー防止
+- `tx:inflight:{model_id}:{signature}`: 送信中TXトラッキング
+- `alert:daily_summary:jst:{YYYY-MM-DD}`: 日次サマリ重複送信防止
+
+## Slack 通知
+
+通知形式:
+
+- 基本日本語
+- 詳細はコードブロック（```）
+
+通知対象:
+
+- Bot起動 / 停止
+- 売買実行エラー（`FAILED` + 実行系 `SKIPPED`）
+- 連続 `FAILED`（しきい値3）と復帰
+- run_cycle 停滞（しきい値10分）と復帰
+- 実行設定エラー（モデル設定読込失敗・wallet_key_path不足）
+- 日次サマリ（JST 00:05〜00:14 に前日分を1回）
+
+## セットアップ
+
+### 1) Firestoreへ初期投入
 
 ```bash
 python scripts/seed-firestore-config.py --mode LIVE
 ```
 
-LIVEモデルは `models/{model_id}.wallet_key_path` が必須です。  
-例:
+PAPER投入:
+
+```bash
+python scripts/seed-firestore-config.py --mode PAPER
+```
+
+制御ドキュメントのみ投入:
+
+```bash
+python scripts/seed-firestore-config.py --control-only
+```
+
+単一モデルを投入:
 
 ```bash
 python scripts/seed-firestore-config.py \
@@ -83,19 +199,23 @@ python scripts/seed-firestore-config.py \
   --wallet-key-path /run/secrets/wallet.ema_pullback_15m_both_v0.enc.json
 ```
 
-## 4. Wallet 準備（Phantom連携）
-
-`id.json` または Phantom base58 秘密鍵を暗号化:
+### 2) ウォレット鍵の暗号化
 
 ```bash
-python scripts/encrypt-wallet.py --input /path/to/id.json --output /path/to/wallet.ema_pullback_2h_long_v0.enc.json --passphrase "your-passphrase"
+python scripts/encrypt-wallet.py \
+  --input /path/to/id.json \
+  --output /path/to/wallet.ema_pullback_2h_long_v0.enc.json \
+  --passphrase "your-passphrase"
 ```
 
 ```bash
-python scripts/encrypt-wallet.py --base58 "PHANTOM_BASE58_PRIVATE_KEY" --output /path/to/wallet.ema_pullback_2h_long_v0.enc.json --passphrase "your-passphrase"
+python scripts/encrypt-wallet.py \
+  --base58 "PHANTOM_BASE58_PRIVATE_KEY" \
+  --output /path/to/wallet.ema_pullback_2h_long_v0.enc.json \
+  --passphrase "your-passphrase"
 ```
 
-## 5. ローカル実行
+### 3) ローカル実行
 
 ```bash
 python -m venv .venv
@@ -104,57 +224,20 @@ pip install -r requirements.txt
 python -m pybot.main
 ```
 
-## 6. Docker 実行
+### 4) Docker実行
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
-`bot` と `redis` の2サービスのみ起動します。
+## デプロイ（GitHub Actions）
 
-## 7. PAPER / LIVE
+ワークフロー: `.github/workflows/deploy.yml`
 
-- `execution.mode = PAPER`
-  - 送信なし
-  - `models/{model_id}/paper_trades`, `models/{model_id}/paper_runs` に記録
-- `execution.mode = LIVE`
-  - 実際に送信
-  - `models/{model_id}/trades`, `models/{model_id}/runs` に記録
+- トリガ: `main` push / `workflow_dispatch`
+- VPS上で `git pull` 後に `docker compose up -d --build`
 
-## 8. 複数モデル設定
-
-- モデル設定は `models/{model_id}/config/current` で完結
-- `model_id` 単位で独立実行されます
-- Firestore 設定はリアルタイムリスナーで監視し、`models/{model_id}` と `models/{model_id}/config/current` の変更を即時反映します
-- 毎サイクルの Firestore 設定再読込は行いません（イベント駆動 + 15分のフォールバック再同期）
-- 例:
-  - `ema_pullback_2h_long_v0` (`LONG`, `ema_trend_pullback_v0`)
-  - `ema_pullback_15m_both_v0` (`LONG`, `ema_trend_pullback_15m_v0`) ※戦略診断で `entry_direction` を切替
-  - `storm_2h_short_v0` (`SHORT`, `storm_short_v0`)
-
-注意:
-- `SHORT` は現物の `SELL_SOL_FOR_USDC -> BUY_SOL_WITH_USDC` で実装
-- ショートモデルはSOL在庫を使うため、ウォレットのSOL残高が必要
-
-## 9. 動作確認ポイント
-
-- `run_cycle finished` が定期出力される
-- ENTRY時: `CREATED -> SUBMITTED -> CONFIRMED`
-- EXIT時: `CONFIRMED -> CLOSED`
-- 失敗時: `state=FAILED` と `execution.entry_error / exit_error`
-
-## 10. VPS 移植
-
-1. VPSにこのリポジトリを配置
-2. Docker / Docker Compose をインストール
-3. 認証ファイル（`secrets/firebase-service-account.json` とウォレット鍵）を配置
-4. `docker compose up -d --build`
-5. Firestoreコレクションを監視
-
-### 10.1 GitHub Actions で環境変数を管理（推奨）
-
-`.env` をVPSに手作業で置かず、`Deploy Bot` ワークフローから環境変数を直接注入できます。  
-GitHub Secrets に以下を登録してください。
+必要な GitHub Secrets:
 
 - `VPS_HOST`
 - `VPS_USER`
@@ -162,19 +245,30 @@ GitHub Secrets に以下を登録してください。
 - `WALLET_KEY_PASSPHRASE`
 - `SLACK_WEBHOOK_URL`（任意）
 
-`SOLANA_RPC_URL` は `docker-compose.yml` で `https://api.mainnet-beta.solana.com` 固定です。  
-`GOOGLE_APPLICATION_CREDENTIALS` は Docker 実行時に `/run/secrets/firebase-service-account.json` 固定です。
+現在の compose 固定値:
 
-この設定で `main` push / 手動実行時に、Secrets がSSH経由でVPSへ渡され、そのまま `docker compose up -d --build` が実行されます。
+- `SOLANA_RPC_URL=https://api.mainnet-beta.solana.com`
+- `REDIS_URL=redis://redis:6379`
+- `GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json`
 
-## 11. Research（分析専用）
+VPSに配置するシークレットファイル:
 
-分析は `research/` に分離し、エントリー判定ロジックは `pybot` の戦略を直接再利用します。
+- `/opt/crypto_trade_bot/secrets/firebase-service-account.json`
+- `/opt/crypto_trade_bot/secrets/wallet.<model_id>.enc.json`
 
-- データ取得:
-  - `python -m research.scripts.fetch_ohlcv --pair SOL/USDC --timeframe 2h --years 2 --output research/data/raw/solusdc_2h.csv`
-  - `python -m research.scripts.fetch_ohlcv --pair SOL/USDC --timeframe 15m --years 0.5 --output research/data/raw/solusdc_15m.csv`
-- バックテスト:
-  - `python -m research.scripts.run_backtest --config research/models/ema_pullback_2h_long_v0/config/current.json --bars research/data/raw/solusdc_2h.csv --output research/data/processed/backtest_latest.json`
+## テスト
 
-詳細は `research/README.md` を参照してください。
+```bash
+python -m unittest
+```
+
+## Research（分析）
+
+分析系は `research/` に分離しています。詳細は `research/README.md` を参照してください。
+
+例:
+
+```bash
+python -m research.scripts.fetch_ohlcv --pair SOL/USDC --timeframe 15m --years 0.5 --output research/data/raw/solusdc_15m.csv
+python -m research.scripts.run_backtest --config research/models/ema_pullback_15m_both_v0/config/current.json --bars research/data/raw/solusdc_15m.csv --output research/data/processed/backtest_latest.json
+```

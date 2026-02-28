@@ -142,7 +142,7 @@ def _default_long_15m_config(mode: str) -> BotConfig:
             "enabled": False,
             "network": "mainnet-beta",
             "pair": "SOL/USDC",
-            "direction": "LONG",
+            "direction": "BOTH",
             "signal_timeframe": "15m",
             "strategy": {
                 "name": "ema_trend_pullback_15m_v0",
@@ -217,9 +217,8 @@ def _build_model_doc_payload(
         "model_id": model_id,
         "enabled": config["enabled"],
         "mode": config["execution"]["mode"],
+        "direction": config["direction"],
     }
-    if config["strategy"]["name"] != "ema_trend_pullback_15m_v0":
-        payload["direction"] = config["direction"]
     if wallet_key_path:
         payload["wallet_key_path"] = wallet_key_path
     return payload

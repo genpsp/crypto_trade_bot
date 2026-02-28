@@ -7,6 +7,7 @@ from typing import Any, Literal, TypedDict
 Network = Literal["mainnet-beta"]
 Pair = Literal["SOL/USDC"]
 Direction = Literal["LONG", "SHORT"]
+ModelDirection = Literal["LONG", "SHORT", "BOTH"]
 SignalTimeframe = Literal["15m", "2h", "4h"]
 StrategyName = Literal["ema_trend_pullback_v0", "ema_trend_pullback_15m_v0", "storm_short_v0"]
 
@@ -50,7 +51,7 @@ class BotConfig(TypedDict):
     enabled: bool
     network: Network
     pair: Pair
-    direction: Direction
+    direction: ModelDirection
     signal_timeframe: SignalTimeframe
     strategy: StrategyConfig
     risk: RiskConfig

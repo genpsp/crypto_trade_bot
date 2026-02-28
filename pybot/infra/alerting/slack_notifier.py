@@ -106,6 +106,27 @@ class SlackNotifier:
         dedupe_key = f"trade_error:{model_id}:{result}:{summary}"
         self._send(message=message, dedupe_key=dedupe_key)
 
+    def notify_runtime_config_error(
+        self,
+        *,
+        model_id: str,
+        error: str,
+        context: str = "failed_to_load_model_config",
+    ) -> None:
+        if not self.enabled:
+            return
+        lines = [
+            f"model={model_id}",
+            f"context={context}",
+            f"error={error}",
+        ]
+        message = self._format_message(
+            "実行設定エラー",
+            lines,
+        )
+        dedupe_key = f"runtime_config_error:{model_id}:{context}:{error}"
+        self._send(message=message, dedupe_key=dedupe_key)
+
     def notify_consecutive_failures(
         self,
         *,

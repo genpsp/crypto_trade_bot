@@ -71,6 +71,36 @@ class SlackNotifierTest(unittest.TestCase):
         self.assertIn("model=ema_pullback_15m_both_v0", payload)
         self.assertEqual(0, len(logger.warnings))
 
+    def test_notify_runtime_config_error_is_deduplicated(self) -> None:
+        logger = _FakeLogger()
+        notifier = SlackNotifier(
+            config=SlackAlertConfig(
+                webhook_url="https://hooks.slack.com/services/test/test/test",
+                duplicate_suppression_seconds=300,
+            ),
+            logger=logger,
+        )
+
+        response = Mock()
+        response.raise_for_status.return_value = None
+        with patch("pybot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
+            notifier.notify_runtime_config_error(
+                model_id="ema_pullback_15m_both_v0",
+                context="failed_to_load_model_config",
+                error="models/ema_pullback_15m_both_v0.direction must be LONG, SHORT or BOTH",
+            )
+            notifier.notify_runtime_config_error(
+                model_id="ema_pullback_15m_both_v0",
+                context="failed_to_load_model_config",
+                error="models/ema_pullback_15m_both_v0.direction must be LONG, SHORT or BOTH",
+            )
+
+        self.assertEqual(1, mocked_post.call_count)
+        payload = mocked_post.call_args.kwargs["json"]["text"]  # type: ignore[index]
+        self.assertIn("実行設定エラー", payload)
+        self.assertIn("model=ema_pullback_15m_both_v0", payload)
+        self.assertIn("context=failed_to_load_model_config", payload)
+
     def test_notify_startup_formats_message_in_japanese_code_block(self) -> None:
         logger = _FakeLogger()
         notifier = SlackNotifier(

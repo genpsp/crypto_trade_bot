@@ -83,10 +83,10 @@ class FirestoreConfigRepository:
         if not isinstance(enabled, bool):
             raise RuntimeError(f"models/{model_id}.enabled must be boolean")
         direction = model_data.get("direction")
-        if direction not in ("LONG", "SHORT"):
+        if direction not in ("LONG", "SHORT", "BOTH"):
             strategy_name = self._extract_strategy_name(config_payload)
             raise RuntimeError(
-                f"models/{model_id}.direction must be LONG or SHORT "
+                f"models/{model_id}.direction must be LONG, SHORT or BOTH "
                 f"(strategy={strategy_name})"
             )
         mode = model_data.get("mode")

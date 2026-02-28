@@ -24,6 +24,7 @@ from pybot.app.usecases.usecase_utils import to_error_message
 from pybot.domain.model.types import (
     BotConfig,
     Direction,
+    ModelDirection,
     Pair,
     RunRecord,
     StrategyDecision,
@@ -114,14 +115,17 @@ def _is_long_direction(direction: str) -> bool:
     return direction == "LONG"
 
 
-def _resolve_entry_direction(runtime_config: BotConfig, decision: StrategyDecision) -> Direction:
+def _resolve_entry_direction(runtime_config: BotConfig, decision: StrategyDecision) -> Direction | None:
     if decision.type != "ENTER":
-        return runtime_config["direction"]
+        return None
 
     raw_entry_direction = (decision.diagnostics or {}).get("entry_direction")
     if raw_entry_direction in ("LONG", "SHORT"):
         return raw_entry_direction
-    return runtime_config["direction"]
+    model_direction: ModelDirection = runtime_config["direction"]
+    if model_direction in ("LONG", "SHORT"):
+        return model_direction
+    raise RuntimeError("BOTH model requires diagnostics.entry_direction to be LONG or SHORT on ENTER decision")
 
 
 def _is_execution_error_skip_summary(summary: str) -> bool:

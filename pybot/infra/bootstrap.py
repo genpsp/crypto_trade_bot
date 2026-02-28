@@ -413,12 +413,18 @@ def bootstrap() -> AppRuntime:
                 runtime_config = config_repo.get_current_config(model_id)
                 model_metadata = config_repo.get_model_metadata(model_id)
             except Exception as error:
+                error_message = str(error)
                 logger.error(
                     "failed to load model config",
                     {
                         "model_id": model_id,
-                        "error": str(error),
+                        "error": error_message,
                     },
+                )
+                notifier.notify_runtime_config_error(
+                    model_id=model_id,
+                    error=error_message,
+                    context="failed_to_load_model_config",
                 )
                 continue
 
@@ -428,9 +434,15 @@ def bootstrap() -> AppRuntime:
             mode = runtime_config["execution"]["mode"]
             wallet_key_path = (model_metadata.wallet_key_path or "").strip()
             if mode == "LIVE" and wallet_key_path == "":
+                error_message = "wallet_key_path is missing for enabled LIVE model"
                 logger.error(
                     "skipping enabled LIVE model because wallet_key_path is missing",
                     {"model_id": model_id},
+                )
+                notifier.notify_runtime_config_error(
+                    model_id=model_id,
+                    error=error_message,
+                    context="missing_wallet_key_path",
                 )
                 continue
             config_fingerprint = hashlib.sha1(
