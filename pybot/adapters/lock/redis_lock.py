@@ -71,6 +71,10 @@ class RedisLockAdapter(LockPort):
         key = self._entry_idem_key(bar_close_time_iso)
         return self.redis.get(key) is not None
 
+    def clear_entry_attempt(self, bar_close_time_iso: str) -> None:
+        key = self._entry_idem_key(bar_close_time_iso)
+        self.redis.delete(key)
+
     def set_inflight_tx(self, signature: str, ttl_seconds: int) -> None:
         self.redis.set(self._inflight_tx_key(signature), "1", ex=ttl_seconds)
 

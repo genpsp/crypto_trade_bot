@@ -54,6 +54,15 @@ class RedisLockAdapterTest(unittest.TestCase):
         self.assertTrue(lock.has_inflight_tx("sig-123"))
         redis.get.assert_called_once_with("tx:inflight:ema_pullback_15m_both_v0:sig-123")
 
+    def test_clear_entry_attempt_deletes_namespaced_key(self) -> None:
+        redis = Mock()
+        logger = StubLogger()
+        lock = RedisLockAdapter(redis, logger, lock_namespace="ema_pullback_15m_both_v0")
+
+        lock.clear_entry_attempt("2026-02-28T03:00:00Z")
+
+        redis.delete.assert_called_once_with("idem:entry:ema_pullback_15m_both_v0:2026-02-28T03:00:00Z")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -39,6 +39,7 @@ SOL_FEE_RESERVE = 0.02
 ENTRY_RETRY_ATTEMPTS = 3
 ENTRY_RETRY_DELAY_SECONDS = 0.4
 ENTRY_FINAL_RETRY_SLIPPAGE_INCREMENT_BPS = 1
+ENTRY_BALANCE_USAGE_RATIO = 0.99
 
 
 @dataclass
@@ -139,10 +140,11 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
         if direction == "LONG":
             available_quote_usdc = float(execution.get_available_quote_usdc(config["pair"]))
             available_quote_atomic = to_atomic_amount_down(max(available_quote_usdc, 0.0), USDC_ATOMIC_MULTIPLIER)
-            base_notional_usdc = round_to(available_quote_atomic / USDC_ATOMIC_MULTIPLIER, 6)
+            usable_quote_atomic = scale_atomic_amount_down(available_quote_atomic, ENTRY_BALANCE_USAGE_RATIO)
+            base_notional_usdc = round_to(usable_quote_atomic / USDC_ATOMIC_MULTIPLIER, 6)
             amount_atomic = min(
-                scale_atomic_amount_down(available_quote_atomic, position_size_multiplier),
-                available_quote_atomic,
+                scale_atomic_amount_down(usable_quote_atomic, position_size_multiplier),
+                usable_quote_atomic,
             )
             effective_notional_usdc = round_to(amount_atomic / USDC_ATOMIC_MULTIPLIER, 6)
         else:
@@ -152,10 +154,11 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             if mark_price <= 0:
                 raise RuntimeError("mark price for short model is invalid")
             available_base_atomic = to_atomic_amount_down(shortable_sol, SOL_ATOMIC_MULTIPLIER)
-            base_notional_usdc = round_to((available_base_atomic / SOL_ATOMIC_MULTIPLIER) * mark_price, 6)
+            usable_base_atomic = scale_atomic_amount_down(available_base_atomic, ENTRY_BALANCE_USAGE_RATIO)
+            base_notional_usdc = round_to((usable_base_atomic / SOL_ATOMIC_MULTIPLIER) * mark_price, 6)
             amount_atomic = min(
-                scale_atomic_amount_down(available_base_atomic, position_size_multiplier),
-                available_base_atomic,
+                scale_atomic_amount_down(usable_base_atomic, position_size_multiplier),
+                usable_base_atomic,
             )
             effective_notional_usdc = round_to((amount_atomic / SOL_ATOMIC_MULTIPLIER) * mark_price, 6)
             entry_side = "SELL_SOL_FOR_USDC"

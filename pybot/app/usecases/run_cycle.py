@@ -132,6 +132,13 @@ def _is_execution_error_skip_summary(summary: str) -> bool:
     return classify_execution_error(normalized).action == "SKIP"
 
 
+def _should_clear_entry_idem_after_entry_skip(summary: str) -> bool:
+    normalized = summary.strip().lower()
+    return normalized.startswith("skipped: slippage exceeded") or normalized.startswith(
+        "skipped: route/liquidity unavailable"
+    )
+
+
 def _should_persist_run_record(run: RunRecord) -> bool:
     result = str(run.get("result") or "")
     if result in ("OPENED", "CLOSED", "FAILED"):
@@ -472,6 +479,8 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
         if opened.status == "OPENED":
             run["result"] = "OPENED"
         elif opened.status == "SKIPPED":
+            if _should_clear_entry_idem_after_entry_skip(opened.summary):
+                lock.clear_entry_attempt(bar_close_time_iso)
             run["result"] = "SKIPPED"
         elif opened.status == "CANCELED":
             run["result"] = "SKIPPED_ENTRY"

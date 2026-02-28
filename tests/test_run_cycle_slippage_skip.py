@@ -87,6 +87,9 @@ class DummyLock:
     def has_entry_attempt(self, bar_close_time_iso: str) -> bool:
         return bar_close_time_iso in self.entry_attempts
 
+    def clear_entry_attempt(self, bar_close_time_iso: str) -> None:
+        self.entry_attempts.discard(bar_close_time_iso)
+
     def set_inflight_tx(self, signature: str, ttl_seconds: int) -> None:
         self.inflight.add(signature)
         _ = ttl_seconds
@@ -278,6 +281,122 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         self.assertEqual("trade_slippage_skip", run["trade_id"])
         self.assertGreaterEqual(len(persistence.saved_runs), 1)
         self.assertEqual("SKIPPED", persistence.saved_runs[-1]["result"])
+
+    def test_entry_slippage_skip_clears_idem_and_allows_recheck_on_same_bar(self) -> None:
+        config = _build_config()
+        bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)
+        bars = [
+            OhlcvBar(
+                open_time=bar_close - timedelta(minutes=15),
+                close_time=bar_close,
+                open=99.5,
+                high=100.5,
+                low=99.0,
+                close=100.0,
+                volume=1000.0,
+            )
+        ]
+        lock = DummyLock()
+        persistence = DummyPersistence(config)
+        deps = RunCycleDependencies(
+            execution=DummyExecution(),
+            lock=lock,
+            logger=DummyLogger(),
+            market_data=DummyMarketData(bars),
+            persistence=persistence,
+            model_id="ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
+        )
+        decision = EntrySignalDecision(
+            type="ENTER",
+            summary="enter",
+            ema_fast=101.0,
+            ema_slow=100.0,
+            entry_price=100.0,
+            stop_price=99.0,
+            take_profit_price=101.5,
+        )
+
+        with patch("pybot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
+            "pybot.app.usecases.run_cycle.open_position",
+            side_effect=[
+                OpenPositionResult(
+                    status="SKIPPED",
+                    trade_id="trade_slippage_skip",
+                    summary="SKIPPED: slippage exceeded",
+                ),
+                OpenPositionResult(
+                    status="OPENED",
+                    trade_id="trade_opened_after_retry_window",
+                    summary="OPENED: mocked",
+                ),
+            ],
+        ) as mocked_open_position:
+            first_run = run_cycle(deps)
+            second_run = run_cycle(deps)
+
+        self.assertEqual("SKIPPED", first_run["result"])
+        self.assertEqual("OPENED", second_run["result"])
+        self.assertEqual(2, mocked_open_position.call_count)
+        self.assertIn("2026-02-25T10:00:00Z", lock.entry_attempts)
+
+    def test_entry_market_condition_skip_clears_idem_and_allows_recheck_on_same_bar(self) -> None:
+        config = _build_config()
+        bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)
+        bars = [
+            OhlcvBar(
+                open_time=bar_close - timedelta(minutes=15),
+                close_time=bar_close,
+                open=99.5,
+                high=100.5,
+                low=99.0,
+                close=100.0,
+                volume=1000.0,
+            )
+        ]
+        lock = DummyLock()
+        persistence = DummyPersistence(config)
+        deps = RunCycleDependencies(
+            execution=DummyExecution(),
+            lock=lock,
+            logger=DummyLogger(),
+            market_data=DummyMarketData(bars),
+            persistence=persistence,
+            model_id="ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
+        )
+        decision = EntrySignalDecision(
+            type="ENTER",
+            summary="enter",
+            ema_fast=101.0,
+            ema_slow=100.0,
+            entry_price=100.0,
+            stop_price=99.0,
+            take_profit_price=101.5,
+        )
+
+        with patch("pybot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
+            "pybot.app.usecases.run_cycle.open_position",
+            side_effect=[
+                OpenPositionResult(
+                    status="SKIPPED",
+                    trade_id="trade_route_skip",
+                    summary="SKIPPED: route/liquidity unavailable",
+                ),
+                OpenPositionResult(
+                    status="OPENED",
+                    trade_id="trade_opened_after_route_retry_window",
+                    summary="OPENED: mocked",
+                ),
+            ],
+        ) as mocked_open_position:
+            first_run = run_cycle(deps)
+            second_run = run_cycle(deps)
+
+        self.assertEqual("SKIPPED", first_run["result"])
+        self.assertEqual("OPENED", second_run["result"])
+        self.assertEqual(2, mocked_open_position.call_count)
+        self.assertIn("2026-02-25T10:00:00Z", lock.entry_attempts)
 
     def test_exit_slippage_skip_is_saved_as_skipped_run(self) -> None:
         config = _build_config()

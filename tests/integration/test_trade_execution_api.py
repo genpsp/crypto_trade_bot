@@ -69,6 +69,9 @@ class InMemoryLock:
     def has_entry_attempt(self, bar_close_time_iso: str) -> bool:
         return bar_close_time_iso in self.entry
 
+    def clear_entry_attempt(self, bar_close_time_iso: str) -> None:
+        self.entry.discard(bar_close_time_iso)
+
     def set_inflight_tx(self, signature: str, ttl_seconds: int) -> None:
         self.inflight[signature] = ttl_seconds
 
@@ -275,6 +278,7 @@ class TradeExecutionApiTest(unittest.TestCase):
 
         with MockServer(responder):
             config = _build_config()
+            config["execution"]["min_notional_usdc"] = 20
             persistence = InMemoryPersistence(config)
             lock = InMemoryLock()
             logger = InMemoryLogger()
@@ -354,6 +358,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                 swap_url,
             ):
                 config = _build_config()
+                config["execution"]["min_notional_usdc"] = 20
                 persistence = InMemoryPersistence(config)
                 lock = InMemoryLock()
                 logger = InMemoryLogger()
@@ -1164,9 +1169,9 @@ class TradeExecutionApiTest(unittest.TestCase):
         )
 
         self.assertEqual("OPENED", opened.status)
-        self.assertEqual([38_717_328], execution.submitted_amounts)
+        self.assertEqual([38_330_154], execution.submitted_amounts)
         trade = persistence.trades[opened.trade_id]
-        self.assertAlmostEqual(38.717328, float(trade["plan"]["notional_usdc"]), places=6)
+        self.assertAlmostEqual(38.330154, float(trade["plan"]["notional_usdc"]), places=6)
 
     def test_open_position_short_entry_amount_never_exceeds_available_base(self) -> None:
         config = _build_config()
@@ -1246,7 +1251,7 @@ class TradeExecutionApiTest(unittest.TestCase):
         )
 
         self.assertEqual("OPENED", opened.status)
-        self.assertEqual([333_333_333], execution.submitted_amounts)
+        self.assertEqual([329_999_999], execution.submitted_amounts)
         self.assertLessEqual(execution.submitted_amounts[0], 333_333_333)
 
     def test_open_position_persists_entry_fee_lamports_when_supported(self) -> None:
