@@ -21,6 +21,7 @@ SOL_ATOMIC_MULTIPLIER = 1_000_000_000
 USDC_ATOMIC_MULTIPLIER = 1_000_000
 SWAP_RETRY_ATTEMPTS = 4
 SWAP_RETRY_BASE_DELAY_SECONDS = 0.35
+SWAP_HTTP_TIMEOUT_SECONDS = 8
 
 
 class JupiterSwapAdapter(ExecutionPort):
@@ -109,7 +110,7 @@ class JupiterSwapAdapter(ExecutionPort):
             lambda: requests.post(
                 SWAP_API_URL,
                 json=payload,
-                timeout=30,
+                timeout=SWAP_HTTP_TIMEOUT_SECONDS,
                 headers={"Content-Type": "application/json"},
             ),
             attempts=SWAP_RETRY_ATTEMPTS,

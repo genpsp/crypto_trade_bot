@@ -125,9 +125,11 @@ docker compose up --build
 
 - モデル設定は `models/{model_id}/config/current` で完結
 - `model_id` 単位で独立実行されます
+- Firestore 設定はリアルタイムリスナーで監視し、`models/{model_id}` と `models/{model_id}/config/current` の変更を即時反映します
+- 毎サイクルの Firestore 設定再読込は行いません（イベント駆動 + 15分のフォールバック再同期）
 - 例:
   - `ema_pullback_2h_long_v0` (`LONG`, `ema_trend_pullback_v0`)
-  - `ema_pullback_15m_both_v0` (`BOTH`, `ema_trend_pullback_15m_v0`)
+  - `ema_pullback_15m_both_v0` (`LONG`, `ema_trend_pullback_15m_v0`) ※戦略診断で `entry_direction` を切替
   - `storm_2h_short_v0` (`SHORT`, `storm_short_v0`)
 
 注意:

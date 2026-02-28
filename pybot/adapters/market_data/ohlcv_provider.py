@@ -13,6 +13,7 @@ from pybot.domain.utils.time import get_bar_duration_seconds
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 MAX_OHLCV_LIMIT = 1000
 DEFAULT_OHLCV_CACHE_TTL_SECONDS = 30
+OHLCV_HTTP_TIMEOUT_SECONDS = 8
 PAIR_SYMBOL_MAP: dict[Pair, str] = {"SOL/USDC": "SOLUSDC"}
 TIMEFRAME_TO_BINANCE_INTERVAL: dict[SignalTimeframe, str] = {"15m": "15m", "2h": "2h", "4h": "4h"}
 
@@ -71,7 +72,7 @@ class OhlcvProvider(MarketDataPort):
         if end_time_ms is not None:
             params["endTime"] = str(end_time_ms)
 
-        response = requests.get(BINANCE_KLINES_URL, params=params, timeout=30)
+        response = requests.get(BINANCE_KLINES_URL, params=params, timeout=OHLCV_HTTP_TIMEOUT_SECONDS)
         if response.status_code != 200:
             raise RuntimeError(f"Failed to fetch OHLCV: HTTP {response.status_code}")
 

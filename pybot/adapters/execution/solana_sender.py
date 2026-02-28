@@ -19,6 +19,7 @@ from pybot.app.ports.logger_port import LoggerPort
 
 RPC_RETRY_ATTEMPTS = 4
 RPC_RETRY_BASE_DELAY_SECONDS = 0.35
+RPC_HTTP_TIMEOUT_SECONDS = 8
 RETRIABLE_RPC_ERROR_CODES = {-32005, -32004, -32603}
 RETRIABLE_RPC_ERROR_MARKERS = (
     "too many requests",
@@ -170,7 +171,7 @@ class SolanaSender:
         }
         for attempt in range(1, RPC_RETRY_ATTEMPTS + 1):
             try:
-                response = requests.post(self.rpc_url, json=payload, timeout=30)
+                response = requests.post(self.rpc_url, json=payload, timeout=RPC_HTTP_TIMEOUT_SECONDS)
             except requests.RequestException as error:
                 if attempt < RPC_RETRY_ATTEMPTS:
                     time.sleep(retry_delay_seconds(RPC_RETRY_BASE_DELAY_SECONDS, attempt))
@@ -224,7 +225,7 @@ class SolanaSender:
         return result
 
     def confirm_signature(
-        self, signature: str, timeout_ms: int, poll_interval_ms: int = 2000
+        self, signature: str, timeout_ms: int, poll_interval_ms: int = 1000
     ) -> SignatureConfirmation:
         started_at = int(time.time() * 1000)
         while int(time.time() * 1000) - started_at <= timeout_ms:

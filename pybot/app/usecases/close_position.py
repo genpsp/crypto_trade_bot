@@ -23,13 +23,14 @@ from pybot.domain.utils.math import round_to, to_atomic_amount_down
 
 SOL_ATOMIC_MULTIPLIER = 1_000_000_000
 USDC_ATOMIC_MULTIPLIER = 1_000_000
-TX_CONFIRM_TIMEOUT_MS = 75_000
+TX_CONFIRM_TIMEOUT_MS = 20_000
 TX_INFLIGHT_TTL_SECONDS = 180
 MIN_ATOMIC_AMOUNT = 1
 DEFAULT_EXIT_RETRY_ATTEMPTS = 2
 STOP_LOSS_EXIT_RETRY_ATTEMPTS = 5
-DEFAULT_EXIT_RETRY_DELAY_SECONDS = 0.8
-STOP_LOSS_EXIT_RETRY_DELAY_SECONDS = 0.15
+DEFAULT_EXIT_RETRY_BASE_DELAY_SECONDS = 0.3
+STOP_LOSS_EXIT_RETRY_BASE_DELAY_SECONDS = 0.1
+EXIT_RETRY_MAX_DELAY_SECONDS = 1.0
 TAKE_PROFIT_EXIT_MAX_SLIPPAGE_BPS = 30
 STOP_LOSS_EXIT_MAX_SLIPPAGE_BPS = 120
 
@@ -62,6 +63,11 @@ def _next_slippage_bps(current_slippage_bps: int, max_slippage_bps: int) -> int:
         return current_slippage_bps
     widened = max(current_slippage_bps + 1, current_slippage_bps * 2)
     return min(widened, max_slippage_bps)
+
+
+def _retry_delay_seconds(base_delay_seconds: float, attempt: int) -> float:
+    delay = base_delay_seconds * (2 ** max(attempt - 1, 0))
+    return min(delay, EXIT_RETRY_MAX_DELAY_SECONDS)
 
 
 def close_position(
@@ -189,10 +195,10 @@ def close_position(
         if close_reason == "STOP_LOSS"
         else DEFAULT_EXIT_RETRY_ATTEMPTS
     )
-    retry_delay_seconds = (
-        STOP_LOSS_EXIT_RETRY_DELAY_SECONDS
+    retry_base_delay_seconds = (
+        STOP_LOSS_EXIT_RETRY_BASE_DELAY_SECONDS
         if close_reason == "STOP_LOSS"
-        else DEFAULT_EXIT_RETRY_DELAY_SECONDS
+        else DEFAULT_EXIT_RETRY_BASE_DELAY_SECONDS
     )
     current_slippage_bps = int(config["execution"]["slippage_bps"])
     max_exit_slippage_bps = (
@@ -289,8 +295,7 @@ def close_position(
                         lock.clear_inflight_tx(submission.tx_signature)
                         inflight_submission = None
                         inflight_exit_result = None
-                        if retry_delay_seconds > 0:
-                            time.sleep(retry_delay_seconds)
+                        time.sleep(_retry_delay_seconds(retry_base_delay_seconds, attempt))
                         continue
                     if close_reason == "TAKE_PROFIT":
                         lock.clear_inflight_tx(submission.tx_signature)
@@ -326,8 +331,7 @@ def close_position(
                             "tx_signature": submission.tx_signature,
                         },
                     )
-                    if retry_delay_seconds > 0:
-                        time.sleep(retry_delay_seconds)
+                    time.sleep(_retry_delay_seconds(retry_base_delay_seconds, attempt))
                     continue
 
                 lock.clear_inflight_tx(submission.tx_signature)
@@ -449,8 +453,7 @@ def close_position(
                         lock.clear_inflight_tx(submission.tx_signature)
                         inflight_submission = None
                         inflight_exit_result = None
-                    if retry_delay_seconds > 0:
-                        time.sleep(retry_delay_seconds)
+                    time.sleep(_retry_delay_seconds(retry_base_delay_seconds, attempt))
                     continue
                 if close_reason == "TAKE_PROFIT":
                     if submission is not None and lock.has_inflight_tx(submission.tx_signature):
@@ -500,8 +503,7 @@ def close_position(
                             "error": last_error_message,
                         },
                     )
-                if retry_delay_seconds > 0:
-                    time.sleep(retry_delay_seconds)
+                time.sleep(_retry_delay_seconds(retry_base_delay_seconds, attempt))
                 continue
 
             if submission is not None and lock.has_inflight_tx(submission.tx_signature):

@@ -15,6 +15,7 @@ USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 QUOTE_RETRY_ATTEMPTS = 4
 QUOTE_RETRY_BASE_DELAY_SECONDS = 0.35
 MARK_PRICE_QUOTE_CACHE_TTL_SECONDS = 2
+QUOTE_HTTP_TIMEOUT_SECONDS = 8
 
 
 def get_mints(side: SwapSide) -> tuple[str, str]:
@@ -98,7 +99,7 @@ class JupiterQuoteClient:
 
         try:
             response = request_with_retry(
-                lambda: requests.get(QUOTE_API_URL, params=params, timeout=30),
+                lambda: requests.get(QUOTE_API_URL, params=params, timeout=QUOTE_HTTP_TIMEOUT_SECONDS),
                 attempts=QUOTE_RETRY_ATTEMPTS,
                 base_delay_seconds=QUOTE_RETRY_BASE_DELAY_SECONDS,
                 context="Jupiter quote failed",

@@ -33,11 +33,12 @@ from pybot.domain.utils.time import build_trade_id
 
 USDC_ATOMIC_MULTIPLIER = 1_000_000
 SOL_ATOMIC_MULTIPLIER = 1_000_000_000
-TX_CONFIRM_TIMEOUT_MS = 75_000
+TX_CONFIRM_TIMEOUT_MS = 20_000
 TX_INFLIGHT_TTL_SECONDS = 180
 SOL_FEE_RESERVE = 0.02
 ENTRY_RETRY_ATTEMPTS = 3
-ENTRY_RETRY_DELAY_SECONDS = 0.4
+ENTRY_RETRY_BASE_DELAY_SECONDS = 0.2
+ENTRY_RETRY_MAX_DELAY_SECONDS = 1.2
 ENTRY_FINAL_RETRY_SLIPPAGE_INCREMENT_BPS = 1
 ENTRY_BALANCE_USAGE_RATIO = 0.99
 
@@ -76,6 +77,11 @@ def _next_entry_retry_slippage_bps(
     if next_attempt < max_attempts:
         return configured_slippage_bps
     return configured_slippage_bps + ENTRY_FINAL_RETRY_SLIPPAGE_INCREMENT_BPS
+
+
+def _entry_retry_delay_seconds(attempt: int) -> float:
+    delay = ENTRY_RETRY_BASE_DELAY_SECONDS * (2 ** max(attempt - 1, 0))
+    return min(delay, ENTRY_RETRY_MAX_DELAY_SECONDS)
 
 
 def _resolve_regime_and_multiplier(signal: EntrySignalDecision) -> tuple[str, float]:
@@ -420,7 +426,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                         inflight_submission = None
                         inflight_entry_result = None
                         inflight_before_balances = None
-                        time.sleep(ENTRY_RETRY_DELAY_SECONDS)
+                        time.sleep(_entry_retry_delay_seconds(attempt))
                         continue
                     lock.clear_inflight_tx(submission.tx_signature)
                     inflight_submission = None
@@ -447,7 +453,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                             "tx_signature": submission.tx_signature,
                         },
                     )
-                    time.sleep(ENTRY_RETRY_DELAY_SECONDS)
+                    time.sleep(_entry_retry_delay_seconds(attempt))
                     continue
 
                 lock.clear_inflight_tx(submission.tx_signature)
@@ -517,7 +523,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                         inflight_submission = None
                         inflight_entry_result = None
                         inflight_before_balances = None
-                    time.sleep(ENTRY_RETRY_DELAY_SECONDS)
+                    time.sleep(_entry_retry_delay_seconds(attempt))
                     continue
                 if submission is not None and lock.has_inflight_tx(submission.tx_signature):
                     lock.clear_inflight_tx(submission.tx_signature)
@@ -563,7 +569,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                             "error": last_error_message,
                         },
                     )
-                time.sleep(ENTRY_RETRY_DELAY_SECONDS)
+                time.sleep(_entry_retry_delay_seconds(attempt))
                 continue
 
             if submission is not None and lock.has_inflight_tx(submission.tx_signature):

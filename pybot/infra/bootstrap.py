@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import hashlib
+import json
 import threading
 from typing import Any, Callable
 
@@ -43,6 +45,8 @@ DAILY_SUMMARY_JST_START_MINUTE = 5
 DAILY_SUMMARY_JST_END_MINUTE_EXCLUSIVE = 15
 DAILY_SUMMARY_LOCK_TTL_SECONDS = 60 * 60 * 48
 DAILY_SUMMARY_LOCK_KEY_PREFIX = "alert:daily_summary:jst"
+RUNTIME_REFRESH_INTERVAL_SECONDS = 180
+RUNTIME_REFRESH_FALLBACK_INTERVAL_SECONDS = 900
 
 
 @dataclass
@@ -68,6 +72,7 @@ class ModelRuntimeSpec:
     direction: str
     strategy: str
     wallet_key_path: str
+    config_fingerprint: str
 
 
 def _should_execute_cycle(
@@ -118,6 +123,13 @@ def bootstrap() -> AppRuntime:
     warned_no_models = False
     warned_no_enabled_models = False
     runtime_pause_state: bool | None = None
+    last_runtime_refresh_at: datetime | None = None
+    last_pause_refresh_at: datetime | None = None
+    runtime_refresh_needed = threading.Event()
+    runtime_refresh_needed.set()
+    listener_state_lock = threading.Lock()
+    models_collection_listener: Any | None = None
+    model_config_listeners: dict[str, Any] = {}
     notifier = SlackNotifier(
         config=SlackAlertConfig(
             webhook_url=env.SLACK_WEBHOOK_URL,
@@ -141,7 +153,68 @@ def bootstrap() -> AppRuntime:
             "direction": spec.direction,
             "strategy": spec.strategy,
             "wallet_key_path": spec.wallet_key_path,
+            "config_fingerprint": spec.config_fingerprint,
         }
+
+    def _unsubscribe_watch(handle: Any) -> None:
+        if handle is None:
+            return
+        unsubscribe = getattr(handle, "unsubscribe", None)
+        if callable(unsubscribe):
+            try:
+                unsubscribe()
+            except Exception:
+                pass
+
+    def _mark_runtime_refresh_needed(reason: str) -> None:
+        if runtime_refresh_needed.is_set():
+            return
+        runtime_refresh_needed.set()
+        logger.info("runtime refresh scheduled from Firestore change", {"reason": reason})
+
+    def _on_models_collection_snapshot(_docs: Any, _changes: Any, _read_time: Any) -> None:
+        _mark_runtime_refresh_needed("models_collection_changed")
+
+    def _on_model_config_snapshot(model_id: str, _docs: Any, _changes: Any, _read_time: Any) -> None:
+        _mark_runtime_refresh_needed(f"config_changed:{model_id}")
+
+    def _sync_model_config_watchers(model_ids: list[str]) -> None:
+        with listener_state_lock:
+            target_ids = set(model_ids)
+            current_ids = set(model_config_listeners.keys())
+
+            removed_ids = current_ids - target_ids
+            for removed_id in removed_ids:
+                _unsubscribe_watch(model_config_listeners.pop(removed_id, None))
+
+            added_ids = target_ids - current_ids
+            for added_id in sorted(added_ids):
+                config_doc_ref = firestore.collection("models").document(added_id).collection("config").document("current")
+                model_config_listeners[added_id] = config_doc_ref.on_snapshot(
+                    lambda docs, changes, read_time, mid=added_id: _on_model_config_snapshot(
+                        mid,
+                        docs,
+                        changes,
+                        read_time,
+                    )
+                )
+
+    def _start_firestore_watchers() -> None:
+        nonlocal models_collection_listener
+        with listener_state_lock:
+            if models_collection_listener is None:
+                models_collection_listener = firestore.collection("models").on_snapshot(_on_models_collection_snapshot)
+            existing_model_ids = config_repo.list_model_ids()
+        _sync_model_config_watchers(existing_model_ids)
+
+    def _stop_firestore_watchers() -> None:
+        nonlocal models_collection_listener
+        with listener_state_lock:
+            _unsubscribe_watch(models_collection_listener)
+            models_collection_listener = None
+            for listener in model_config_listeners.values():
+                _unsubscribe_watch(listener)
+            model_config_listeners.clear()
 
     def _current_runtime_summaries() -> list[dict[str, str]]:
         return [_build_runtime_summary(runtime_specs[mid]) for mid in sorted(runtime_specs.keys())]
@@ -306,14 +379,14 @@ def bootstrap() -> AppRuntime:
             lock=RedisLockAdapter(redis, logger, lock_namespace=spec.model_id),
         )
 
-    def _load_enabled_model_specs() -> dict[str, ModelRuntimeSpec]:
+    def _load_enabled_model_specs() -> tuple[dict[str, ModelRuntimeSpec], list[str]]:
         nonlocal warned_no_models
         model_ids = config_repo.list_model_ids()
         if not model_ids:
             if not warned_no_models:
                 logger.warn("no models found in Firestore models collection")
             warned_no_models = True
-            return {}
+            return {}, []
         warned_no_models = False
 
         specs: dict[str, ModelRuntimeSpec] = {}
@@ -342,6 +415,9 @@ def bootstrap() -> AppRuntime:
                     {"model_id": model_id},
                 )
                 continue
+            config_fingerprint = hashlib.sha1(
+                json.dumps(runtime_config, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
 
             specs[model_id] = ModelRuntimeSpec(
                 model_id=model_id,
@@ -350,12 +426,18 @@ def bootstrap() -> AppRuntime:
                 direction=runtime_config["direction"],
                 strategy=runtime_config["strategy"]["name"],
                 wallet_key_path=wallet_key_path,
+                config_fingerprint=config_fingerprint,
             )
-        return specs
+        return specs, model_ids
 
-    def _refresh_model_contexts(*, force_log_runtime_summary: bool = False) -> list[ModelRuntimeContext]:
-        nonlocal warned_no_enabled_models
-        desired_specs = _load_enabled_model_specs()
+    def _refresh_model_contexts(
+        *,
+        force_log_runtime_summary: bool = False,
+        mark_refreshed_at: bool = True,
+    ) -> list[ModelRuntimeContext]:
+        nonlocal warned_no_enabled_models, last_runtime_refresh_at
+        desired_specs, all_model_ids = _load_enabled_model_specs()
+        _sync_model_config_watchers(all_model_ids)
         changed = False
 
         for model_id in list(model_contexts.keys()):
@@ -415,13 +497,32 @@ def bootstrap() -> AppRuntime:
                     "enabled_models": runtime_summaries,
                 },
             )
+        if mark_refreshed_at:
+            last_runtime_refresh_at = datetime.now(tz=UTC)
+        runtime_refresh_needed.clear()
 
         return _active_model_contexts()
 
-    def _is_runtime_paused() -> bool:
-        nonlocal runtime_pause_state
-        if runtime_pause_state is not None:
-            return runtime_pause_state
+    def _refresh_model_contexts_if_due() -> list[ModelRuntimeContext]:
+        now = datetime.now(tz=UTC)
+        should_refresh = runtime_refresh_needed.is_set()
+        if last_runtime_refresh_at is None:
+            should_refresh = True
+        elif (now - last_runtime_refresh_at).total_seconds() >= RUNTIME_REFRESH_FALLBACK_INTERVAL_SECONDS:
+            should_refresh = True
+        if should_refresh:
+            return _refresh_model_contexts(mark_refreshed_at=True)
+        return _active_model_contexts()
+
+    def _is_runtime_paused(*, force_refresh: bool = False) -> bool:
+        nonlocal runtime_pause_state, last_pause_refresh_at
+        now = datetime.now(tz=UTC)
+        should_refresh = force_refresh or runtime_pause_state is None or last_pause_refresh_at is None
+        if not should_refresh:
+            elapsed_seconds = (now - last_pause_refresh_at).total_seconds()
+            should_refresh = elapsed_seconds >= RUNTIME_REFRESH_INTERVAL_SECONDS
+        if not should_refresh:
+            return bool(runtime_pause_state)
 
         try:
             paused = config_repo.is_global_pause_enabled()
@@ -432,10 +533,20 @@ def bootstrap() -> AppRuntime:
             )
             paused = False
 
+        previous_pause_state = runtime_pause_state
         runtime_pause_state = paused
-        if paused:
+        last_pause_refresh_at = now
+        if paused and previous_pause_state is not True:
             logger.warn(
                 "runtime globally paused",
+                {
+                    "control_doc": f"{GLOBAL_CONTROL_COLLECTION_ID}/{GLOBAL_CONTROL_DOC_ID}",
+                    "field": GLOBAL_CONTROL_PAUSE_FIELD,
+                },
+            )
+        if previous_pause_state is True and not paused:
+            logger.info(
+                "runtime global pause released",
                 {
                     "control_doc": f"{GLOBAL_CONTROL_COLLECTION_ID}/{GLOBAL_CONTROL_DOC_ID}",
                     "field": GLOBAL_CONTROL_PAUSE_FIELD,
@@ -481,7 +592,7 @@ def bootstrap() -> AppRuntime:
         )
 
     def execute_cycle_for_all_models() -> None:
-        contexts = _active_model_contexts()
+        contexts = _refresh_model_contexts_if_due()
         paused = _is_runtime_paused()
         is_five_minute_window = True
         for context in contexts:
@@ -496,7 +607,7 @@ def bootstrap() -> AppRuntime:
             execute_cycle_for_model(context, open_trade)
 
     def execute_scheduled_cycle() -> None:
-        contexts = _active_model_contexts()
+        contexts = _refresh_model_contexts_if_due()
         paused = _is_runtime_paused()
         now = datetime.now(tz=UTC)
         is_five_minute_window = now.minute % 5 == 0
@@ -517,9 +628,10 @@ def bootstrap() -> AppRuntime:
     def start() -> None:
         nonlocal scheduler, watchdog_thread
         logger.info("bot startup: run first cycle immediately")
+        _start_firestore_watchers()
         contexts = _refresh_model_contexts(force_log_runtime_summary=True)
         notifier.notify_startup(_current_runtime_summaries())
-        paused = _is_runtime_paused()
+        paused = _is_runtime_paused(force_refresh=True)
         is_five_minute_window = True
         for context in contexts:
             open_trade = context.persistence.find_open_trade(context.pair)
@@ -551,6 +663,7 @@ def bootstrap() -> AppRuntime:
             redis.close()
         except Exception:
             pass
+        _stop_firestore_watchers()
         logger.info("bot stopped")
 
     return AppRuntime(start=start, stop=stop)
