@@ -48,7 +48,8 @@ from pybot.domain.utils.time import (
     get_utc_day_range,
 )
 
-RUN_LOCK_TTL_SECONDS = 240
+RUN_LOCK_TTL_SECONDS = 600
+MIN_REQUIRED_RUN_LOCK_TTL_SECONDS = 480
 ENTRY_IDEM_TTL_SECONDS = 12 * 60 * 60
 DEFAULT_OHLCV_LIMIT = 300
 OHLCV_LIMIT_FOR_15M_UPPER_TREND = 600
@@ -169,6 +170,11 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
         "result": "FAILED",
         "summary": "FAILED: run initialization",
     }
+
+    if RUN_LOCK_TTL_SECONDS < MIN_REQUIRED_RUN_LOCK_TTL_SECONDS:
+        raise RuntimeError(
+            f"RUN_LOCK_TTL_SECONDS must be >= {MIN_REQUIRED_RUN_LOCK_TTL_SECONDS}, got {RUN_LOCK_TTL_SECONDS}"
+        )
 
     locked = lock.acquire_runner_lock(RUN_LOCK_TTL_SECONDS)
     if not locked:

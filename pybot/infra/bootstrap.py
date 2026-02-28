@@ -45,7 +45,6 @@ DAILY_SUMMARY_JST_START_MINUTE = 5
 DAILY_SUMMARY_JST_END_MINUTE_EXCLUSIVE = 15
 DAILY_SUMMARY_LOCK_TTL_SECONDS = 60 * 60 * 48
 DAILY_SUMMARY_LOCK_KEY_PREFIX = "alert:daily_summary:jst"
-RUNTIME_REFRESH_INTERVAL_SECONDS = 180
 RUNTIME_REFRESH_FALLBACK_INTERVAL_SECONDS = 900
 
 
@@ -124,12 +123,14 @@ def bootstrap() -> AppRuntime:
     warned_no_enabled_models = False
     runtime_pause_state: bool | None = None
     last_runtime_refresh_at: datetime | None = None
-    last_pause_refresh_at: datetime | None = None
     runtime_refresh_needed = threading.Event()
     runtime_refresh_needed.set()
     listener_state_lock = threading.Lock()
     models_collection_listener: Any | None = None
+    global_control_listener: Any | None = None
     model_config_listeners: dict[str, Any] = {}
+    pause_refresh_needed = threading.Event()
+    pause_refresh_needed.set()
     notifier = SlackNotifier(
         config=SlackAlertConfig(
             webhook_url=env.SLACK_WEBHOOK_URL,
@@ -178,6 +179,15 @@ def bootstrap() -> AppRuntime:
     def _on_model_config_snapshot(model_id: str, _docs: Any, _changes: Any, _read_time: Any) -> None:
         _mark_runtime_refresh_needed(f"config_changed:{model_id}")
 
+    def _mark_pause_refresh_needed(reason: str) -> None:
+        if pause_refresh_needed.is_set():
+            return
+        pause_refresh_needed.set()
+        logger.info("pause refresh scheduled from Firestore change", {"reason": reason})
+
+    def _on_global_control_snapshot(_docs: Any, _changes: Any, _read_time: Any) -> None:
+        _mark_pause_refresh_needed("control_global_changed")
+
     def _sync_model_config_watchers(model_ids: list[str]) -> None:
         with listener_state_lock:
             target_ids = set(model_ids)
@@ -200,18 +210,26 @@ def bootstrap() -> AppRuntime:
                 )
 
     def _start_firestore_watchers() -> None:
-        nonlocal models_collection_listener
+        nonlocal models_collection_listener, global_control_listener
         with listener_state_lock:
             if models_collection_listener is None:
                 models_collection_listener = firestore.collection("models").on_snapshot(_on_models_collection_snapshot)
+            if global_control_listener is None:
+                global_control_listener = (
+                    firestore.collection(GLOBAL_CONTROL_COLLECTION_ID)
+                    .document(GLOBAL_CONTROL_DOC_ID)
+                    .on_snapshot(_on_global_control_snapshot)
+                )
             existing_model_ids = config_repo.list_model_ids()
         _sync_model_config_watchers(existing_model_ids)
 
     def _stop_firestore_watchers() -> None:
-        nonlocal models_collection_listener
+        nonlocal models_collection_listener, global_control_listener
         with listener_state_lock:
             _unsubscribe_watch(models_collection_listener)
             models_collection_listener = None
+            _unsubscribe_watch(global_control_listener)
+            global_control_listener = None
             for listener in model_config_listeners.values():
                 _unsubscribe_watch(listener)
             model_config_listeners.clear()
@@ -515,27 +533,16 @@ def bootstrap() -> AppRuntime:
         return _active_model_contexts()
 
     def _is_runtime_paused(*, force_refresh: bool = False) -> bool:
-        nonlocal runtime_pause_state, last_pause_refresh_at
-        now = datetime.now(tz=UTC)
-        should_refresh = force_refresh or runtime_pause_state is None or last_pause_refresh_at is None
-        if not should_refresh:
-            elapsed_seconds = (now - last_pause_refresh_at).total_seconds()
-            should_refresh = elapsed_seconds >= RUNTIME_REFRESH_INTERVAL_SECONDS
+        nonlocal runtime_pause_state
+        should_refresh = force_refresh or runtime_pause_state is None or pause_refresh_needed.is_set()
         if not should_refresh:
             return bool(runtime_pause_state)
 
-        try:
-            paused = config_repo.is_global_pause_enabled()
-        except Exception as error:
-            logger.error(
-                "failed to load global pause flag",
-                {"error": str(error)},
-            )
-            paused = False
+        paused = config_repo.is_global_pause_enabled()
 
         previous_pause_state = runtime_pause_state
         runtime_pause_state = paused
-        last_pause_refresh_at = now
+        pause_refresh_needed.clear()
         if paused and previous_pause_state is not True:
             logger.warn(
                 "runtime globally paused",

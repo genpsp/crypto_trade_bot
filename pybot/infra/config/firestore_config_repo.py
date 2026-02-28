@@ -11,7 +11,6 @@ from pybot.infra.config.schema import parse_config
 GLOBAL_CONTROL_COLLECTION_ID = "control"
 GLOBAL_CONTROL_DOC_ID = "global"
 GLOBAL_CONTROL_PAUSE_FIELD = "pause_all"
-_FALLBACK_LONG_DIRECTION_STRATEGY = "ema_trend_pullback_15m_v0"
 
 
 @dataclass(frozen=True)
@@ -86,13 +85,10 @@ class FirestoreConfigRepository:
         direction = model_data.get("direction")
         if direction not in ("LONG", "SHORT"):
             strategy_name = self._extract_strategy_name(config_payload)
-            if direction is None and strategy_name == _FALLBACK_LONG_DIRECTION_STRATEGY:
-                direction = "LONG"
-            else:
-                raise RuntimeError(
-                    f"models/{model_id}.direction must be LONG or SHORT "
-                    f"(strategy={strategy_name})"
-                )
+            raise RuntimeError(
+                f"models/{model_id}.direction must be LONG or SHORT "
+                f"(strategy={strategy_name})"
+            )
         mode = model_data.get("mode")
         if mode not in ("PAPER", "LIVE"):
             raise RuntimeError(f"models/{model_id}.mode must be PAPER or LIVE")

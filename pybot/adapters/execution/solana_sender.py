@@ -162,25 +162,34 @@ class SolanaSender:
         lamports_per_sol = 1_000_000_000
         return value / lamports_per_sol
 
-    def _rpc(self, method: str, params: list[Any]) -> Any:
+    def _rpc(
+        self,
+        method: str,
+        params: list[Any],
+        *,
+        attempts: int | None = None,
+        request_timeout_seconds: float | None = None,
+    ) -> Any:
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": method,
             "params": params,
         }
-        for attempt in range(1, RPC_RETRY_ATTEMPTS + 1):
+        total_attempts = max(1, int(attempts)) if attempts is not None else RPC_RETRY_ATTEMPTS
+        timeout_seconds = request_timeout_seconds if request_timeout_seconds is not None else RPC_HTTP_TIMEOUT_SECONDS
+        for attempt in range(1, total_attempts + 1):
             try:
-                response = requests.post(self.rpc_url, json=payload, timeout=RPC_HTTP_TIMEOUT_SECONDS)
+                response = requests.post(self.rpc_url, json=payload, timeout=timeout_seconds)
             except requests.RequestException as error:
-                if attempt < RPC_RETRY_ATTEMPTS:
+                if attempt < total_attempts:
                     time.sleep(retry_delay_seconds(RPC_RETRY_BASE_DELAY_SECONDS, attempt))
                     continue
                 raise RuntimeError(f"RPC {method} failed: {error}") from error
 
             if response.status_code != 200:
                 should_retry = (
-                    response.status_code in RETRIABLE_HTTP_STATUS_CODES and attempt < RPC_RETRY_ATTEMPTS
+                    response.status_code in RETRIABLE_HTTP_STATUS_CODES and attempt < total_attempts
                 )
                 if should_retry:
                     time.sleep(retry_delay_seconds(RPC_RETRY_BASE_DELAY_SECONDS, attempt))
@@ -190,14 +199,14 @@ class SolanaSender:
             try:
                 data = response.json()
             except ValueError as error:
-                if attempt < RPC_RETRY_ATTEMPTS:
+                if attempt < total_attempts:
                     time.sleep(retry_delay_seconds(RPC_RETRY_BASE_DELAY_SECONDS, attempt))
                     continue
                 raise RuntimeError(f"RPC {method} returned invalid JSON: {error}") from error
 
             if "error" in data:
                 rpc_error = data["error"]
-                if attempt < RPC_RETRY_ATTEMPTS and _is_retriable_rpc_error(rpc_error):
+                if attempt < total_attempts and _is_retriable_rpc_error(rpc_error):
                     time.sleep(retry_delay_seconds(RPC_RETRY_BASE_DELAY_SECONDS, attempt))
                     continue
                 raise RuntimeError(f"RPC {method} failed: {rpc_error}")
@@ -228,10 +237,26 @@ class SolanaSender:
         self, signature: str, timeout_ms: int, poll_interval_ms: int = 1000
     ) -> SignatureConfirmation:
         started_at = int(time.time() * 1000)
-        while int(time.time() * 1000) - started_at <= timeout_ms:
-            result = self._rpc(
-                "getSignatureStatuses", [[signature], {"searchTransactionHistory": True}]
-            )
+        while True:
+            now_ms = int(time.time() * 1000)
+            elapsed_ms = now_ms - started_at
+            if elapsed_ms > timeout_ms:
+                return SignatureConfirmation(
+                    confirmed=False,
+                    error=f"confirmation timeout after {timeout_ms}ms",
+                )
+
+            remaining_ms = timeout_ms - elapsed_ms
+            request_timeout_seconds = max(min(remaining_ms / 1000, RPC_HTTP_TIMEOUT_SECONDS), 0.5)
+            try:
+                result = self._rpc(
+                    "getSignatureStatuses",
+                    [[signature], {"searchTransactionHistory": True}],
+                    attempts=1,
+                    request_timeout_seconds=request_timeout_seconds,
+                )
+            except Exception as error:
+                return SignatureConfirmation(confirmed=False, error=f"confirmation rpc failed: {error}")
             status = None
             if isinstance(result, dict):
                 values = result.get("value")
@@ -245,12 +270,9 @@ class SolanaSender:
                 if confirmation_status in ("confirmed", "finalized"):
                     return SignatureConfirmation(confirmed=True)
 
-            time.sleep(poll_interval_ms / 1000)
-
-        return SignatureConfirmation(
-            confirmed=False,
-            error=f"confirmation timeout after {timeout_ms}ms",
-        )
+            sleep_seconds = min(poll_interval_ms / 1000, max(remaining_ms / 1000, 0.0))
+            if sleep_seconds > 0:
+                time.sleep(sleep_seconds)
 
     def get_transaction_fee_lamports(self, signature: str) -> int | None:
         result = self._rpc(
