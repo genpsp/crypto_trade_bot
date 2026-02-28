@@ -803,9 +803,10 @@ class TradeExecutionApiTest(unittest.TestCase):
         class SlippageExecution:
             def __init__(self) -> None:
                 self.submit_calls = 0
+                self.slippage_bps_history: list[int] = []
 
             def submit_swap(self, request: Any) -> SwapSubmission:
-                _ = request
+                self.slippage_bps_history.append(int(request.slippage_bps))
                 self.submit_calls += 1
                 raise RuntimeError(
                     "RPC sendTransaction failed: {'message': 'Transaction simulation failed: Error processing Instruction 4: custom program error: 0x1771'}"
@@ -846,12 +847,14 @@ class TradeExecutionApiTest(unittest.TestCase):
             )
 
         self.assertEqual("SKIPPED", opened.status)
-        self.assertEqual(1, execution.submit_calls)
+        self.assertEqual(3, execution.submit_calls)
+        self.assertEqual([50, 50, 51], execution.slippage_bps_history)
         self.assertIn("custom program error: 0x1771", opened.summary)
         self.assertNotIn("'message':", opened.summary)
         trade = persistence.trades[opened.trade_id]
         self.assertEqual("CANCELED", trade["state"])
         self.assertEqual("CLOSED", trade["position"]["status"])
+        self.assertIn("attempt 3/3", trade["execution"]["entry_error"])
         self.assertIn("0x1771", trade["execution"]["entry_error"])
 
     def test_open_position_marks_exact_out_amount_not_matched_as_skipped(self) -> None:
@@ -917,11 +920,12 @@ class TradeExecutionApiTest(unittest.TestCase):
             )
 
         self.assertEqual("SKIPPED", opened.status)
-        self.assertEqual(1, execution.submit_calls)
+        self.assertEqual(3, execution.submit_calls)
         self.assertIn("slippage exceeded", opened.summary)
         trade = persistence.trades[opened.trade_id]
         self.assertEqual("CANCELED", trade["state"])
         self.assertEqual("CLOSED", trade["position"]["status"])
+        self.assertIn("attempt 3/3", trade["execution"]["entry_error"])
         self.assertIn("0x1781", trade["execution"]["entry_error"])
 
     def test_open_position_prefers_balance_snapshot_for_long_position_size(self) -> None:

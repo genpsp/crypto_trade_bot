@@ -38,6 +38,7 @@ TX_INFLIGHT_TTL_SECONDS = 180
 SOL_FEE_RESERVE = 0.02
 ENTRY_RETRY_ATTEMPTS = 3
 ENTRY_RETRY_DELAY_SECONDS = 0.4
+ENTRY_FINAL_RETRY_SLIPPAGE_INCREMENT_BPS = 1
 
 
 @dataclass
@@ -62,6 +63,18 @@ class OpenPositionDependencies:
     lock: LockPort
     logger: LoggerPort
     persistence: PersistencePort
+
+
+def _next_entry_retry_slippage_bps(
+    *,
+    configured_slippage_bps: int,
+    attempt: int,
+    max_attempts: int,
+) -> int:
+    next_attempt = attempt + 1
+    if next_attempt < max_attempts:
+        return configured_slippage_bps
+    return configured_slippage_bps + ENTRY_FINAL_RETRY_SLIPPAGE_INCREMENT_BPS
 
 
 def _resolve_regime_and_multiplier(signal: EntrySignalDecision) -> tuple[str, float]:
@@ -311,19 +324,22 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
     inflight_entry_result = None
     inflight_before_balances: tuple[float, float] | None = None
     max_entry_attempts = ENTRY_RETRY_ATTEMPTS
+    configured_slippage_bps = int(config["execution"]["slippage_bps"])
+    current_slippage_bps = configured_slippage_bps
     last_error_message = "unknown entry error"
 
     for attempt in range(1, max_entry_attempts + 1):
         submission = inflight_submission
         entry_result = inflight_entry_result
         try:
+            trade["execution"]["entry_slippage_bps"] = current_slippage_bps
             if submission is None:
                 attempt_before_balances = snapshot_balances()
                 submission = execution.submit_swap(
                     SubmitSwapRequest(
                         side=entry_side,
                         amount_atomic=amount_atomic,
-                        slippage_bps=config["execution"]["slippage_bps"],
+                        slippage_bps=current_slippage_bps,
                         only_direct_routes=config["execution"]["only_direct_routes"],
                     )
                 )
@@ -378,6 +394,31 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                     or is_market_condition_error_message(last_error_message)
                     or is_insufficient_funds_error_message(last_error_message)
                 ):
+                    if is_slippage_error_message(last_error_message) and attempt < max_entry_attempts:
+                        next_slippage_bps = _next_entry_retry_slippage_bps(
+                            configured_slippage_bps=configured_slippage_bps,
+                            attempt=attempt,
+                            max_attempts=max_entry_attempts,
+                        )
+                        if next_slippage_bps > current_slippage_bps:
+                            logger.warn(
+                                "open_position widening slippage for retry",
+                                {
+                                    "trade_id": trade_id,
+                                    "attempt": attempt,
+                                    "max_attempts": max_entry_attempts,
+                                    "error": summarize_error_for_log(last_error_message),
+                                    "slippage_bps_from": current_slippage_bps,
+                                    "slippage_bps_to": next_slippage_bps,
+                                },
+                            )
+                        current_slippage_bps = next_slippage_bps
+                        lock.clear_inflight_tx(submission.tx_signature)
+                        inflight_submission = None
+                        inflight_entry_result = None
+                        inflight_before_balances = None
+                        time.sleep(ENTRY_RETRY_DELAY_SECONDS)
+                        continue
                     lock.clear_inflight_tx(submission.tx_signature)
                     inflight_submission = None
                     inflight_entry_result = None
@@ -449,6 +490,32 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 or is_market_condition_error_message(last_error_message)
                 or is_insufficient_funds_error_message(last_error_message)
             ):
+                if is_slippage_error_message(last_error_message) and attempt < max_entry_attempts:
+                    next_slippage_bps = _next_entry_retry_slippage_bps(
+                        configured_slippage_bps=configured_slippage_bps,
+                        attempt=attempt,
+                        max_attempts=max_entry_attempts,
+                    )
+                    if next_slippage_bps > current_slippage_bps:
+                        logger.warn(
+                            "open_position widening slippage for retry",
+                            {
+                                "trade_id": trade_id,
+                                "attempt": attempt,
+                                "max_attempts": max_entry_attempts,
+                                "error": summarize_error_for_log(last_error_message),
+                                "slippage_bps_from": current_slippage_bps,
+                                "slippage_bps_to": next_slippage_bps,
+                            },
+                        )
+                    current_slippage_bps = next_slippage_bps
+                    if submission is not None and lock.has_inflight_tx(submission.tx_signature):
+                        lock.clear_inflight_tx(submission.tx_signature)
+                        inflight_submission = None
+                        inflight_entry_result = None
+                        inflight_before_balances = None
+                    time.sleep(ENTRY_RETRY_DELAY_SECONDS)
+                    continue
                 if submission is not None and lock.has_inflight_tx(submission.tx_signature):
                     lock.clear_inflight_tx(submission.tx_signature)
                     inflight_submission = None
