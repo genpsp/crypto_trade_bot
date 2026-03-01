@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from pybot.domain.indicators.ta import atr_series, ema_series, rsi_series
@@ -41,62 +41,80 @@ RSI_LONG_UPPER_BOUND = 68
 RSI_SHORT_LOWER_BOUND = 32
 RSI_SHORT_UPPER_BOUND = 50
 # ショート時は4h EMA乖離が小さい弱トレンドを除外
-SHORT_UPPER_TREND_MIN_GAP_PCT = 0.2
+SHORT_UPPER_TREND_MIN_GAP_PCT = 0.05
 ATR_PERIOD = 14
 ATR_STOP_MULTIPLIER = 1.5
 UPPER_TREND_TIMEFRAME_MINUTES = 240
 UPPER_TREND_EMA_FAST_PERIOD = 9
 UPPER_TREND_EMA_SLOW_PERIOD = 34
 
-
-def _ceil_close_time_to_minutes(close_time: datetime, timeframe_minutes: int) -> datetime:
-    total_minutes = int(close_time.astimezone(UTC).timestamp() // 60)
-    bucket_minutes = ((total_minutes + timeframe_minutes - 1) // timeframe_minutes) * timeframe_minutes
-    return datetime.fromtimestamp(bucket_minutes * 60, tz=UTC)
+_CLOSE_MINUTES_CACHE: dict[datetime, int] = {}
+_CLOSE_MINUTES_CACHE_MAX_SIZE = 200_000
 
 
-def _build_upper_timeframe_bars(bars: list[OhlcvBar], timeframe_minutes: int) -> list[OhlcvBar]:
+def _resolve_close_minutes(close_time: datetime) -> int:
+    cached = _CLOSE_MINUTES_CACHE.get(close_time)
+    if cached is not None:
+        return cached
+
+    resolved = int(close_time.astimezone(UTC).timestamp() // 60)
+    if len(_CLOSE_MINUTES_CACHE) >= _CLOSE_MINUTES_CACHE_MAX_SIZE:
+        _CLOSE_MINUTES_CACHE.clear()
+    _CLOSE_MINUTES_CACHE[close_time] = resolved
+    return resolved
+
+
+def _resolve_upper_bucket_index(close_time: datetime, timeframe_minutes: int) -> int:
+    close_minutes = _resolve_close_minutes(close_time)
+    return (close_minutes + timeframe_minutes - 1) // timeframe_minutes
+
+
+def _build_upper_timeframe_closes(bars: list[OhlcvBar], timeframe_minutes: int) -> list[float]:
     if not bars:
         return []
 
-    buckets: dict[datetime, list[OhlcvBar]] = {}
-    for bar in bars:
-        bucket_close_time = _ceil_close_time_to_minutes(bar.close_time, timeframe_minutes)
-        bucket = buckets.setdefault(bucket_close_time, [])
-        bucket.append(bar)
+    upper_closes: list[float] = []
+    current_bucket_index: int | None = None
+    current_bucket_close: float | None = None
 
-    latest_close_time = bars[-1].close_time
-    aggregated: list[OhlcvBar] = []
-    for bucket_close_time in sorted(buckets.keys()):
-        if bucket_close_time > latest_close_time:
+    for bar in bars:
+        bucket_index = _resolve_upper_bucket_index(bar.close_time, timeframe_minutes)
+        if current_bucket_index is None:
+            current_bucket_index = bucket_index
+            current_bucket_close = bar.close
             continue
-        chunk = sorted(buckets[bucket_close_time], key=lambda item: item.close_time)
-        aggregated.append(
-            OhlcvBar(
-                open_time=bucket_close_time - timedelta(minutes=timeframe_minutes),
-                close_time=bucket_close_time,
-                open=chunk[0].open,
-                high=max(item.high for item in chunk),
-                low=min(item.low for item in chunk),
-                close=chunk[-1].close,
-                volume=sum(item.volume for item in chunk),
-            )
-        )
-    return aggregated
+
+        if bucket_index != current_bucket_index:
+            if current_bucket_close is not None:
+                upper_closes.append(current_bucket_close)
+            current_bucket_index = bucket_index
+
+        current_bucket_close = bar.close
+
+    latest_close_minutes = _resolve_close_minutes(bars[-1].close_time)
+    # Keep the last bucket only when the current bar is exactly on timeframe close.
+    if current_bucket_close is not None and latest_close_minutes % timeframe_minutes == 0:
+        upper_closes.append(current_bucket_close)
+
+    return upper_closes
 
 
 def _evaluate_upper_timeframe_trend(
     bars: list[OhlcvBar],
 ) -> tuple[str, float | None, float | None, int]:
-    upper_bars = _build_upper_timeframe_bars(bars, UPPER_TREND_TIMEFRAME_MINUTES)
-    upper_closes = [bar.close for bar in upper_bars]
+    upper_closes = _build_upper_timeframe_closes(bars, UPPER_TREND_TIMEFRAME_MINUTES)
     upper_ema_fast_values = ema_series(upper_closes, UPPER_TREND_EMA_FAST_PERIOD)
     upper_ema_slow_values = ema_series(upper_closes, UPPER_TREND_EMA_SLOW_PERIOD)
     upper_ema_fast = upper_ema_fast_values[-1] if upper_ema_fast_values else None
     upper_ema_slow = upper_ema_slow_values[-1] if upper_ema_slow_values else None
     if upper_ema_fast is None or upper_ema_slow is None:
-        return "UNAVAILABLE", upper_ema_fast, upper_ema_slow, len(upper_bars)
-    return ("UP" if upper_ema_fast > upper_ema_slow else "DOWN"), upper_ema_fast, upper_ema_slow, len(upper_bars)
+        return "UNAVAILABLE", upper_ema_fast, upper_ema_slow, len(upper_closes)
+    return (
+        ("UP" if upper_ema_fast > upper_ema_slow else "DOWN"),
+        upper_ema_fast,
+        upper_ema_slow,
+        len(upper_closes),
+    )
 
 
 def _resolve_position_size_multiplier(atr_pct: float | None, risk: RiskConfig) -> tuple[str, float]:
