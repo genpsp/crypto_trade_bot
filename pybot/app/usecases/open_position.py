@@ -7,6 +7,7 @@ from pybot.app.ports.execution_port import ExecutionPort, SubmitSwapRequest, Swa
 from pybot.app.ports.lock_port import LockPort
 from pybot.app.ports.logger_port import LoggerPort
 from pybot.app.ports.persistence_port import PersistencePort
+from pybot.app.usecases.execution_error_classifier import classify_execution_error
 from pybot.app.usecases.usecase_utils import (
     is_insufficient_funds_error_message,
     is_market_condition_error_message,
@@ -41,6 +42,13 @@ ENTRY_RETRY_BASE_DELAY_SECONDS = 0.2
 ENTRY_RETRY_MAX_DELAY_SECONDS = 1.2
 ENTRY_FINAL_RETRY_SLIPPAGE_INCREMENT_BPS = 1
 ENTRY_BALANCE_USAGE_RATIO = 0.99
+ENTRY_ZERO_AMOUNT_RETRY_MAX_RETRIES = 2
+ZERO_AMOUNT_ERROR_MARKERS = (
+    "zero amount specified",
+    "swap special amount can not be zero",
+    "zero-amount leg",
+    "quote amount is zero",
+)
 
 
 @dataclass
@@ -82,6 +90,22 @@ def _next_entry_retry_slippage_bps(
 def _entry_retry_delay_seconds(attempt: int) -> float:
     delay = ENTRY_RETRY_BASE_DELAY_SECONDS * (2 ** max(attempt - 1, 0))
     return min(delay, ENTRY_RETRY_MAX_DELAY_SECONDS)
+
+
+def _is_zero_amount_market_error(message: str) -> bool:
+    classified = classify_execution_error(message)
+    if classified.kind == "MARKET_CONDITION" and classified.custom_code == 6024:
+        return True
+    normalized = message.strip().lower()
+    return any(marker in normalized for marker in ZERO_AMOUNT_ERROR_MARKERS)
+
+
+def _should_retry_zero_amount_market_error(*, attempt: int, max_attempts: int, error_message: str) -> bool:
+    if attempt >= max_attempts:
+        return False
+    if attempt > ENTRY_ZERO_AMOUNT_RETRY_MAX_RETRIES:
+        return False
+    return _is_zero_amount_market_error(error_message)
 
 
 def _resolve_regime_and_multiplier(signal: EntrySignalDecision) -> tuple[str, float]:
@@ -398,6 +422,27 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 last_error_message = confirmation.error or "unknown confirmation error"
                 trade["execution"]["entry_error"] = f"attempt {attempt}/{max_entry_attempts}: {last_error_message}"
                 persist_execution_only()
+                if _should_retry_zero_amount_market_error(
+                    attempt=attempt,
+                    max_attempts=max_entry_attempts,
+                    error_message=last_error_message,
+                ):
+                    logger.warn(
+                        "open_position retrying after zero-amount market-condition confirmation failure",
+                        {
+                            "trade_id": trade_id,
+                            "attempt": attempt,
+                            "max_attempts": max_entry_attempts,
+                            "error": summarize_error_for_log(last_error_message),
+                            "tx_signature": submission.tx_signature,
+                        },
+                    )
+                    lock.clear_inflight_tx(submission.tx_signature)
+                    inflight_submission = None
+                    inflight_entry_result = None
+                    inflight_before_balances = None
+                    time.sleep(_entry_retry_delay_seconds(attempt))
+                    continue
                 if (
                     is_slippage_error_message(last_error_message)
                     or is_market_condition_error_message(last_error_message)
@@ -493,6 +538,28 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                     "open_position execution persistence failed",
                     {"trade_id": trade_id, "error": to_error_message(persist_error)},
                 )
+
+            if _should_retry_zero_amount_market_error(
+                attempt=attempt,
+                max_attempts=max_entry_attempts,
+                error_message=last_error_message,
+            ):
+                logger.warn(
+                    "open_position retrying after zero-amount market-condition submit failure",
+                    {
+                        "trade_id": trade_id,
+                        "attempt": attempt,
+                        "max_attempts": max_entry_attempts,
+                        "error": summarize_error_for_log(last_error_message),
+                    },
+                )
+                if submission is not None and lock.has_inflight_tx(submission.tx_signature):
+                    lock.clear_inflight_tx(submission.tx_signature)
+                    inflight_submission = None
+                    inflight_entry_result = None
+                    inflight_before_balances = None
+                time.sleep(_entry_retry_delay_seconds(attempt))
+                continue
 
             if (
                 is_slippage_error_message(last_error_message)

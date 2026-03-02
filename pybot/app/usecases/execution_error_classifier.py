@@ -9,7 +9,8 @@ ErrorKind = Literal["SLIPPAGE", "MARKET_CONDITION", "INSUFFICIENT_FUNDS", "FATAL
 
 SLIPPAGE_CUSTOM_CODES = frozenset({6001, 6017})
 FATAL_CUSTOM_CODES = frozenset({6008, 6014, 6025})
-INSUFFICIENT_FUNDS_CUSTOM_CODES = frozenset({6024})
+MARKET_CONDITION_CUSTOM_CODES = frozenset({6024})
+INSUFFICIENT_FUNDS_CUSTOM_CODES = frozenset()
 
 SLIPPAGE_MARKERS = (
     "slippage tolerance exceeded",
@@ -28,6 +29,10 @@ MARKET_CONDITION_MARKERS = (
     "token_not_tradable",
     "insufficient liquidity",
     "price impact too high",
+    "zero-amount leg",
+    "quote amount is zero",
+    "zero amount specified",
+    "swap special amount can not be zero",
 )
 
 INSUFFICIENT_FUNDS_MARKERS = (
@@ -97,6 +102,8 @@ def classify_execution_error(message: str) -> ExecutionErrorClassification:
 
     if custom_code in SLIPPAGE_CUSTOM_CODES:
         return ExecutionErrorClassification(kind="SLIPPAGE", action="SKIP", custom_code=custom_code)
+    if custom_code in MARKET_CONDITION_CUSTOM_CODES:
+        return ExecutionErrorClassification(kind="MARKET_CONDITION", action="SKIP", custom_code=custom_code)
     if custom_code in INSUFFICIENT_FUNDS_CUSTOM_CODES:
         return ExecutionErrorClassification(kind="INSUFFICIENT_FUNDS", action="SKIP", custom_code=custom_code)
     if custom_code in FATAL_CUSTOM_CODES:

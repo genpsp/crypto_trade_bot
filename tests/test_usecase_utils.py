@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from pybot.app.usecases.usecase_utils import (
+    is_insufficient_funds_error_message,
     is_market_condition_error_message,
     is_non_retriable_error_message,
     is_slippage_error_message,
@@ -48,6 +49,29 @@ class UsecaseUtilsErrorClassificationTest(unittest.TestCase):
         message = "Jupiter quote request failed: NO_ROUTES_FOUND"
 
         self.assertTrue(is_market_condition_error_message(message))
+        self.assertTrue(is_non_retriable_error_message(message))
+
+    def test_market_condition_detection_supports_custom_6024(self) -> None:
+        message = (
+            "Transaction simulation failed: Error processing Instruction 3: "
+            "custom program error: 0x1788"
+        )
+
+        self.assertTrue(is_market_condition_error_message(message))
+        self.assertFalse(is_insufficient_funds_error_message(message))
+        self.assertTrue(is_non_retriable_error_message(message))
+
+    def test_insufficient_funds_detection_supports_text_marker(self) -> None:
+        message = "RPC sendTransaction failed: insufficient funds for fee"
+
+        self.assertTrue(is_insufficient_funds_error_message(message))
+        self.assertTrue(is_non_retriable_error_message(message))
+
+    def test_market_condition_detection_supports_zero_amount_route_guard(self) -> None:
+        message = "Jupiter quote route contains zero-amount leg"
+
+        self.assertTrue(is_market_condition_error_message(message))
+        self.assertFalse(is_insufficient_funds_error_message(message))
         self.assertTrue(is_non_retriable_error_message(message))
 
     def test_fatal_jupiter_custom_error_is_non_retriable(self) -> None:

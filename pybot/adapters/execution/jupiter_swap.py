@@ -24,6 +24,37 @@ SWAP_RETRY_BASE_DELAY_SECONDS = 0.35
 SWAP_HTTP_TIMEOUT_SECONDS = 8
 
 
+def _parse_atomic_amount(value: Any) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _has_zero_amount_route_leg(quote_response: dict[str, Any]) -> bool:
+    route_plan = quote_response.get("routePlan")
+    if not isinstance(route_plan, list):
+        return False
+
+    for leg in route_plan:
+        if not isinstance(leg, dict):
+            continue
+        swap_info = leg.get("swapInfo")
+        if not isinstance(swap_info, dict):
+            continue
+        in_amount = _parse_atomic_amount(swap_info.get("inAmount"))
+        out_amount = _parse_atomic_amount(swap_info.get("outAmount"))
+        if in_amount is not None and in_amount <= 0:
+            return True
+        if out_amount is not None and out_amount <= 0:
+            return True
+    return False
+
+
 class JupiterSwapAdapter(ExecutionPort):
     def __init__(self, quote_client: JupiterQuoteClient, solana_sender: SolanaSender, logger: LoggerPort):
         self.quote_client = quote_client
@@ -37,6 +68,11 @@ class JupiterSwapAdapter(ExecutionPort):
 
     def submit_swap(self, request: SubmitSwapRequest) -> SwapSubmission:
         quote = self.quote_client.fetch_quote(request)
+        if quote.in_amount_atomic <= 0 or quote.out_amount_atomic <= 0:
+            raise RuntimeError("Jupiter quote amount is zero")
+        if _has_zero_amount_route_leg(quote.raw):
+            raise RuntimeError("Jupiter quote route contains zero-amount leg")
+
         swap_transaction = self._fetch_swap_transaction(quote.raw)
         tx_signature = self.solana_sender.send_versioned_transaction_base64(swap_transaction)
 
