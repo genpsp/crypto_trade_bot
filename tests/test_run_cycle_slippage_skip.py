@@ -21,12 +21,12 @@ from pybot.domain.risk.short_regime_guard import SHORT_REGIME_GUARD_REASON
 from pybot.domain.risk.short_stop_loss_cooldown import SHORT_STOP_LOSS_COOLDOWN_REASON
 
 
-def _build_config() -> BotConfig:
+def _build_config(direction: str = "LONG") -> BotConfig:
     return {
         "enabled": True,
         "network": "mainnet-beta",
         "pair": "SOL/USDC",
-        "direction": "LONG",
+        "direction": direction,
         "signal_timeframe": "15m",
         "strategy": {
             "name": "ema_trend_pullback_15m_v0",
@@ -580,7 +580,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         self.assertEqual(0, len(persistence.saved_runs))
 
     def test_entry_direction_from_strategy_diagnostics_is_passed_to_open_position(self) -> None:
-        config = _build_config()
+        config = _build_config(direction="BOTH")
         bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)
         bars = [
             OhlcvBar(
@@ -634,7 +634,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         self.assertEqual("SHORT", run["metrics"]["entry_direction"])
 
     def test_short_entry_is_blocked_during_post_stop_loss_cooldown(self) -> None:
-        config = _build_config()
+        config = _build_config(direction="BOTH")
         bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)
         bars = [
             OhlcvBar(
@@ -692,7 +692,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         self.assertEqual(7, run["metrics"]["short_stop_loss_cooldown_remaining_bars"])
 
     def test_short_entry_is_blocked_by_short_regime_guard(self) -> None:
-        config = _build_config()
+        config = _build_config(direction="BOTH")
         bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)
         bars = [
             OhlcvBar(

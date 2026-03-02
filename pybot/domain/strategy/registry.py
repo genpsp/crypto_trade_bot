@@ -32,6 +32,7 @@ def evaluate_strategy_for_model(
     if strategy["name"] == "ema_trend_pullback_15m_v0":
         return evaluate_ema_trend_pullback_15m_v0(
             bars=bars,
+            direction=direction,
             strategy=strategy,
             risk=risk,
             exit=exit,

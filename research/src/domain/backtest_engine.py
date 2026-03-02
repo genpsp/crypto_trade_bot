@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from pybot.domain.model.types import BotConfig, Direction, OhlcvBar, TradeRecord
+from pybot.domain.model.types import BotConfig, Direction, ModelDirection, OhlcvBar, TradeRecord
 from pybot.domain.risk.loss_streak_trade_cap import LOSS_STREAK_LOOKBACK_CLOSED_TRADES
 from pybot.domain.risk.loss_streak_trade_cap import resolve_effective_max_trades_per_day_for_strategy
 from pybot.domain.risk.short_regime_guard import (
@@ -63,13 +63,17 @@ OHLCV_LIMIT_FOR_15M_UPPER_TREND = 600
 
 
 def _resolve_entry_direction(
-    config_direction: Direction,
+    config_direction: ModelDirection,
     diagnostics: dict[str, Any] | None,
 ) -> Direction:
+    # LONG/SHORT fixed models must never be overridden by strategy diagnostics.
+    if config_direction in ("LONG", "SHORT"):
+        return config_direction
+
     raw = (diagnostics or {}).get("entry_direction")
     if raw in ("LONG", "SHORT"):
         return raw
-    return config_direction
+    raise RuntimeError("BOTH config requires diagnostics.entry_direction to be LONG or SHORT on ENTER decision")
 
 
 def _resolve_position_size_multiplier(diagnostics: dict[str, Any] | None) -> float:

@@ -119,12 +119,13 @@ def _resolve_entry_direction(runtime_config: BotConfig, decision: StrategyDecisi
     if decision.type != "ENTER":
         return None
 
-    raw_entry_direction = (decision.diagnostics or {}).get("entry_direction")
-    if raw_entry_direction in ("LONG", "SHORT"):
-        return raw_entry_direction
     model_direction: ModelDirection = runtime_config["direction"]
     if model_direction in ("LONG", "SHORT"):
         return model_direction
+
+    raw_entry_direction = (decision.diagnostics or {}).get("entry_direction")
+    if raw_entry_direction in ("LONG", "SHORT"):
+        return raw_entry_direction
     raise RuntimeError("BOTH model requires diagnostics.entry_direction to be LONG or SHORT on ENTER decision")
 
 

@@ -8,6 +8,7 @@ from pybot.domain.indicators.ta import atr_series, ema_series, rsi_series
 from pybot.domain.model.types import (
     ExecutionConfig,
     ExitConfig,
+    ModelDirection,
     OhlcvBar,
     RiskConfig,
     StrategyConfig,
@@ -40,6 +41,9 @@ RSI_LONG_LOWER_BOUND = 50
 RSI_LONG_UPPER_BOUND = 68
 RSI_SHORT_LOWER_BOUND = 32
 RSI_SHORT_UPPER_BOUND = 50
+# 4hトレンドが弱い時のみ2hトレンド一致を要求
+LONG_WEAK_UPPER_TREND_MIN_GAP_PCT = 0.05
+LONG_WEAK_TREND_CONFIRM_TIMEFRAME_MINUTES = 120
 # ショート時は4h EMA乖離が小さい弱トレンドを除外
 SHORT_UPPER_TREND_MIN_GAP_PCT = 0.05
 ATR_PERIOD = 14
@@ -101,8 +105,9 @@ def _build_upper_timeframe_closes(bars: list[OhlcvBar], timeframe_minutes: int) 
 
 def _evaluate_upper_timeframe_trend(
     bars: list[OhlcvBar],
+    timeframe_minutes: int = UPPER_TREND_TIMEFRAME_MINUTES,
 ) -> tuple[str, float | None, float | None, int]:
-    upper_closes = _build_upper_timeframe_closes(bars, UPPER_TREND_TIMEFRAME_MINUTES)
+    upper_closes = _build_upper_timeframe_closes(bars, timeframe_minutes)
     upper_ema_fast_values = ema_series(upper_closes, UPPER_TREND_EMA_FAST_PERIOD)
     upper_ema_slow_values = ema_series(upper_closes, UPPER_TREND_EMA_SLOW_PERIOD)
     upper_ema_fast = upper_ema_fast_values[-1] if upper_ema_fast_values else None
@@ -141,6 +146,7 @@ def evaluate_ema_trend_pullback_15m_v0(
     risk: RiskConfig,
     exit: ExitConfig,
     execution: ExecutionConfig,
+    direction: ModelDirection = "BOTH",
 ) -> StrategyDecision:
     minimum_bars = calculate_minimum_bars(
         strategy,
@@ -195,14 +201,18 @@ def evaluate_ema_trend_pullback_15m_v0(
             diagnostics=diagnostics,
         )
 
-    upper_trend_state, upper_ema_fast, upper_ema_slow, upper_bars_count = _evaluate_upper_timeframe_trend(bars)
-    diagnostics["upper_trend_timeframe"] = "4h"
+    upper_trend_state, upper_ema_fast, upper_ema_slow, upper_bars_count = _evaluate_upper_timeframe_trend(
+        bars,
+        UPPER_TREND_TIMEFRAME_MINUTES,
+    )
+    diagnostics["upper_trend_timeframe"] = f"{UPPER_TREND_TIMEFRAME_MINUTES // 60}h"
     diagnostics["upper_trend_bars_count"] = upper_bars_count
     diagnostics["upper_trend_ema_fast"] = upper_ema_fast
     diagnostics["upper_trend_ema_slow"] = upper_ema_slow
     diagnostics["upper_trend_state"] = upper_trend_state
     upper_trend_gap_pct = _calculate_ema_gap_pct(upper_ema_fast, upper_ema_slow)
     diagnostics["upper_trend_gap_pct"] = upper_trend_gap_pct
+    diagnostics["model_direction"] = direction
     if upper_trend_state == "UNAVAILABLE":
         return build_no_signal(
             "NO_SIGNAL: upper timeframe trend EMA is not stable yet",
@@ -212,7 +222,50 @@ def evaluate_ema_trend_pullback_15m_v0(
             diagnostics=diagnostics,
         )
     entry_direction = "LONG" if upper_trend_state == "UP" else "SHORT"
+    if direction == "LONG" and entry_direction != "LONG":
+        return build_no_signal(
+            "NO_SIGNAL: model direction LONG blocks short regime",
+            "MODEL_DIRECTION_LONG_ONLY",
+            ema_fast=ema_fast,
+            ema_slow=ema_slow,
+            diagnostics=diagnostics,
+        )
+    if direction == "SHORT" and entry_direction != "SHORT":
+        return build_no_signal(
+            "NO_SIGNAL: model direction SHORT blocks long regime",
+            "MODEL_DIRECTION_SHORT_ONLY",
+            ema_fast=ema_fast,
+            ema_slow=ema_slow,
+            diagnostics=diagnostics,
+        )
     diagnostics["entry_direction"] = entry_direction
+    if (
+        entry_direction == "LONG"
+        and upper_trend_gap_pct is not None
+        and upper_trend_gap_pct < LONG_WEAK_UPPER_TREND_MIN_GAP_PCT
+    ):
+        weak_trend_state_2h, weak_trend_ema_fast_2h, weak_trend_ema_slow_2h, weak_trend_bars_count_2h = (
+            _evaluate_upper_timeframe_trend(
+                bars,
+                LONG_WEAK_TREND_CONFIRM_TIMEFRAME_MINUTES,
+            )
+        )
+        diagnostics["weak_long_trend_2h_timeframe"] = f"{LONG_WEAK_TREND_CONFIRM_TIMEFRAME_MINUTES // 60}h"
+        diagnostics["weak_long_trend_2h_state"] = weak_trend_state_2h
+        diagnostics["weak_long_trend_2h_bars_count"] = weak_trend_bars_count_2h
+        diagnostics["weak_long_trend_2h_ema_fast"] = weak_trend_ema_fast_2h
+        diagnostics["weak_long_trend_2h_ema_slow"] = weak_trend_ema_slow_2h
+        if weak_trend_state_2h != "UP":
+            return build_no_signal(
+                (
+                    "NO_SIGNAL: weak 4h uptrend is not confirmed by 2h "
+                    f"(4h_gap={upper_trend_gap_pct:.4f}, 2h_state={weak_trend_state_2h})"
+                ),
+                "LONG_WEAK_UPPER_TREND_NOT_CONFIRMED_BY_2H",
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                diagnostics=diagnostics,
+            )
     if entry_direction == "SHORT":
         if upper_trend_gap_pct is None or upper_trend_gap_pct < SHORT_UPPER_TREND_MIN_GAP_PCT:
             return build_no_signal(

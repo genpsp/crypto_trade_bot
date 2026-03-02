@@ -22,7 +22,7 @@
   "execution": {
     "mode": "LIVE",
     "swap_provider": "JUPITER",
-    "slippage_bps": 2,
+    "slippage_bps": 3,
     "min_notional_usdc": 20.0,
     "only_direct_routes": false
   },

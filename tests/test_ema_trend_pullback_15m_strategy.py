@@ -341,6 +341,44 @@ class EmaTrendPullback15mStrategyTest(unittest.TestCase):
         self.assertEqual("NO_SIGNAL", decision.type)
         self.assertEqual("UPPER_TREND_EMA_NOT_STABLE", decision.reason)
 
+    def test_no_signal_when_weak_4h_uptrend_is_not_confirmed_by_2h(self) -> None:
+        with patch(
+            "pybot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
+            side_effect=[
+                ("UP", 100.04, 100.0, 80),
+                ("DOWN", 99.9, 100.0, 120),
+            ],
+        ):
+            decision = evaluate_ema_trend_pullback_15m_v0(
+                bars=self.bars,
+                strategy=self.strategy,
+                risk=self.risk,
+                exit=self.exit,
+                execution=self.execution,
+            )
+
+        self.assertEqual("NO_SIGNAL", decision.type)
+        self.assertEqual("LONG_WEAK_UPPER_TREND_NOT_CONFIRMED_BY_2H", decision.reason)
+
+    def test_enter_when_weak_4h_uptrend_is_confirmed_by_2h(self) -> None:
+        with patch(
+            "pybot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
+            side_effect=[
+                ("UP", 100.04, 100.0, 80),
+                ("UP", 101.2, 101.0, 120),
+            ],
+        ):
+            decision = evaluate_ema_trend_pullback_15m_v0(
+                bars=self.bars,
+                strategy=self.strategy,
+                risk=self.risk,
+                exit=self.exit,
+                execution=self.execution,
+            )
+
+        self.assertEqual("ENTER", decision.type)
+        self.assertEqual("LONG", decision.diagnostics["entry_direction"])
+
 
 if __name__ == "__main__":
     unittest.main()
