@@ -12,6 +12,7 @@ from apps.dex_bot.domain.risk.short_stop_loss_cooldown import (
     resolve_short_stop_loss_cooldown_state,
 )
 from apps.dex_bot.domain.strategy.registry import evaluate_strategy_for_model
+from apps.gmo_bot.app.usecases.execution_error_classifier import classify_execution_error
 from apps.gmo_bot.app.ports.execution_port import ExecutionPort
 from apps.gmo_bot.app.ports.lock_port import LockPort
 from apps.gmo_bot.app.ports.logger_port import LoggerPort
@@ -29,6 +30,14 @@ MIN_REQUIRED_RUN_LOCK_TTL_SECONDS = 480
 ENTRY_IDEM_TTL_SECONDS = 12 * 60 * 60
 DEFAULT_OHLCV_LIMIT = 300
 OHLCV_LIMIT_FOR_15M_UPPER_TREND = 600
+_EXECUTION_ERROR_SKIP_MARKERS = (
+    "insufficient funds",
+    "slippage exceeded",
+    "route/liquidity unavailable",
+    "entry execution skipped",
+    "exit slippage exceeded",
+    "exit route/liquidity unavailable",
+)
 
 
 @dataclass
@@ -91,6 +100,24 @@ def _build_strategy_execution_bridge(runtime_config: BotConfig, reference_price:
     return {
         "min_notional_usdc": max(float(runtime_config["execution"]["min_notional_jpy"]), 1.0),
     }
+
+
+def _is_execution_error_skip_summary(summary: str) -> bool:
+    normalized = summary.strip().lower()
+    if not normalized.startswith("skipped:"):
+        return False
+    if any(marker in normalized for marker in _EXECUTION_ERROR_SKIP_MARKERS):
+        return True
+    return classify_execution_error(normalized).action == "SKIP"
+
+
+def _should_persist_run_record(run: RunRecord) -> bool:
+    result = str(run.get("result") or "")
+    if result in ("OPENED", "CLOSED", "FAILED"):
+        return True
+    if result != "SKIPPED":
+        return False
+    return _is_execution_error_skip_summary(str(run.get("summary") or ""))
 
 
 def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
@@ -318,7 +345,8 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
         return run
     finally:
         try:
-            persistence.save_run(run)
+            if _should_persist_run_record(run):
+                persistence.save_run(run)
         except Exception as save_error:
             logger.error(
                 "failed to save run record",

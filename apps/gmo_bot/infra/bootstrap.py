@@ -203,17 +203,38 @@ def bootstrap() -> AppRuntime:
         summary = str(result.get("summary") or "")
         run_id = result.get("run_id")
         trade_id = result.get("trade_id")
+
         if is_execution_error_result(run_result, summary):
-            notifier.notify_trade_error(model_id=model_id, run_id=run_id, trade_id=trade_id, summary=summary)
-        if run_result == "FAILED":
-            failure_streaks_by_model[model_id] = failure_streaks_by_model.get(model_id, 0) + 1
-            notifier.notify_failure_streak(
+            notifier.notify_trade_error(
                 model_id=model_id,
-                consecutive_failures=failure_streaks_by_model[model_id],
-                latest_summary=summary,
+                result=run_result,
+                summary=summary,
                 run_id=run_id,
+                trade_id=trade_id,
             )
+
+        threshold = CONSECUTIVE_FAILURE_ALERT_THRESHOLD
+        if run_result == "FAILED":
+            streak = failure_streaks_by_model.get(model_id, 0) + 1
+            failure_streaks_by_model[model_id] = streak
+            if streak >= threshold and (streak == threshold or streak % threshold == 0):
+                notifier.notify_consecutive_failures(
+                    model_id=model_id,
+                    streak=streak,
+                    threshold=threshold,
+                    run_id=run_id,
+                    summary=summary,
+                )
             return
+
+        previous_streak = failure_streaks_by_model.get(model_id, 0)
+        if previous_streak >= threshold:
+            notifier.notify_failure_streak_recovered(
+                model_id=model_id,
+                previous_streak=previous_streak,
+                latest_result=run_result,
+                summary=summary,
+            )
         failure_streaks_by_model[model_id] = 0
 
     def _refresh_runtime_specs() -> None:
@@ -272,15 +293,26 @@ def bootstrap() -> AppRuntime:
 
     def _watchdog_loop() -> None:
         nonlocal stale_cycle_alert_active
-        while not watchdog_stop_event.wait(60):
+        threshold_minutes = STALE_CYCLE_ALERT_MINUTES
+        threshold_seconds = threshold_minutes * 60
+        interval_seconds = max(15, min(60, threshold_seconds // 3))
+        if interval_seconds <= 0:
+            interval_seconds = 15
+
+        while not watchdog_stop_event.wait(interval_seconds):
+            if not runtime_specs:
+                continue
             with cycle_state_lock:
-                delta_minutes = (datetime.now(tz=UTC) - last_cycle_completed_at).total_seconds() / 60
-                if delta_minutes < STALE_CYCLE_ALERT_MINUTES:
-                    continue
-                if stale_cycle_alert_active:
-                    continue
-                stale_cycle_alert_active = True
-            notifier.notify_stale_cycle(model_ids=sorted(runtime_specs.keys()), stale_minutes=int(delta_minutes))
+                elapsed_seconds = int((datetime.now(tz=UTC) - last_cycle_completed_at).total_seconds())
+                should_alert = elapsed_seconds >= threshold_seconds and not stale_cycle_alert_active
+                if should_alert:
+                    stale_cycle_alert_active = True
+            if should_alert:
+                notifier.notify_stale_cycle(
+                    elapsed_seconds=elapsed_seconds,
+                    threshold_minutes=threshold_minutes,
+                    model_ids=sorted(runtime_specs.keys()),
+                )
 
     def _run_model_cycle(context: ModelRuntimeContext, pause_all: bool) -> None:
         open_trade = context.persistence.find_open_trade(context.pair)
