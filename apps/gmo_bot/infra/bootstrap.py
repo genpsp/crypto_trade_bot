@@ -332,13 +332,13 @@ def bootstrap() -> AppRuntime:
         _refresh_pause_if_needed(force=True)
         _start_firestore_watchers()
         logger.info("bot startup: run first cycle immediately")
-        notifier.notify_startup(_current_runtime_summaries())
         _run_all_models()
-        cron_controller = create_cron_cycle(logger=logger, callback=_run_all_models)
+        cron_controller = create_cron_cycle(_run_all_models, logger)
         cron_controller.start()
         watchdog_stop_event.clear()
         watchdog_thread = threading.Thread(target=_watchdog_loop, name="gmo-bot-watchdog", daemon=True)
         watchdog_thread.start()
+        notifier.notify_startup(_current_runtime_summaries())
 
     def stop() -> None:
         nonlocal cron_controller, watchdog_thread
