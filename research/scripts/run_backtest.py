@@ -8,7 +8,7 @@ from research.src.infra.research_config import load_bot_config
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run offline backtest with shared pybot strategy")
+    parser = argparse.ArgumentParser(description="Run offline backtest with shared dex-bot strategy")
     parser.add_argument("--config", required=True, help="JSON config file path")
     parser.add_argument("--bars", required=True, help="OHLCV CSV file path")
     parser.add_argument(

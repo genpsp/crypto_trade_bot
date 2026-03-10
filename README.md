@@ -1,12 +1,13 @@
 # crypto_trade_bot (Python v1)
 
-Solana `SOL/USDC` 現物向けの自動売買Botです。  
-Node.js 実装から Python に移行し、`domain / app / adapters / infra` のレイヤ構成で運用しています。
+`apps/dex_bot` と `apps/gmo_bot` を同一repo内で分離運用する自動売買Botです。  
+現行のデプロイ既定は `apps/dex_bot`、`apps/gmo_bot` は GMO コイン向けの新実装です。
 
 ## 概要
 
 - 複数モデルを Firestore から読み込み、`model_id` 単位で独立実行
-- 売買実行は Jupiter (`quote/swap`) + Solana RPC 送信
+- `apps/dex_bot`: Jupiter + Solana RPC の DEX 実装
+- `apps/gmo_bot`: GMO コイン取引所レバレッジ前提の CEX 実装
 - 永続化は Firestore、排他と冪等は Redis
 - 起動時即実行 + 1分周期スケジューラ
 - 15分モデルは `direction=BOTH` をサポート
@@ -21,10 +22,12 @@ Node.js 実装から Python に移行し、`domain / app / adapters / infra` の
 
 必須:
 
-- `SOLANA_RPC_URL`
 - `REDIS_URL`
 - `GOOGLE_APPLICATION_CREDENTIALS`
-- `WALLET_KEY_PASSPHRASE`
+- `SOLANA_RPC_URL`（`apps/dex_bot` 用）
+- `WALLET_KEY_PASSPHRASE`（`apps/dex_bot` 用）
+- `GMO_API_KEY`（`apps/gmo_bot` 用）
+- `GMO_API_SECRET`（`apps/gmo_bot` 用）
 
 任意:
 
@@ -32,7 +35,7 @@ Node.js 実装から Python に移行し、`domain / app / adapters / infra` の
 
 補足:
 
-- `pybot.main` は起動時に `load_dotenv(Path(".env"))` を実行します
+- `apps.dex_bot.main` / `apps.gmo_bot.main` は起動時に `load_dotenv(Path(".env"))` を実行します
 - 本番VPSは `.env` を置かず、GitHub Actions から環境注入する運用を推奨
 - ローカルのみ `.env.example` から作成可能
 
@@ -175,28 +178,48 @@ RPC/HTTPタイムアウト:
 
 ### 1) Firestoreへ初期投入
 
+DEX bot:
+
 ```bash
 python scripts/seed-firestore-config.py --mode LIVE
 ```
 
-PAPER投入:
+DEX bot を PAPER で投入:
 
 ```bash
 python scripts/seed-firestore-config.py --mode PAPER
 ```
 
-制御ドキュメントのみ投入:
+DEX bot の制御ドキュメントのみ投入:
 
 ```bash
 python scripts/seed-firestore-config.py --control-only
 ```
 
-単一モデルを投入:
+DEX bot の単一モデルを投入:
 
 ```bash
 python scripts/seed-firestore-config.py \
   --config-path research/models/ema_pullback_15m_both_v0/config/current.json \
   --wallet-key-path /run/secrets/wallet.ema_pullback_15m_both_v0.enc.json
+```
+
+GMO bot:
+
+```bash
+python scripts/seed-gmo-firestore-config.py --mode LIVE
+```
+
+GMO bot を PAPER で投入:
+
+```bash
+python scripts/seed-gmo-firestore-config.py --mode PAPER
+```
+
+GMO bot の制御ドキュメントのみ投入:
+
+```bash
+python scripts/seed-gmo-firestore-config.py --control-only
 ```
 
 ### 2) ウォレット鍵の暗号化
@@ -217,27 +240,53 @@ python scripts/encrypt-wallet.py \
 
 ### 3) ローカル実行
 
+DEX bot:
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python -m pybot.main
+python -m apps.dex_bot.main
+```
+
+GMO bot:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m apps.gmo_bot.main
 ```
 
 ### 4) Docker実行
+
+DEX bot:
 
 ```bash
 docker compose up -d --build
 ```
 
+GMO bot:
+
+```bash
+docker compose -f docker-compose.gmo.yml up -d --build
+```
+
 ## デプロイ（GitHub Actions）
 
-ワークフロー: `.github/workflows/deploy.yml`
+DEX bot ワークフロー: `.github/workflows/deploy.yml`
 
 - トリガ: `main` push / `workflow_dispatch`
 - VPS上で `git pull` 後に `docker compose up -d --build`
 
+GMO bot ワークフロー: `.github/workflows/deploy-gmo-bot.yml`
+
+- トリガ: `main` push / `workflow_dispatch`
+- VPS上で `git pull` 後に `docker compose -f docker-compose.gmo.yml up -d --build`
+
 必要な GitHub Secrets:
+
+DEX bot:
 
 - `VPS_HOST`
 - `VPS_USER`
@@ -245,16 +294,32 @@ docker compose up -d --build
 - `WALLET_KEY_PASSPHRASE`
 - `SLACK_WEBHOOK_URL`（任意）
 
+GMO bot:
+
+- `VPS_HOST`
+- `VPS_USER`
+- `VPS_SSH_KEY`
+- `GMO_API_KEY`
+- `GMO_API_SECRET`
+- `SLACK_WEBHOOK_URL`（任意）
+
 現在の compose 固定値:
 
+DEX bot:
+
 - `SOLANA_RPC_URL=https://api.mainnet-beta.solana.com`
+- `REDIS_URL=redis://redis:6379`
+- `GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json`
+
+GMO bot:
+
 - `REDIS_URL=redis://redis:6379`
 - `GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json`
 
 VPSに配置するシークレットファイル:
 
 - `/opt/crypto_trade_bot/secrets/firebase-service-account.json`
-- `/opt/crypto_trade_bot/secrets/wallet.<model_id>.enc.json`
+- `/opt/crypto_trade_bot/secrets/wallet.<model_id>.enc.json`（DEX bot のみ）
 
 ## テスト
 

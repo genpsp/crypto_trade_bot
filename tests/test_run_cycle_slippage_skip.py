@@ -5,10 +5,10 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
-from pybot.app.usecases.close_position import ClosePositionResult
-from pybot.app.usecases.open_position import OpenPositionResult
-from pybot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
-from pybot.domain.model.types import (
+from apps.dex_bot.app.usecases.close_position import ClosePositionResult
+from apps.dex_bot.app.usecases.open_position import OpenPositionResult
+from apps.dex_bot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
+from apps.dex_bot.domain.model.types import (
     BotConfig,
     EntrySignalDecision,
     NoSignalDecision,
@@ -17,8 +17,8 @@ from pybot.domain.model.types import (
     RunRecord,
     TradeRecord,
 )
-from pybot.domain.risk.short_regime_guard import SHORT_REGIME_GUARD_REASON
-from pybot.domain.risk.short_stop_loss_cooldown import SHORT_STOP_LOSS_COOLDOWN_REASON
+from apps.dex_bot.domain.risk.short_regime_guard import SHORT_REGIME_GUARD_REASON
+from apps.dex_bot.domain.risk.short_stop_loss_cooldown import SHORT_STOP_LOSS_COOLDOWN_REASON
 
 
 def _build_config(direction: str = "LONG") -> BotConfig:
@@ -220,7 +220,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         )
 
         with patch(
-            "pybot.app.usecases.run_cycle.close_position",
+            "apps.dex_bot.app.usecases.run_cycle.close_position",
             return_value=ClosePositionResult(
                 status="CLOSED",
                 trade_id="trade_prefetched_open",
@@ -266,8 +266,8 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
             take_profit_price=101.5,
         )
 
-        with patch("pybot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
-            "pybot.app.usecases.run_cycle.open_position",
+        with patch("apps.dex_bot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
+            "apps.dex_bot.app.usecases.run_cycle.open_position",
             return_value=OpenPositionResult(
                 status="SKIPPED",
                 trade_id="trade_slippage_skip",
@@ -317,8 +317,8 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
             take_profit_price=101.5,
         )
 
-        with patch("pybot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
-            "pybot.app.usecases.run_cycle.open_position",
+        with patch("apps.dex_bot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
+            "apps.dex_bot.app.usecases.run_cycle.open_position",
             side_effect=[
                 OpenPositionResult(
                     status="SKIPPED",
@@ -375,8 +375,8 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
             take_profit_price=101.5,
         )
 
-        with patch("pybot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
-            "pybot.app.usecases.run_cycle.open_position",
+        with patch("apps.dex_bot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
+            "apps.dex_bot.app.usecases.run_cycle.open_position",
             side_effect=[
                 OpenPositionResult(
                     status="SKIPPED",
@@ -444,7 +444,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         )
 
         with patch(
-            "pybot.app.usecases.run_cycle.close_position",
+            "apps.dex_bot.app.usecases.run_cycle.close_position",
             return_value=ClosePositionResult(
                 status="SKIPPED",
                 trade_id="trade_exit_slippage_skip",
@@ -538,7 +538,7 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         )
         no_signal = NoSignalDecision(type="NO_SIGNAL", summary="NO_SIGNAL: test", reason="TEST_REASON")
 
-        with patch("pybot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=no_signal):
+        with patch("apps.dex_bot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=no_signal):
             run = run_cycle(deps)
 
         self.assertEqual("NO_SIGNAL", run["result"])
@@ -623,8 +623,8 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
                 summary="OPENED: short entry",
             )
 
-        with patch("pybot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
-            "pybot.app.usecases.run_cycle.open_position",
+        with patch("apps.dex_bot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
+            "apps.dex_bot.app.usecases.run_cycle.open_position",
             side_effect=_capture_open_position,
         ):
             run = run_cycle(deps)
@@ -679,8 +679,8 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
             diagnostics={"entry_direction": "SHORT"},
         )
 
-        with patch("pybot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
-            "pybot.app.usecases.run_cycle.open_position",
+        with patch("apps.dex_bot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
+            "apps.dex_bot.app.usecases.run_cycle.open_position",
             side_effect=AssertionError("open_position should not be called during cooldown"),
         ):
             run = run_cycle(deps)
@@ -782,8 +782,8 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
             diagnostics={"entry_direction": "SHORT"},
         )
 
-        with patch("pybot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
-            "pybot.app.usecases.run_cycle.open_position",
+        with patch("apps.dex_bot.app.usecases.run_cycle.evaluate_strategy_for_model", return_value=decision), patch(
+            "apps.dex_bot.app.usecases.run_cycle.open_position",
             side_effect=AssertionError("open_position should not be called during short regime guard"),
         ):
             run = run_cycle(deps)

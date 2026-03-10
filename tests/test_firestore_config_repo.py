@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from pybot.infra.config.firestore_config_repo import (
+from apps.dex_bot.infra.config.firestore_config_repo import (
     GLOBAL_CONTROL_COLLECTION_ID,
     GLOBAL_CONTROL_DOC_ID,
     GLOBAL_CONTROL_PAUSE_FIELD,

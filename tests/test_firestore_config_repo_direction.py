@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from pybot.infra.config.firestore_config_repo import FirestoreConfigRepository
+from apps.dex_bot.infra.config.firestore_config_repo import FirestoreConfigRepository
 
 
 def _build_15m_current_config() -> dict[str, Any]:

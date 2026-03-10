@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from pybot.adapters.market_data.ohlcv_provider import OhlcvProvider
+from apps.dex_bot.adapters.market_data.ohlcv_provider import OhlcvProvider
 from research.src.adapters.csv_bar_repository import read_bars_from_csv, write_bars_to_csv
 
 TIMEFRAME_TO_BARS_PER_DAY = {"15m": 96, "2h": 12, "4h": 6}

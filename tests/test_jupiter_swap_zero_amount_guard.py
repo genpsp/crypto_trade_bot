@@ -3,9 +3,9 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from pybot.adapters.execution.jupiter_quote_client import JupiterQuote
-from pybot.adapters.execution.jupiter_swap import JupiterSwapAdapter
-from pybot.app.ports.execution_port import SubmitSwapRequest
+from apps.dex_bot.adapters.execution.jupiter_quote_client import JupiterQuote
+from apps.dex_bot.adapters.execution.jupiter_swap import JupiterSwapAdapter
+from apps.dex_bot.app.ports.execution_port import SubmitSwapRequest
 
 
 class InMemoryLogger:

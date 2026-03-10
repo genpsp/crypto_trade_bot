@@ -1,0 +1,24 @@
+name: crypto-trade-gmo-bot
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "no"]
+
+  bot:
+    build: .
+    command: ["python", "-m", "apps.gmo_bot.main"]
+    depends_on:
+      - redis
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-service-account.json
+      GMO_API_KEY: ${GMO_API_KEY}
+      GMO_API_SECRET: ${GMO_API_SECRET}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    volumes:
+      - type: bind
+        source: ./secrets
+        target: /run/secrets
+        read_only: true

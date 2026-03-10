@@ -3,12 +3,12 @@ from __future__ import annotations
 import unittest
 from typing import Any, cast
 
-from pybot.adapters.persistence.firestore_repo import (
+from apps.dex_bot.adapters.persistence.firestore_repo import (
     FirestoreRepository,
     _build_skip_run_doc_id,
     _extract_trade_date_from_trade_id,
 )
-from pybot.domain.model.types import BotConfig
+from apps.dex_bot.domain.model.types import BotConfig
 
 
 class _FakeDoc:

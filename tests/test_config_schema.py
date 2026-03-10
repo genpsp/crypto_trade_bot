@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from copy import deepcopy
 
-from pybot.infra.config.schema import parse_config
+from apps.dex_bot.infra.config.schema import parse_config
 
 
 def _build_base_config() -> dict:

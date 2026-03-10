@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from pybot.infra.bootstrap import _should_execute_cycle
+from apps.dex_bot.infra.bootstrap import _should_execute_cycle
 
 
 class BootstrapPauseGateTest(unittest.TestCase):

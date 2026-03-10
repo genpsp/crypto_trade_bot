@@ -1,11 +1,11 @@
 # research
 
 `research` は「分析専用」のディレクトリです。  
-実運用 bot (`pybot`) と分離しつつ、戦略ロジックは `pybot` を直接呼んで共有します。
+実運用 bot (`apps.dex_bot`) と分離しつつ、戦略ロジックは `apps.dex_bot` を直接呼んで共有します。
 
 ## 役割
 
-- `pybot`: 実売買実行（LIVE/PAPER、Firestore、Redis、Jupiter）
+- `apps/dex_bot`: 実売買実行（LIVE/PAPER、Firestore、Redis、Jupiter）
 - `research`: データ取得・バックテスト・検証レポート
 
 この分離は正しいです。理由は、分析試行錯誤の変更を実運用コードに混ぜないためです。
@@ -14,7 +14,7 @@
 
 バックテストのエントリー判定は次を直接使用します。
 
-- `pybot.domain.strategy.registry.evaluate_strategy_for_model`
+- `apps.dex_bot.domain.strategy.registry.evaluate_strategy_for_model`
 
 つまり、戦略条件は単一ソースで管理されます。
 

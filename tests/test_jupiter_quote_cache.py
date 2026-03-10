@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from pybot.adapters.execution.jupiter_quote_client import JupiterQuoteClient
-from pybot.app.ports.execution_port import SubmitSwapRequest
+from apps.dex_bot.adapters.execution.jupiter_quote_client import JupiterQuoteClient
+from apps.dex_bot.app.ports.execution_port import SubmitSwapRequest
 
 
 class FakeRedis:
@@ -42,7 +42,7 @@ class JupiterQuoteCacheTest(unittest.TestCase):
         )
 
         with patch(
-            "pybot.adapters.execution.jupiter_quote_client.requests.get",
+            "apps.dex_bot.adapters.execution.jupiter_quote_client.requests.get",
             return_value=FakeResponse(payload),
         ) as requests_get:
             first = client.fetch_quote(request, cache_ttl_seconds=2)

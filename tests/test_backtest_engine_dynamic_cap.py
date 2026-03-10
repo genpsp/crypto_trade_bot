@@ -4,9 +4,9 @@ from datetime import UTC, datetime, timedelta
 import unittest
 from unittest.mock import patch
 
-from pybot.domain.model.types import BotConfig, EntrySignalDecision, OhlcvBar
-from pybot.domain.risk.short_regime_guard import SHORT_REGIME_GUARD_REASON
-from pybot.domain.risk.short_stop_loss_cooldown import SHORT_STOP_LOSS_COOLDOWN_REASON
+from apps.dex_bot.domain.model.types import BotConfig, EntrySignalDecision, OhlcvBar
+from apps.dex_bot.domain.risk.short_regime_guard import SHORT_REGIME_GUARD_REASON
+from apps.dex_bot.domain.risk.short_stop_loss_cooldown import SHORT_STOP_LOSS_COOLDOWN_REASON
 from research.src.domain.backtest_engine import run_backtest
 
 

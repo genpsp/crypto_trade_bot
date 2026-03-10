@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from pybot.domain.model.types import ExecutionConfig, ExitConfig, OhlcvBar, RiskConfig, StrategyConfig
-from pybot.domain.strategy.models.storm_short_v0 import evaluate_storm_short_v0
+from apps.dex_bot.domain.model.types import ExecutionConfig, ExitConfig, OhlcvBar, RiskConfig, StrategyConfig
+from apps.dex_bot.domain.strategy.models.storm_short_v0 import evaluate_storm_short_v0
 
 
 def _build_bars(closes: list[float], spread: float) -> list[OhlcvBar]:

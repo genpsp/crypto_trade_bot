@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from pybot.app.usecases.usecase_utils import (
+from apps.dex_bot.app.usecases.usecase_utils import (
     is_insufficient_funds_error_message,
     is_market_condition_error_message,
     is_non_retriable_error_message,

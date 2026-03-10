@@ -5,13 +5,13 @@ from copy import deepcopy
 from typing import Any
 from unittest.mock import patch
 
-from pybot.app.ports.execution_port import SwapConfirmation, SwapSubmission
-from pybot.app.usecases.close_position import (
+from apps.dex_bot.app.ports.execution_port import SwapConfirmation, SwapSubmission
+from apps.dex_bot.app.usecases.close_position import (
     ClosePositionDependencies,
     ClosePositionInput,
     close_position,
 )
-from pybot.domain.model.types import BotConfig, TradeRecord
+from apps.dex_bot.domain.model.types import BotConfig, TradeRecord
 
 
 def _merge(dst: dict[str, Any], src: dict[str, Any]) -> None:
@@ -171,7 +171,7 @@ class ClosePositionRetryTest(unittest.TestCase):
                 _ = pair
                 return 1.0
 
-        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.close_position.time.sleep", return_value=None):
             result = close_position(
                 ClosePositionDependencies(
                     execution=RetryExecution(),
@@ -227,7 +227,7 @@ class ClosePositionRetryTest(unittest.TestCase):
                 return 1.0
 
         execution = AlwaysFailExecution()
-        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.close_position.time.sleep", return_value=None):
             result = close_position(
                 ClosePositionDependencies(
                     execution=execution,
@@ -297,7 +297,7 @@ class ClosePositionRetryTest(unittest.TestCase):
                 return 1.0
 
         execution = RetryOnUnconfirmedExecution()
-        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.close_position.time.sleep", return_value=None):
             result = close_position(
                 ClosePositionDependencies(
                     execution=execution,
@@ -369,7 +369,7 @@ class ClosePositionRetryTest(unittest.TestCase):
                 return 1.0
 
         execution = RaiseThenSuccessExecution()
-        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.close_position.time.sleep", return_value=None):
             result = close_position(
                 ClosePositionDependencies(
                     execution=execution,
@@ -442,7 +442,7 @@ class ClosePositionRetryTest(unittest.TestCase):
                 return 1.0
 
         execution = NonRetriableConfirmErrorExecution()
-        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.close_position.time.sleep", return_value=None):
             result = close_position(
                 ClosePositionDependencies(
                     execution=execution,
@@ -529,7 +529,7 @@ class ClosePositionRetryTest(unittest.TestCase):
                 return self._next(self.base_balances)
 
         execution = ShortClampExecution()
-        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.close_position.time.sleep", return_value=None):
             result = close_position(
                 ClosePositionDependencies(
                     execution=execution,
@@ -601,7 +601,7 @@ class ClosePositionRetryTest(unittest.TestCase):
                 return self._next(self.base_balances)
 
         execution = LongClampExecution()
-        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.close_position.time.sleep", return_value=None):
             result = close_position(
                 ClosePositionDependencies(
                     execution=execution,
@@ -661,7 +661,7 @@ class ClosePositionRetryTest(unittest.TestCase):
         config = _build_config()
         config["execution"]["slippage_bps"] = 2
         execution = AlwaysSlippageExecution()
-        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.close_position.time.sleep", return_value=None):
             result = close_position(
                 ClosePositionDependencies(
                     execution=execution,
@@ -723,7 +723,7 @@ class ClosePositionRetryTest(unittest.TestCase):
         config = _build_config()
         config["execution"]["slippage_bps"] = 2
         execution = AlwaysExactOutMismatchExecution()
-        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.close_position.time.sleep", return_value=None):
             result = close_position(
                 ClosePositionDependencies(
                     execution=execution,
@@ -849,7 +849,7 @@ class ClosePositionRetryTest(unittest.TestCase):
         config = _build_config()
         config["execution"]["slippage_bps"] = 2
         execution = SlippageThenSuccessExecution()
-        with patch("pybot.app.usecases.close_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.close_position.time.sleep", return_value=None):
             result = close_position(
                 ClosePositionDependencies(
                     execution=execution,

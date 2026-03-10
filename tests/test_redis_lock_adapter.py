@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock
 
-from pybot.adapters.lock.redis_lock import RUNNER_LOCK_RELEASE_SCRIPT, RedisLockAdapter
+from apps.dex_bot.adapters.lock.redis_lock import RUNNER_LOCK_RELEASE_SCRIPT, RedisLockAdapter
 
 
 class StubLogger:

@@ -5,19 +5,19 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from pybot.domain.model.types import BotConfig, Direction, ModelDirection, OhlcvBar, TradeRecord
-from pybot.domain.risk.loss_streak_trade_cap import LOSS_STREAK_LOOKBACK_CLOSED_TRADES
-from pybot.domain.risk.loss_streak_trade_cap import resolve_effective_max_trades_per_day_for_strategy
-from pybot.domain.risk.short_regime_guard import (
+from apps.dex_bot.domain.model.types import BotConfig, Direction, ModelDirection, OhlcvBar, TradeRecord
+from apps.dex_bot.domain.risk.loss_streak_trade_cap import LOSS_STREAK_LOOKBACK_CLOSED_TRADES
+from apps.dex_bot.domain.risk.loss_streak_trade_cap import resolve_effective_max_trades_per_day_for_strategy
+from apps.dex_bot.domain.risk.short_regime_guard import (
     SHORT_REGIME_GUARD_REASON,
     resolve_short_regime_guard_state,
 )
-from pybot.domain.risk.short_stop_loss_cooldown import (
+from apps.dex_bot.domain.risk.short_stop_loss_cooldown import (
     SHORT_STOP_LOSS_COOLDOWN_BARS,
     SHORT_STOP_LOSS_COOLDOWN_REASON,
     is_short_stop_loss_cooldown_enabled,
 )
-from pybot.domain.risk.swing_low_stop import (
+from apps.dex_bot.domain.risk.swing_low_stop import (
     calculate_max_loss_stop_price,
     calculate_max_loss_stop_price_for_short,
     calculate_take_profit_price,
@@ -25,9 +25,9 @@ from pybot.domain.risk.swing_low_stop import (
     tighten_stop_for_long,
     tighten_stop_for_short,
 )
-from pybot.domain.strategy.registry import evaluate_strategy_for_model
-from pybot.domain.utils.math import round_to
-from pybot.domain.utils.time import get_bar_duration_seconds
+from apps.dex_bot.domain.strategy.registry import evaluate_strategy_for_model
+from shared.utils.math import round_to
+from apps.dex_bot.domain.utils.time import get_bar_duration_seconds
 
 from research.src.domain.backtest_types import BacktestReport, BacktestSummary, BacktestTrade
 

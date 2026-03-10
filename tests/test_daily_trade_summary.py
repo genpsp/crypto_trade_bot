@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime
 
-from pybot.infra.alerting.daily_trade_summary import (
+from apps.dex_bot.infra.alerting.daily_trade_summary import (
     build_daily_summary_report,
     build_daily_summary_window,
     iter_utc_day_ids,

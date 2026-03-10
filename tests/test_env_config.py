@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from pybot.infra.config.env import load_env
+from apps.dex_bot.infra.config.env import load_env
 
 
 class EnvConfigTest(unittest.TestCase):

@@ -5,13 +5,13 @@ from copy import deepcopy
 from typing import Any
 from unittest.mock import patch
 
-from pybot.app.ports.execution_port import SwapConfirmation, SwapSubmission
-from pybot.app.usecases.open_position import (
+from apps.dex_bot.app.ports.execution_port import SwapConfirmation, SwapSubmission
+from apps.dex_bot.app.usecases.open_position import (
     OpenPositionDependencies,
     OpenPositionInput,
     open_position,
 )
-from pybot.domain.model.types import BotConfig, EntrySignalDecision, Pair, TradeRecord
+from apps.dex_bot.domain.model.types import BotConfig, EntrySignalDecision, Pair, TradeRecord
 
 
 def _merge(dst: dict[str, Any], src: dict[str, Any]) -> None:
@@ -176,7 +176,7 @@ class OpenPositionZeroAmountRetryTest(unittest.TestCase):
         persistence = InMemoryPersistence()
         execution = RetryThenSuccessExecution()
 
-        with patch("pybot.app.usecases.open_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.open_position.time.sleep", return_value=None):
             result = open_position(
                 OpenPositionDependencies(
                     execution=execution,
@@ -230,7 +230,7 @@ class OpenPositionZeroAmountRetryTest(unittest.TestCase):
         persistence = InMemoryPersistence()
         execution = AlwaysZeroAmountExecution()
 
-        with patch("pybot.app.usecases.open_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.open_position.time.sleep", return_value=None):
             result = open_position(
                 OpenPositionDependencies(
                     execution=execution,

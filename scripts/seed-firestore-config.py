@@ -12,13 +12,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from pybot.domain.model.types import BotConfig
-from pybot.infra.config.firestore_config_repo import (
+from apps.dex_bot.domain.model.types import BotConfig
+from apps.dex_bot.infra.config.firestore_config_repo import (
     GLOBAL_CONTROL_COLLECTION_ID,
     GLOBAL_CONTROL_DOC_ID,
     GLOBAL_CONTROL_PAUSE_FIELD,
 )
-from pybot.infra.config.schema import parse_config
+from apps.dex_bot.infra.config.schema import parse_config
 
 
 def parse_args() -> argparse.Namespace:

@@ -4,9 +4,9 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-from pybot.domain.model.types import ExecutionConfig, ExitConfig, OhlcvBar, RiskConfig, StrategyConfig
-from pybot.domain.strategy.shared.market_context import EmaMarketContext
-from pybot.domain.strategy.models.ema_trend_pullback_15m_v0 import (
+from apps.dex_bot.domain.model.types import ExecutionConfig, ExitConfig, OhlcvBar, RiskConfig, StrategyConfig
+from apps.dex_bot.domain.strategy.shared.market_context import EmaMarketContext
+from apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0 import (
     evaluate_ema_trend_pullback_15m_v0,
 )
 
@@ -107,7 +107,7 @@ class EmaTrendPullback15mStrategyTest(unittest.TestCase):
 
     def test_enter_baseline(self) -> None:
         with patch(
-            "pybot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
+            "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
             return_value=("UP", 102.0, 101.0, 80),
         ):
             decision = evaluate_ema_trend_pullback_15m_v0(
@@ -122,11 +122,11 @@ class EmaTrendPullback15mStrategyTest(unittest.TestCase):
     def test_no_signal_when_storm_size_multiplier_is_zero(self) -> None:
         with (
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
                 return_value=("UP", 102.0, 101.0, 80),
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0._resolve_position_size_multiplier",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0._resolve_position_size_multiplier",
                 return_value=("STORM", 0.0),
             ),
         ):
@@ -157,23 +157,23 @@ class EmaTrendPullback15mStrategyTest(unittest.TestCase):
         )
         with (
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.calculate_minimum_bars",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.calculate_minimum_bars",
                 return_value=1,
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
                 return_value=("DOWN", 99.0, 100.0, 80),
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.build_ema_market_context",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.build_ema_market_context",
                 return_value=short_context,
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.atr_series",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.atr_series",
                 return_value=[0.2],
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.rsi_series",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.rsi_series",
                 return_value=[45.0],
             ),
         ):
@@ -204,23 +204,23 @@ class EmaTrendPullback15mStrategyTest(unittest.TestCase):
         )
         with (
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.calculate_minimum_bars",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.calculate_minimum_bars",
                 return_value=1,
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
                 return_value=("DOWN", 99.0, 100.0, 80),
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.build_ema_market_context",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.build_ema_market_context",
                 return_value=short_context,
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.atr_series",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.atr_series",
                 return_value=[0.2],
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.rsi_series",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.rsi_series",
                 return_value=[45.0],
             ),
         ):
@@ -249,23 +249,23 @@ class EmaTrendPullback15mStrategyTest(unittest.TestCase):
         )
         with (
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.calculate_minimum_bars",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.calculate_minimum_bars",
                 return_value=1,
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
                 return_value=("DOWN", 99.0, 100.0, 80),
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.build_ema_market_context",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.build_ema_market_context",
                 return_value=short_context,
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.atr_series",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.atr_series",
                 return_value=[0.2],
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.rsi_series",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.rsi_series",
                 return_value=[45.0],
             ),
         ):
@@ -294,23 +294,23 @@ class EmaTrendPullback15mStrategyTest(unittest.TestCase):
         )
         with (
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.calculate_minimum_bars",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.calculate_minimum_bars",
                 return_value=1,
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
                 return_value=("DOWN", 99.95, 100.0, 80),
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.build_ema_market_context",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.build_ema_market_context",
                 return_value=short_context,
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.atr_series",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.atr_series",
                 return_value=[0.2],
             ),
             patch(
-                "pybot.domain.strategy.models.ema_trend_pullback_15m_v0.rsi_series",
+                "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0.rsi_series",
                 return_value=[45.0],
             ),
         ):
@@ -327,7 +327,7 @@ class EmaTrendPullback15mStrategyTest(unittest.TestCase):
 
     def test_no_signal_when_upper_trend_is_unavailable(self) -> None:
         with patch(
-            "pybot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
+            "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
             return_value=("UNAVAILABLE", None, None, 12),
         ):
             decision = evaluate_ema_trend_pullback_15m_v0(
@@ -343,7 +343,7 @@ class EmaTrendPullback15mStrategyTest(unittest.TestCase):
 
     def test_no_signal_when_weak_4h_uptrend_is_not_confirmed_by_2h(self) -> None:
         with patch(
-            "pybot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
+            "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
             side_effect=[
                 ("UP", 100.04, 100.0, 80),
                 ("DOWN", 99.9, 100.0, 120),
@@ -362,7 +362,7 @@ class EmaTrendPullback15mStrategyTest(unittest.TestCase):
 
     def test_enter_when_weak_4h_uptrend_is_confirmed_by_2h(self) -> None:
         with patch(
-            "pybot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
+            "apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
             side_effect=[
                 ("UP", 100.04, 100.0, 80),
                 ("UP", 101.2, 101.0, 120),

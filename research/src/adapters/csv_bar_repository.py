@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pybot.domain.model.types import OhlcvBar
+from apps.dex_bot.domain.model.types import OhlcvBar
 
 OHLCV_FIELDNAMES = [
     "open_time",

@@ -9,4 +9,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python", "-m", "pybot.main"]
+CMD ["python", "-m", "apps.dex_bot.main"]

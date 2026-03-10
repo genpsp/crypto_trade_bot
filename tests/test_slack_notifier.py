@@ -4,8 +4,8 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 
-from pybot.infra.alerting.daily_trade_summary import build_daily_summary_report
-from pybot.infra.alerting.slack_notifier import SlackAlertConfig, SlackNotifier, is_execution_error_result
+from apps.dex_bot.infra.alerting.daily_trade_summary import build_daily_summary_report
+from apps.dex_bot.infra.alerting.slack_notifier import SlackAlertConfig, SlackNotifier, is_execution_error_result
 
 
 class _FakeLogger:
@@ -48,7 +48,7 @@ class SlackNotifierTest(unittest.TestCase):
 
         response = Mock()
         response.raise_for_status.return_value = None
-        with patch("pybot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
+        with patch("apps.dex_bot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
             notifier.notify_trade_error(
                 model_id="ema_pullback_15m_both_v0",
                 result="FAILED",
@@ -83,7 +83,7 @@ class SlackNotifierTest(unittest.TestCase):
 
         response = Mock()
         response.raise_for_status.return_value = None
-        with patch("pybot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
+        with patch("apps.dex_bot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
             notifier.notify_runtime_config_error(
                 model_id="ema_pullback_15m_both_v0",
                 context="failed_to_load_model_config",
@@ -109,7 +109,7 @@ class SlackNotifierTest(unittest.TestCase):
         )
         response = Mock()
         response.raise_for_status.return_value = None
-        with patch("pybot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
+        with patch("apps.dex_bot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
             notifier.notify_startup(
                 [
                     {
@@ -133,7 +133,7 @@ class SlackNotifierTest(unittest.TestCase):
             logger=logger,
         )
 
-        with patch("pybot.infra.alerting.slack_notifier.requests.post") as mocked_post:
+        with patch("apps.dex_bot.infra.alerting.slack_notifier.requests.post") as mocked_post:
             notifier.notify_shutdown(reason="test stop")
         self.assertEqual(0, mocked_post.call_count)
 
@@ -174,7 +174,7 @@ class SlackNotifierTest(unittest.TestCase):
 
         response = Mock()
         response.raise_for_status.return_value = None
-        with patch("pybot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
+        with patch("apps.dex_bot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
             notifier.notify_daily_trade_summary_jst(report=report)
 
         self.assertEqual(1, mocked_post.call_count)

@@ -12,21 +12,21 @@ from urllib.parse import parse_qs, urlparse
 
 from solders.keypair import Keypair
 
-from pybot.adapters.execution.jupiter_quote_client import SOL_MINT, USDC_MINT, JupiterQuoteClient
-from pybot.adapters.execution.jupiter_swap import JupiterSwapAdapter
-from pybot.adapters.execution.solana_sender import SignatureConfirmation, SolanaSender
-from pybot.app.ports.execution_port import SubmitSwapRequest, SwapConfirmation, SwapSubmission
-from pybot.app.usecases.close_position import (
+from apps.dex_bot.adapters.execution.jupiter_quote_client import SOL_MINT, USDC_MINT, JupiterQuoteClient
+from apps.dex_bot.adapters.execution.jupiter_swap import JupiterSwapAdapter
+from apps.dex_bot.adapters.execution.solana_sender import SignatureConfirmation, SolanaSender
+from apps.dex_bot.app.ports.execution_port import SubmitSwapRequest, SwapConfirmation, SwapSubmission
+from apps.dex_bot.app.usecases.close_position import (
     ClosePositionDependencies,
     ClosePositionInput,
     close_position,
 )
-from pybot.app.usecases.open_position import (
+from apps.dex_bot.app.usecases.open_position import (
     OpenPositionDependencies,
     OpenPositionInput,
     open_position,
 )
-from pybot.domain.model.types import BotConfig, EntrySignalDecision, Pair, RunRecord, TradeRecord
+from apps.dex_bot.domain.model.types import BotConfig, EntrySignalDecision, Pair, RunRecord, TradeRecord
 
 
 class InMemoryLogger:
@@ -353,8 +353,8 @@ class TradeExecutionApiTest(unittest.TestCase):
         with MockServer(responder) as server:
             quote_url = f"{server.base_url}/swap/v1/quote"
             swap_url = f"{server.base_url}/swap/v1/swap"
-            with patch("pybot.adapters.execution.jupiter_quote_client.QUOTE_API_URL", quote_url), patch(
-                "pybot.adapters.execution.jupiter_swap.SWAP_API_URL",
+            with patch("apps.dex_bot.adapters.execution.jupiter_quote_client.QUOTE_API_URL", quote_url), patch(
+                "apps.dex_bot.adapters.execution.jupiter_swap.SWAP_API_URL",
                 swap_url,
             ):
                 config = _build_config()
@@ -473,8 +473,8 @@ class TradeExecutionApiTest(unittest.TestCase):
         with MockServer(responder) as server:
             quote_url = f"{server.base_url}/swap/v1/quote"
             swap_url = f"{server.base_url}/swap/v1/swap"
-            with patch("pybot.adapters.execution.jupiter_quote_client.QUOTE_API_URL", quote_url), patch(
-                "pybot.adapters.execution.jupiter_swap.SWAP_API_URL",
+            with patch("apps.dex_bot.adapters.execution.jupiter_quote_client.QUOTE_API_URL", quote_url), patch(
+                "apps.dex_bot.adapters.execution.jupiter_swap.SWAP_API_URL",
                 swap_url,
             ):
                 config = _build_config()
@@ -701,7 +701,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                 return 1.0
 
         execution = RetryEntryExecution()
-        with patch("pybot.app.usecases.open_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.open_position.time.sleep", return_value=None):
             opened = open_position(
                 OpenPositionDependencies(
                     execution=execution,
@@ -766,7 +766,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                 return 1.0
 
         execution = NonRetriableEntryExecution()
-        with patch("pybot.app.usecases.open_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.open_position.time.sleep", return_value=None):
             opened = open_position(
                 OpenPositionDependencies(
                     execution=execution,
@@ -835,7 +835,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                 return 1.0
 
         execution = SlippageExecution()
-        with patch("pybot.app.usecases.open_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.open_position.time.sleep", return_value=None):
             opened = open_position(
                 OpenPositionDependencies(
                     execution=execution,
@@ -908,7 +908,7 @@ class TradeExecutionApiTest(unittest.TestCase):
                 return 1.0
 
         execution = ExactOutMismatchExecution()
-        with patch("pybot.app.usecases.open_position.time.sleep", return_value=None):
+        with patch("apps.dex_bot.app.usecases.open_position.time.sleep", return_value=None):
             opened = open_position(
                 OpenPositionDependencies(
                     execution=execution,
@@ -1441,11 +1441,11 @@ class TradeExecutionApiTest(unittest.TestCase):
             swap_url = f"{server.base_url}/swap/v1/swap"
             sender = FakeSolanaSender()
             adapter = JupiterSwapAdapter(JupiterQuoteClient(), sender, InMemoryLogger())
-            with patch("pybot.adapters.execution.jupiter_quote_client.QUOTE_API_URL", quote_url), patch(
-                "pybot.adapters.execution.jupiter_swap.SWAP_API_URL",
+            with patch("apps.dex_bot.adapters.execution.jupiter_quote_client.QUOTE_API_URL", quote_url), patch(
+                "apps.dex_bot.adapters.execution.jupiter_swap.SWAP_API_URL",
                 swap_url,
             ), patch(
-                "pybot.adapters.execution.http_retry.time.sleep",
+                "apps.dex_bot.adapters.execution.http_retry.time.sleep",
                 return_value=None,
             ):
                 submission = adapter.submit_swap(
@@ -1485,9 +1485,9 @@ class SolanaSenderRpcMethodTest(unittest.TestCase):
         with MockServer(responder) as server:
             fake_secret = bytes(Keypair())
             with patch(
-                "pybot.adapters.execution.solana_sender._decrypt_secret_key",
+                "apps.dex_bot.adapters.execution.solana_sender._decrypt_secret_key",
                 return_value=fake_secret,
-            ), patch("pybot.adapters.execution.solana_sender.time.sleep", return_value=None):
+            ), patch("apps.dex_bot.adapters.execution.solana_sender.time.sleep", return_value=None):
                 sender = SolanaSender(
                     rpc_url=f"{server.base_url}/rpc",
                     wallet_key_path="unused",
@@ -1539,13 +1539,13 @@ class SolanaSenderRpcMethodTest(unittest.TestCase):
         with MockServer(responder) as server:
             fake_secret = bytes(Keypair())
             with patch(
-                "pybot.adapters.execution.solana_sender._decrypt_secret_key",
+                "apps.dex_bot.adapters.execution.solana_sender._decrypt_secret_key",
                 return_value=fake_secret,
             ), patch(
-                "pybot.adapters.execution.solana_sender.VersionedTransaction",
+                "apps.dex_bot.adapters.execution.solana_sender.VersionedTransaction",
                 DummyVersionedTransaction,
             ), patch(
-                "pybot.adapters.execution.solana_sender.to_bytes_versioned",
+                "apps.dex_bot.adapters.execution.solana_sender.to_bytes_versioned",
                 return_value=b"message",
             ):
                 sender = SolanaSender(
@@ -1588,7 +1588,7 @@ class SolanaSenderRpcMethodTest(unittest.TestCase):
         with MockServer(responder) as server:
             fake_secret = bytes(Keypair())
             with patch(
-                "pybot.adapters.execution.solana_sender._decrypt_secret_key",
+                "apps.dex_bot.adapters.execution.solana_sender._decrypt_secret_key",
                 return_value=fake_secret,
             ):
                 sender = SolanaSender(
@@ -1621,7 +1621,7 @@ class SolanaSenderRpcMethodTest(unittest.TestCase):
         with MockServer(responder) as server:
             fake_secret = bytes(Keypair())
             with patch(
-                "pybot.adapters.execution.solana_sender._decrypt_secret_key",
+                "apps.dex_bot.adapters.execution.solana_sender._decrypt_secret_key",
                 return_value=fake_secret,
             ):
                 sender = SolanaSender(

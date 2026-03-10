@@ -4,8 +4,8 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-from pybot.domain.model.types import ExecutionConfig, ExitConfig, OhlcvBar, RiskConfig, StrategyConfig
-from pybot.domain.strategy.models.ema_trend_pullback_v0 import evaluate_ema_trend_pullback_v0
+from apps.dex_bot.domain.model.types import ExecutionConfig, ExitConfig, OhlcvBar, RiskConfig, StrategyConfig
+from apps.dex_bot.domain.strategy.models.ema_trend_pullback_v0 import evaluate_ema_trend_pullback_v0
 
 
 def _build_bars(closes: list[float], spread: float) -> list[OhlcvBar]:
@@ -114,7 +114,7 @@ class EmaTrendPullbackStrategyTest(unittest.TestCase):
 
     def test_no_signal_when_storm_size_multiplier_is_zero(self) -> None:
         with patch(
-            "pybot.domain.strategy.models.ema_trend_pullback_v0._resolve_position_size_multiplier",
+            "apps.dex_bot.domain.strategy.models.ema_trend_pullback_v0._resolve_position_size_multiplier",
             return_value=("STORM", 0.0),
         ):
             decision = evaluate_ema_trend_pullback_v0(

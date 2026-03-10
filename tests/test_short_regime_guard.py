@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import unittest
 
-from pybot.domain.model.types import TradeRecord
-from pybot.domain.risk.short_regime_guard import (
+from apps.dex_bot.domain.model.types import TradeRecord
+from apps.dex_bot.domain.risk.short_regime_guard import (
     SHORT_REGIME_GUARD_BLOCK_BARS,
     resolve_short_regime_guard_state,
 )

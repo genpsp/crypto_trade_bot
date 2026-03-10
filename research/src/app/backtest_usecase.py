@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pybot.domain.model.types import BotConfig
+from apps.dex_bot.domain.model.types import BotConfig
 
 from research.src.adapters.csv_bar_repository import read_bars_from_csv, write_json
 from research.src.domain.backtest_engine import run_backtest

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from pybot.adapters.market_data.ohlcv_provider import OhlcvProvider
+from apps.dex_bot.adapters.market_data.ohlcv_provider import OhlcvProvider
 
 
 class FakeRedis:
@@ -38,7 +38,7 @@ class OhlcvCacheTest(unittest.TestCase):
         ]
 
         with patch(
-            "pybot.adapters.market_data.ohlcv_provider.requests.get",
+            "apps.dex_bot.adapters.market_data.ohlcv_provider.requests.get",
             return_value=FakeResponse(payload),
         ) as requests_get:
             first = provider.fetch_bars("SOL/USDC", "15m", 2)

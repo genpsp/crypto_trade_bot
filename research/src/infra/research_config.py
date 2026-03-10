@@ -4,8 +4,8 @@ import importlib
 import json
 from pathlib import Path
 
-from pybot.domain.model.types import BotConfig
-from pybot.infra.config import schema as schema_module
+from apps.dex_bot.domain.model.types import BotConfig
+from apps.dex_bot.infra.config import schema as schema_module
 
 
 def load_bot_config(path: str | Path) -> BotConfig:
