@@ -26,6 +26,7 @@ DEFAULT_MIN_NOTIONAL_JPY = 5_000
 DEFAULT_MARGIN_USAGE_RATIO = 0.99
 DEFAULT_LEVERAGE_MULTIPLIER = 1.0
 DEFAULT_SLIPPAGE_BPS = 3
+DEFAULT_MODEL_ID_PREFIX = "gmo_"
 
 
 def parse_args() -> argparse.Namespace:
@@ -183,11 +184,18 @@ def _default_15m_config(mode: str) -> BotConfig:
 
 def build_default_model_configs(mode: str) -> dict[str, BotConfig]:
     return {
-        "ema_pullback_2h_long_v0": _default_long_config(mode),
-        "storm_2h_short_v0": _default_short_config(mode),
-        "ema_pullback_15m_both_v0": _default_15m_config(mode),
+        f"{DEFAULT_MODEL_ID_PREFIX}ema_pullback_2h_long_v0": _default_long_config(mode),
+        f"{DEFAULT_MODEL_ID_PREFIX}storm_2h_short_v0": _default_short_config(mode),
+        f"{DEFAULT_MODEL_ID_PREFIX}ema_pullback_15m_both_v0": _default_15m_config(mode),
     }
 
+
+
+def _normalize_model_id(model_id: str) -> str:
+    stripped = model_id.strip()
+    if stripped.startswith(DEFAULT_MODEL_ID_PREFIX):
+        return stripped
+    return f"{DEFAULT_MODEL_ID_PREFIX}{stripped}"
 
 
 def _infer_model_id_from_path(config_path: Path) -> str | None:
@@ -210,7 +218,7 @@ def load_single_model_config(config_path: Path, model_id_override: str | None) -
     model_id = model_id_override or _infer_model_id_from_path(config_path)
     if not model_id:
         raise ValueError("model_id could not be inferred, pass --model-id")
-    return model_id, config
+    return _normalize_model_id(model_id), config
 
 
 

@@ -8,10 +8,11 @@ from google.cloud.firestore import Client
 from apps.gmo_bot.domain.model.types import BotConfig
 from apps.gmo_bot.infra.config.schema import parse_config
 
-MODELS_COLLECTION_ID = "gmo_models"
-GLOBAL_CONTROL_COLLECTION_ID = "gmo_control"
+MODELS_COLLECTION_ID = "models"
+GLOBAL_CONTROL_COLLECTION_ID = "control"
 GLOBAL_CONTROL_DOC_ID = "global"
 GLOBAL_CONTROL_PAUSE_FIELD = "pause_all"
+GMO_BROKER = "GMO_COIN"
 
 
 @dataclass(frozen=True)
@@ -25,9 +26,15 @@ class FirestoreConfigRepository:
     def __init__(self, firestore: Client):
         self.firestore = firestore
 
+    @staticmethod
+    def _is_supported_model_doc(payload: Any) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        return payload.get("broker") == GMO_BROKER
+
     def list_model_ids(self) -> list[str]:
         model_docs = list(self.firestore.collection(MODELS_COLLECTION_ID).stream())
-        model_ids = [doc.id for doc in model_docs]
+        model_ids = [doc.id for doc in model_docs if self._is_supported_model_doc(doc.to_dict())]
         model_ids.sort()
         return model_ids
 
@@ -60,6 +67,8 @@ class FirestoreConfigRepository:
         return model_data, config_payload
 
     def _parse_model_metadata(self, model_id: str, model_data: dict[str, Any]) -> ModelMetadata:
+        if model_data.get("broker") != GMO_BROKER:
+            raise RuntimeError(f"{MODELS_COLLECTION_ID}/{model_id}.broker must be {GMO_BROKER}")
         enabled = model_data.get("enabled")
         if not isinstance(enabled, bool):
             raise RuntimeError(f"{MODELS_COLLECTION_ID}/{model_id}.enabled must be boolean")

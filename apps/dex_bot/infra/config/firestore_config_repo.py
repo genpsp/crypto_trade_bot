@@ -8,9 +8,11 @@ from google.cloud.firestore import Client
 from apps.dex_bot.domain.model.types import BotConfig
 from apps.dex_bot.infra.config.schema import parse_config
 
+MODELS_COLLECTION_ID = "models"
 GLOBAL_CONTROL_COLLECTION_ID = "control"
 GLOBAL_CONTROL_DOC_ID = "global"
 GLOBAL_CONTROL_PAUSE_FIELD = "pause_all"
+GMO_BROKER = "GMO_COIN"
 
 
 @dataclass(frozen=True)
@@ -25,9 +27,15 @@ class FirestoreConfigRepository:
     def __init__(self, firestore: Client):
         self.firestore = firestore
 
+    @staticmethod
+    def _is_supported_model_doc(payload: Any) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        return payload.get("broker") != GMO_BROKER
+
     def list_model_ids(self) -> list[str]:
-        model_docs = list(self.firestore.collection("models").stream())
-        model_ids = [doc.id for doc in model_docs]
+        model_docs = list(self.firestore.collection(MODELS_COLLECTION_ID).stream())
+        model_ids = [doc.id for doc in model_docs if self._is_supported_model_doc(doc.to_dict())]
         model_ids.sort()
         return model_ids
 
@@ -44,20 +52,20 @@ class FirestoreConfigRepository:
         return pause_all is True
 
     def _load_model_payload(self, model_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
-        model_ref = self.firestore.collection("models").document(model_id)
+        model_ref = self.firestore.collection(MODELS_COLLECTION_ID).document(model_id)
         model_snapshot = model_ref.get()
         if not model_snapshot.exists:
-            raise RuntimeError(f"models/{model_id} document is missing")
+            raise RuntimeError(f"{MODELS_COLLECTION_ID}/{model_id} document is missing")
         model_data = model_snapshot.to_dict()
         if not isinstance(model_data, dict):
-            raise RuntimeError(f"models/{model_id} payload is invalid")
+            raise RuntimeError(f"{MODELS_COLLECTION_ID}/{model_id} payload is invalid")
 
         config_snapshot = model_ref.collection("config").document("current").get()
         if not config_snapshot.exists:
-            raise RuntimeError(f"models/{model_id}/config/current document is missing")
+            raise RuntimeError(f"{MODELS_COLLECTION_ID}/{model_id}/config/current document is missing")
         config_payload = config_snapshot.to_dict()
         if not isinstance(config_payload, dict):
-            raise RuntimeError(f"models/{model_id}/config/current payload is invalid")
+            raise RuntimeError(f"{MODELS_COLLECTION_ID}/{model_id}/config/current payload is invalid")
 
         return model_data, config_payload
 
@@ -81,17 +89,17 @@ class FirestoreConfigRepository:
     ) -> ModelMetadata:
         enabled = model_data.get("enabled")
         if not isinstance(enabled, bool):
-            raise RuntimeError(f"models/{model_id}.enabled must be boolean")
+            raise RuntimeError(f"{MODELS_COLLECTION_ID}/{model_id}.enabled must be boolean")
         direction = model_data.get("direction")
         if direction not in ("LONG", "SHORT", "BOTH"):
             strategy_name = self._extract_strategy_name(config_payload)
             raise RuntimeError(
-                f"models/{model_id}.direction must be LONG, SHORT or BOTH "
+                f"{MODELS_COLLECTION_ID}/{model_id}.direction must be LONG, SHORT or BOTH "
                 f"(strategy={strategy_name})"
             )
         mode = model_data.get("mode")
         if mode not in ("PAPER", "LIVE"):
-            raise RuntimeError(f"models/{model_id}.mode must be PAPER or LIVE")
+            raise RuntimeError(f"{MODELS_COLLECTION_ID}/{model_id}.mode must be PAPER or LIVE")
 
         wallet_key_path: str | None = None
         raw_wallet_key_path = model_data.get("wallet_key_path")
@@ -122,7 +130,7 @@ class FirestoreConfigRepository:
 
         execution_payload = normalized.get("execution")
         if not isinstance(execution_payload, dict):
-            raise RuntimeError(f"models/{model_id}/config/current.execution must be object")
+            raise RuntimeError(f"{MODELS_COLLECTION_ID}/{model_id}/config/current.execution must be object")
         execution: dict[str, Any] = dict(execution_payload)
         execution.pop("mode", None)
         execution["mode"] = model_metadata.mode

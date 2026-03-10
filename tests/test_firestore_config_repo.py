@@ -63,6 +63,7 @@ class FirestoreConfigRepositoryGlobalControlTest(unittest.TestCase):
                 {
                     "ema_pullback_2h_long_v0": {},
                     "storm_2h_short_v0": {},
+                    "ema_pullback_2h_long_gmo_v0": {"broker": "GMO_COIN"},
                 }
             )  # type: ignore[arg-type]
         )
