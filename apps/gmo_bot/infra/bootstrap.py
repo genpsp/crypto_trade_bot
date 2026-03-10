@@ -240,7 +240,7 @@ def bootstrap() -> AppRuntime:
                 pair=config["pair"],
                 execution=execution,
                 persistence=FirestoreRepository(firestore, config_repo, mode=metadata.mode, model_id=model_id),
-                lock=RedisLockAdapter(redis=redis, model_id=model_id, logger=logger),
+                lock=RedisLockAdapter(redis=redis, logger=logger, lock_namespace=model_id),
             )
             logger.info("model runtime configured", _build_runtime_summary(spec))
         model_contexts.clear()
