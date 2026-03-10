@@ -52,6 +52,9 @@ class _FakeFirestoreClient(_FakeFirestoreNode):
 
 
 class _FakeConfigRepo:
+    def __init__(self, *, enabled: bool = True) -> None:
+        self.enabled = enabled
+
     def list_model_ids(self) -> list[str]:
         return ["gmo_ema_pullback_15m_both_v0"]
 
@@ -60,6 +63,7 @@ class _FakeConfigRepo:
 
     def get_current_config(self, _model_id: str) -> dict[str, object]:
         return {
+            "enabled": self.enabled,
             "pair": "SOL/JPY",
             "strategy": {"name": "ema_trend_pullback_15m_v0"},
             "broker": "GMO_COIN",
@@ -221,6 +225,42 @@ class GmoBootstrapNotificationsTest(unittest.TestCase):
         self.assertEqual(1, len(notifier.startup_payloads))
         self.assertEqual(["shutdown signal received"], notifier.shutdown_reasons)
         self.assertEqual([], notifier.consecutive_failures)
+
+    def test_disabled_model_is_not_loaded_into_runtime(self) -> None:
+        _StrictFakeNotifier.instances.clear()
+        run_cycle_mock = unittest.mock.Mock(
+            return_value={
+                "result": "FAILED",
+                "summary": "FAILED: should not run",
+                "run_id": "run_1",
+                "trade_id": "trade_1",
+            }
+        )
+        with (
+            patch("apps.gmo_bot.infra.bootstrap.load_env", return_value=_FakeEnv()),
+            patch("apps.gmo_bot.infra.bootstrap.create_logger", return_value=_FakeLogger()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreClient", _FakeFirestoreClient),
+            patch("apps.gmo_bot.infra.bootstrap.Redis.from_url", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreConfigRepository", return_value=_FakeConfigRepo(enabled=False)),
+            patch("apps.gmo_bot.infra.bootstrap.GmoApiClient", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.OhlcvProvider", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.PaperExecutionAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.GmoMarginExecutionAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreRepository", return_value=_FakePersistence()),
+            patch("apps.gmo_bot.infra.bootstrap.RedisLockAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.SlackNotifier", _StrictFakeNotifier),
+            patch("apps.gmo_bot.infra.bootstrap.create_cron_cycle", return_value=_FakeCronController()),
+            patch("apps.gmo_bot.infra.bootstrap.run_cycle", run_cycle_mock),
+            patch("apps.gmo_bot.infra.bootstrap.threading.Thread", _FakeThread),
+            patch("apps.gmo_bot.infra.bootstrap._should_execute_cycle", return_value=True),
+        ):
+            runtime = bootstrap()
+            runtime.start()
+            runtime.stop()
+
+        notifier = _StrictFakeNotifier.instances[0]
+        self.assertEqual([[]], notifier.startup_payloads)
+        run_cycle_mock.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -108,6 +108,7 @@ def bootstrap() -> AppRuntime:
     cycle_state_lock = threading.Lock()
     watchdog_stop_event = threading.Event()
     watchdog_thread: threading.Thread | None = None
+    warned_no_enabled_models = False
 
     def _build_runtime_summary(spec: ModelRuntimeSpec) -> dict[str, str]:
         return {
@@ -238,12 +239,15 @@ def bootstrap() -> AppRuntime:
         failure_streaks_by_model[model_id] = 0
 
     def _refresh_runtime_specs() -> None:
-        nonlocal runtime_pause_state, last_runtime_refresh_at
+        nonlocal runtime_pause_state, last_runtime_refresh_at, warned_no_enabled_models
         refreshed_contexts: dict[str, ModelRuntimeContext] = {}
         refreshed_specs: dict[str, ModelRuntimeSpec] = {}
-        for model_id in config_repo.list_model_ids():
+        all_model_ids = config_repo.list_model_ids()
+        for model_id in all_model_ids:
             metadata = config_repo.get_model_metadata(model_id)
             config = config_repo.get_current_config(model_id)
+            if not config["enabled"]:
+                continue
             strategy_name = config["strategy"]["name"]
             spec = ModelRuntimeSpec(
                 model_id=model_id,
@@ -270,11 +274,16 @@ def bootstrap() -> AppRuntime:
         runtime_specs.update(refreshed_specs)
         runtime_pause_state = config_repo.is_global_pause_enabled()
         last_runtime_refresh_at = datetime.now(tz=UTC)
-        logger.info(
-            "runtime models selected",
-            {"enabled_models": [_build_runtime_summary(spec) for spec in refreshed_specs.values()]},
-        )
-        _sync_model_config_watchers(list(refreshed_specs.keys()))
+        if refreshed_specs:
+            warned_no_enabled_models = False
+            logger.info(
+                "runtime models selected",
+                {"enabled_models": [_build_runtime_summary(spec) for spec in refreshed_specs.values()]},
+            )
+        elif not warned_no_enabled_models:
+            warned_no_enabled_models = True
+            logger.warn("no enabled models found in Firestore models collection")
+        _sync_model_config_watchers(all_model_ids)
 
     def _refresh_runtime_if_needed(force: bool = False) -> None:
         should_refresh = force or runtime_refresh_needed.is_set()
