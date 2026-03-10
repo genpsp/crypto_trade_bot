@@ -277,11 +277,11 @@ docker compose -f docker-compose.gmo.yml up -d --build
 DEX bot ワークフロー: `.github/workflows/deploy.yml`
 
 - トリガ: `main` push / `workflow_dispatch`
-- VPS上で `git pull` 後に `docker compose up -d --build`
+- VPS上で `git pull` 後に `docker compose up -d --build` と `docker compose -f docker-compose.gmo.yml up -d --build` を順次実行
 
 GMO bot ワークフロー: `.github/workflows/deploy-gmo-bot.yml`
 
-- トリガ: `main` push / `workflow_dispatch`
+- トリガ: `workflow_dispatch` のみ
 - VPS上で `git pull` 後に `docker compose -f docker-compose.gmo.yml up -d --build`
 
 必要な GitHub Secrets:

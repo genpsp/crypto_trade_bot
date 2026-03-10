@@ -1,9 +1,6 @@
 name: Deploy GMO Bot
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
