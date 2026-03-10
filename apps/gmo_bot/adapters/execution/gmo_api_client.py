@@ -97,10 +97,7 @@ class GmoApiClient:
         if time_in_force is not None:
             body["timeInForce"] = time_in_force
         payload = self.private_post("/v1/order", body)
-        data = payload.get("data")
-        if not isinstance(data, dict) or not isinstance(data.get("orderId"), int):
-            raise RuntimeError(f"GMO order payload invalid: {payload}")
-        return int(data["orderId"])
+        return _extract_order_id(payload, path="/v1/order")
 
     def create_close_order(
         self,
@@ -123,10 +120,7 @@ class GmoApiClient:
         if time_in_force is not None:
             body["timeInForce"] = time_in_force
         payload = self.private_post("/v1/closeOrder", body)
-        data = payload.get("data")
-        if not isinstance(data, dict) or not isinstance(data.get("orderId"), int):
-            raise RuntimeError(f"GMO closeOrder payload invalid: {payload}")
-        return int(data["orderId"])
+        return _extract_order_id(payload, path="/v1/closeOrder")
 
     def get_order(self, order_id: int) -> dict[str, Any] | None:
         payload = self.private_get("/v1/orders", {"orderId": order_id})
@@ -143,6 +137,10 @@ class GmoApiClient:
         data = payload.get("data")
         if isinstance(data, list):
             return [item for item in data if isinstance(item, dict)]
+        if isinstance(data, dict):
+            nested_list = data.get("list")
+            if isinstance(nested_list, list):
+                return [item for item in nested_list if isinstance(item, dict)]
         raise RuntimeError(f"GMO executions payload invalid for order_id={order_id}")
 
     def _request(
@@ -212,3 +210,24 @@ def _build_gmo_error_message(payload: dict[str, Any]) -> str:
         if parts:
             return f"GMO API error status={payload.get('status')}: {' | '.join(parts)}"
     return f"GMO API error status={payload.get('status')}: {payload}"
+
+
+def _extract_order_id(payload: dict[str, Any], *, path: str) -> int:
+    data = payload.get("data")
+    if isinstance(data, int):
+        return data
+    if isinstance(data, str):
+        try:
+            return int(data)
+        except ValueError as error:
+            raise RuntimeError(f"GMO {path} payload invalid: {payload}") from error
+    if isinstance(data, dict):
+        raw_order_id = data.get("orderId")
+        if isinstance(raw_order_id, int):
+            return raw_order_id
+        if isinstance(raw_order_id, str):
+            try:
+                return int(raw_order_id)
+            except ValueError as error:
+                raise RuntimeError(f"GMO {path} payload invalid: {payload}") from error
+    raise RuntimeError(f"GMO {path} payload invalid: {payload}")
