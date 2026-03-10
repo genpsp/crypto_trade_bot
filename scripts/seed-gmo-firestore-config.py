@@ -74,7 +74,7 @@ def _base_execution(mode: str) -> dict[str, object]:
 def _default_long_config(mode: str) -> BotConfig:
     return parse_config(
         {
-            "enabled": True,
+            "enabled": False,
             "broker": "GMO_COIN",
             "pair": "SOL/JPY",
             "direction": "LONG",
@@ -111,7 +111,7 @@ def _default_long_config(mode: str) -> BotConfig:
 def _default_short_config(mode: str) -> BotConfig:
     return parse_config(
         {
-            "enabled": True,
+            "enabled": False,
             "broker": "GMO_COIN",
             "pair": "SOL/JPY",
             "direction": "SHORT",
@@ -148,7 +148,7 @@ def _default_short_config(mode: str) -> BotConfig:
 def _default_15m_config(mode: str) -> BotConfig:
     return parse_config(
         {
-            "enabled": False,
+            "enabled": True,
             "broker": "GMO_COIN",
             "pair": "SOL/JPY",
             "direction": "BOTH",

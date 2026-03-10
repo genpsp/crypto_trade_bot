@@ -186,6 +186,9 @@ def bootstrap() -> AppRuntime:
     def _active_model_contexts() -> list[ModelRuntimeContext]:
         return [model_contexts[mid] for mid in sorted(model_contexts.keys())]
 
+    def _current_runtime_summaries() -> list[dict[str, str]]:
+        return [_build_runtime_summary(runtime_specs[mid]) for mid in sorted(runtime_specs.keys())]
+
     def _mark_cycle_completed() -> None:
         nonlocal last_cycle_completed_at, stale_cycle_alert_active
         with cycle_state_lock:
@@ -329,6 +332,7 @@ def bootstrap() -> AppRuntime:
         _refresh_pause_if_needed(force=True)
         _start_firestore_watchers()
         logger.info("bot startup: run first cycle immediately")
+        notifier.notify_startup(_current_runtime_summaries())
         _run_all_models()
         cron_controller = create_cron_cycle(logger=logger, callback=_run_all_models)
         cron_controller.start()
@@ -338,6 +342,7 @@ def bootstrap() -> AppRuntime:
 
     def stop() -> None:
         nonlocal cron_controller, watchdog_thread
+        notifier.notify_shutdown(reason="shutdown signal received")
         watchdog_stop_event.set()
         if cron_controller is not None:
             cron_controller.stop()
