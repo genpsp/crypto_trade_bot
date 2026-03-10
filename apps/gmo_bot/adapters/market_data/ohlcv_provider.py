@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import json
-from typing import Any
+from typing import Any, Callable
 
 from redis import Redis
 
@@ -10,7 +10,6 @@ from apps.dex_bot.domain.model.types import OhlcvBar
 from apps.gmo_bot.adapters.execution.gmo_api_client import GmoApiClient
 from apps.gmo_bot.app.ports.market_data_port import MarketDataPort
 from apps.gmo_bot.domain.model.types import Pair, SignalTimeframe
-from apps.gmo_bot.domain.utils.time import get_bar_duration_seconds
 
 PAIR_SYMBOL_MAP: dict[Pair, str] = {"SOL/JPY": "SOL_JPY"}
 TIMEFRAME_TO_GMO_INTERVAL: dict[SignalTimeframe, str] = {
@@ -22,10 +21,17 @@ DEFAULT_OHLCV_CACHE_TTL_SECONDS = 30
 
 
 class OhlcvProvider(MarketDataPort):
-    def __init__(self, client: GmoApiClient, redis: Redis | None = None, cache_ttl_seconds: int = DEFAULT_OHLCV_CACHE_TTL_SECONDS):
+    def __init__(
+        self,
+        client: GmoApiClient,
+        redis: Redis | None = None,
+        cache_ttl_seconds: int = DEFAULT_OHLCV_CACHE_TTL_SECONDS,
+        now_provider: Callable[[], datetime] | None = None,
+    ):
         self.client = client
         self.redis = redis
         self.cache_ttl_seconds = max(int(cache_ttl_seconds), 0)
+        self.now_provider = now_provider
 
     def fetch_bars(self, pair: Pair, timeframe: SignalTimeframe, limit: int) -> list[OhlcvBar]:
         if limit <= 0:
@@ -40,7 +46,8 @@ class OhlcvProvider(MarketDataPort):
 
     def _fetch_recent_source_bars(self, symbol: str, interval: str, limit: int) -> list[OhlcvBar]:
         bars_by_open_time: dict[datetime, OhlcvBar] = {}
-        cursor = datetime.now(tz=UTC)
+        fetched_at = self._now()
+        cursor = fetched_at
         attempts = 0
         max_attempts = 40
         while len(bars_by_open_time) < limit and attempts < max_attempts:
@@ -52,7 +59,7 @@ class OhlcvProvider(MarketDataPort):
                 self._set_cached_rows(cache_key, rows)
             for row in rows:
                 bar = self._row_to_bar(row, interval)
-                if bar is not None:
+                if bar is not None and self._is_confirmed_bar(bar, fetched_at):
                     bars_by_open_time[bar.open_time] = bar
             cursor = self._step_cursor(cursor, interval)
             attempts += 1
@@ -95,24 +102,44 @@ class OhlcvProvider(MarketDataPort):
             return cursor.replace(year=cursor.year - 1)
         return cursor - timedelta(days=1)
 
+    def _now(self) -> datetime:
+        current = self.now_provider() if self.now_provider else datetime.now(tz=UTC)
+        if current.tzinfo is None:
+            return current.replace(tzinfo=UTC)
+        return current.astimezone(UTC)
+
+    def _is_confirmed_bar(self, bar: OhlcvBar, fetched_at: datetime) -> bool:
+        return bar.close_time <= fetched_at
+
     def _row_to_bar(self, row: dict[str, Any], interval: str) -> OhlcvBar | None:
         open_time_ms = row.get("openTime") or row.get("open_time")
-        if not isinstance(open_time_ms, str):
+        if not isinstance(open_time_ms, (str, int, float)):
             return None
         try:
-            open_time = datetime.fromtimestamp(int(open_time_ms) / 1000, tz=UTC)
-        except ValueError:
+            raw_open_time_ms = int(open_time_ms)
+        except (TypeError, ValueError):
             return None
         duration = self._interval_seconds(interval)
+        open_time, close_time = self._normalize_bar_window(raw_open_time_ms, duration)
         return OhlcvBar(
             open_time=open_time,
-            close_time=open_time + timedelta(seconds=duration),
+            close_time=close_time,
             open=float(row["open"]),
             high=float(row["high"]),
             low=float(row["low"]),
             close=float(row["close"]),
             volume=float(row.get("volume", 0.0)),
         )
+
+    def _normalize_bar_window(self, raw_open_time_ms: int, duration_seconds: int) -> tuple[datetime, datetime]:
+        duration_ms = duration_seconds * 1000
+        normalized_close_time_ms = self._normalize_timestamp_ms(raw_open_time_ms + duration_ms, duration_ms)
+        close_time = datetime.fromtimestamp(normalized_close_time_ms / 1000, tz=UTC)
+        open_time = close_time - timedelta(seconds=duration_seconds)
+        return open_time, close_time
+
+    def _normalize_timestamp_ms(self, timestamp_ms: int, interval_ms: int) -> int:
+        return ((timestamp_ms + (interval_ms // 2)) // interval_ms) * interval_ms
 
     def _interval_seconds(self, interval: str) -> int:
         if interval == "15min":

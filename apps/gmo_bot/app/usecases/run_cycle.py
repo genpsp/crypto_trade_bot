@@ -226,8 +226,8 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             run["summary"] = "FAILED: no closed bars available"
             return run
         if latest_closed_bar.close_time != bar_close_time:
-            run["result"] = "FAILED"
-            run["summary"] = f"FAILED: market bar close does not match expected {timeframe} close"
+            run["result"] = "SKIPPED"
+            run["summary"] = f"SKIPPED: latest market bar is behind expected {timeframe} close"
             run["reason"] = (
                 f"EXPECTED_{bar_close_time.isoformat().replace('+00:00', 'Z')}"
                 f"_GOT_{latest_closed_bar.close_time.isoformat().replace('+00:00', 'Z')}"

@@ -195,6 +195,41 @@ class GmoRunCyclePersistenceTest(unittest.TestCase):
         self.assertEqual(1, len(persistence.saved_runs))
         self.assertEqual("FAILED", persistence.saved_runs[0]["result"])
 
+    def test_bar_close_mismatch_is_skipped_and_does_not_block_retry(self) -> None:
+        config = _build_config()
+        persistence = _DummyPersistence(config)
+        lock = _DummyLock()
+        bars = [
+            OhlcvBar(
+                open_time=datetime(2026, 3, 10, 7, 15, tzinfo=UTC),
+                close_time=datetime(2026, 3, 10, 7, 30, tzinfo=UTC),
+                open=10000.0,
+                high=10100.0,
+                low=9900.0,
+                close=10050.0,
+                volume=1000.0,
+            )
+        ]
+        deps = RunCycleDependencies(
+            execution=_DummyExecution(),
+            lock=lock,
+            logger=_DummyLogger(),
+            market_data=_DummyMarketData(bars),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 10, 7, 50, tzinfo=UTC),
+        )
+
+        first = run_cycle(deps)
+        second = run_cycle(deps)
+        expected_bar_close_iso = datetime(2026, 3, 10, 7, 45, tzinfo=UTC).isoformat().replace("+00:00", "Z")
+
+        self.assertEqual("SKIPPED", first["result"])
+        self.assertEqual(expected_bar_close_iso, first["bar_close_time_iso"])
+        self.assertEqual("SKIPPED", second["result"])
+        self.assertFalse(lock.has_entry_attempt(expected_bar_close_iso))
+        self.assertEqual([], persistence.saved_runs)
+
     def test_should_persist_run_record_matches_runtime_policy(self) -> None:
         self.assertTrue(_should_persist_run_record({"result": "OPENED"}))
         self.assertTrue(_should_persist_run_record({"result": "CLOSED"}))

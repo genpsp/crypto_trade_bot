@@ -15,6 +15,40 @@ class _FakeGmoClient:
 
 
 class GmoOhlcvProviderTest(unittest.TestCase):
+    def test_fetch_bars_normalizes_15m_bar_times_and_excludes_open_bar(self) -> None:
+        now = datetime(2026, 3, 10, 7, 46, tzinfo=UTC)
+        date_token = now.strftime("%Y%m%d")
+        rows = [
+            {
+                "openTime": str(int(datetime(2026, 3, 10, 7, 30, 5, tzinfo=UTC).timestamp() * 1000)),
+                "open": "100",
+                "high": "101",
+                "low": "99",
+                "close": "100.5",
+                "volume": "10",
+            },
+            {
+                "openTime": str(int(datetime(2026, 3, 10, 7, 45, 0, tzinfo=UTC).timestamp() * 1000)),
+                "open": "101",
+                "high": "102",
+                "low": "100",
+                "close": "101.5",
+                "volume": "11",
+            },
+        ]
+        provider = OhlcvProvider(
+            _FakeGmoClient({("SOL_JPY", "15min", date_token): rows}),
+            now_provider=lambda: now,
+        )
+
+        bars = provider.fetch_bars("SOL/JPY", "15m", 2)
+
+        self.assertEqual(1, len(bars))
+        self.assertEqual(datetime(2026, 3, 10, 7, 30, tzinfo=UTC), bars[0].open_time)
+        self.assertEqual(datetime(2026, 3, 10, 7, 45, tzinfo=UTC), bars[0].close_time)
+        self.assertEqual(100.0, bars[0].open)
+        self.assertEqual(100.5, bars[0].close)
+
     def test_fetch_bars_aggregates_1h_into_2h(self) -> None:
         now = datetime.now(tz=UTC)
         base = (now - timedelta(hours=4)).replace(minute=0, second=0, microsecond=0)
@@ -34,7 +68,10 @@ class GmoOhlcvProviderTest(unittest.TestCase):
                     "volume": "10",
                 }
             )
-        provider = OhlcvProvider(_FakeGmoClient({("SOL_JPY", "1hour", date_token): rows}))
+        provider = OhlcvProvider(
+            _FakeGmoClient({("SOL_JPY", "1hour", date_token): rows}),
+            now_provider=lambda: now,
+        )
         bars = provider.fetch_bars("SOL/JPY", "2h", 2)
         self.assertEqual(len(bars), 2)
         self.assertEqual(bars[0].open, 100.0)
