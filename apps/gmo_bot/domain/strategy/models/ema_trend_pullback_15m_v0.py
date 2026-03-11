@@ -46,8 +46,14 @@ LONG_WEAK_UPPER_TREND_MIN_GAP_PCT = 0.05
 LONG_WEAK_TREND_CONFIRM_TIMEFRAME_MINUTES = 120
 # ショート時は4h EMA乖離が小さい弱トレンドを除外
 SHORT_UPPER_TREND_MIN_GAP_PCT = 0.05
+# ショート時は4h fast EMA がまだ上向きなら見送る
+SHORT_UPPER_FAST_SLOPE_MAX_PCT = 0.1
+# ショート時は直近3本の4h close drift が強く上向く局面を避ける
+SHORT_UPPER_CLOSE_DRIFT_MAX_PCT = 0.5
 ATR_PERIOD = 14
 ATR_STOP_MULTIPLIER = 1.5
+# LONG は高ATR帯での追随が崩れやすいため上限を置く
+LONG_ATR_PCT_MAX = 0.7
 UPPER_TREND_TIMEFRAME_MINUTES = 240
 UPPER_TREND_EMA_FAST_PERIOD = 9
 UPPER_TREND_EMA_SLOW_PERIOD = 34
@@ -140,6 +146,35 @@ def _calculate_ema_gap_pct(ema_fast: float | None, ema_slow: float | None) -> fl
     return (abs(ema_fast - ema_slow) / abs(ema_slow)) * 100
 
 
+def _calculate_pct_change(current: float | None, previous: float | None) -> float | None:
+    if current is None or previous is None:
+        return None
+    if not math.isfinite(current) or not math.isfinite(previous) or previous == 0:
+        return None
+    return ((current - previous) / abs(previous)) * 100
+
+
+def _calculate_upper_trend_regime_metrics(
+    bars: list[OhlcvBar],
+    timeframe_minutes: int = UPPER_TREND_TIMEFRAME_MINUTES,
+) -> tuple[float | None, float | None]:
+    upper_closes = _build_upper_timeframe_closes(bars, timeframe_minutes)
+    upper_ema_fast_values = ema_series(upper_closes, UPPER_TREND_EMA_FAST_PERIOD)
+    upper_fast_slope_pct = None
+    if len(upper_ema_fast_values) >= 2:
+        upper_fast_slope_pct = _calculate_pct_change(
+            upper_ema_fast_values[-1],
+            upper_ema_fast_values[-2],
+        )
+    upper_close_drift_pct_3 = None
+    if len(upper_closes) >= 3:
+        upper_close_drift_pct_3 = _calculate_pct_change(
+            upper_closes[-1],
+            upper_closes[-3],
+        )
+    return upper_fast_slope_pct, upper_close_drift_pct_3
+
+
 def evaluate_ema_trend_pullback_15m_v0(
     bars: list[OhlcvBar],
     strategy: StrategyConfig,
@@ -211,7 +246,13 @@ def evaluate_ema_trend_pullback_15m_v0(
     diagnostics["upper_trend_ema_slow"] = upper_ema_slow
     diagnostics["upper_trend_state"] = upper_trend_state
     upper_trend_gap_pct = _calculate_ema_gap_pct(upper_ema_fast, upper_ema_slow)
+    upper_fast_slope_pct, upper_close_drift_pct_3 = _calculate_upper_trend_regime_metrics(
+        bars,
+        UPPER_TREND_TIMEFRAME_MINUTES,
+    )
     diagnostics["upper_trend_gap_pct"] = upper_trend_gap_pct
+    diagnostics["upper_fast_slope_pct"] = upper_fast_slope_pct
+    diagnostics["upper_close_drift_pct_3"] = upper_close_drift_pct_3
     diagnostics["model_direction"] = direction
     if upper_trend_state == "UNAVAILABLE":
         return build_no_signal(
@@ -274,6 +315,34 @@ def evaluate_ema_trend_pullback_15m_v0(
                     f"(gap={upper_trend_gap_pct if upper_trend_gap_pct is not None else 'N/A'})"
                 ),
                 "SHORT_UPPER_TREND_TOO_WEAK",
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                diagnostics=diagnostics,
+            )
+        if (
+            upper_fast_slope_pct is not None
+            and upper_fast_slope_pct > SHORT_UPPER_FAST_SLOPE_MAX_PCT
+        ):
+            return build_no_signal(
+                (
+                    "NO_SIGNAL: short upper fast slope is still positive "
+                    f"(slope={upper_fast_slope_pct:.4f})"
+                ),
+                "SHORT_UPPER_FAST_SLOPE_TOO_POSITIVE",
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                diagnostics=diagnostics,
+            )
+        if (
+            upper_close_drift_pct_3 is not None
+            and upper_close_drift_pct_3 > SHORT_UPPER_CLOSE_DRIFT_MAX_PCT
+        ):
+            return build_no_signal(
+                (
+                    "NO_SIGNAL: short upper close drift is too positive "
+                    f"(drift_3={upper_close_drift_pct_3:.4f})"
+                ),
+                "SHORT_UPPER_CLOSE_DRIFT_TOO_POSITIVE",
                 ema_fast=ema_fast,
                 ema_slow=ema_slow,
                 diagnostics=diagnostics,
@@ -447,6 +516,14 @@ def evaluate_ema_trend_pullback_15m_v0(
     diagnostics["atr_pct"] = atr_pct
     diagnostics["volatility_regime"] = volatility_regime
     diagnostics["position_size_multiplier"] = position_size_multiplier
+    if entry_direction == "LONG" and atr_pct is not None and atr_pct >= LONG_ATR_PCT_MAX:
+        return build_no_signal(
+            f"NO_SIGNAL: long ATR regime is too hot (atr_pct={atr_pct:.4f})",
+            "LONG_ATR_REGIME_TOO_HOT",
+            ema_fast=ema_fast,
+            ema_slow=ema_slow,
+            diagnostics=diagnostics,
+        )
     if volatility_regime == "STORM" and position_size_multiplier <= 0:
         return build_no_signal(
             "NO_SIGNAL: storm entries are disabled by storm_size_multiplier=0",
