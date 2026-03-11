@@ -23,7 +23,7 @@ from apps.gmo_bot.app.usecases.open_position import OpenPositionDependencies, Op
 from apps.gmo_bot.app.usecases.usecase_utils import to_error_message
 from apps.gmo_bot.domain.model.types import BotConfig, Direction, ModelDirection, RunRecord, TradeRecord
 from shared.utils.math import round_to
-from apps.gmo_bot.domain.utils.time import build_run_id, get_bar_duration_seconds, get_last_closed_bar_close, get_utc_day_range
+from apps.gmo_bot.domain.utils.time import build_run_id, get_bar_duration_seconds, get_jst_day_range, get_last_closed_bar_close
 
 RUN_LOCK_TTL_SECONDS = 600
 MIN_REQUIRED_RUN_LOCK_TTL_SECONDS = 480
@@ -234,7 +234,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             )
             return run
 
-        day_start_iso, day_end_iso = get_utc_day_range(bar_close_time)
+        day_start_iso, day_end_iso = get_jst_day_range(bar_close_time)
         trades_today = persistence.count_trades_for_utc_day(runtime_config["pair"], day_start_iso, day_end_iso)
         recent_closed_trades = _resolve_recent_closed_trades(persistence=persistence, pair=runtime_config["pair"])
         effective_max_trades_per_day, consecutive_loss_streak, dynamic_cap_reason = _resolve_effective_max_trades_per_day(

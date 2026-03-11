@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from google.api_core.exceptions import AlreadyExists
@@ -36,6 +36,7 @@ OPEN_TRADE_STATE_DOC_ID = "open_trade"
 RECENT_CLOSED_STATE_DOC_ID = "recent_closed_trades"
 RECENT_CLOSED_TRADES_MAX_ITEMS = 32
 TRADE_SNAPSHOT_CACHE_MAX_ITEMS = 256
+JST = timezone(timedelta(hours=9))
 
 
 def _extract_run_date(run: RunRecord) -> str:
@@ -43,16 +44,16 @@ def _extract_run_date(run: RunRecord) -> str:
     if isinstance(value, str):
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            return parsed.date().isoformat()
+            return parsed.astimezone(JST).date().isoformat()
         except ValueError:
             pass
-    return datetime.now(tz=UTC).date().isoformat()
+    return datetime.now(tz=JST).date().isoformat()
 
 
-def _parse_iso_date(value: str) -> str | None:
+def _parse_iso_date(value: str, *, tz: timezone = JST) -> str | None:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return parsed.date().isoformat()
+        return parsed.astimezone(tz).date().isoformat()
     except ValueError:
         return None
 
@@ -74,7 +75,7 @@ def _extract_trade_date_from_payload(payload: dict[str, Any]) -> str:
         parsed_from_trade_id = _extract_trade_date_from_trade_id(trade_id)
         if parsed_from_trade_id is not None:
             return parsed_from_trade_id
-    return datetime.now(tz=UTC).date().isoformat()
+    return datetime.now(tz=JST).date().isoformat()
 
 
 def _extract_day_date(day_start_iso: str, day_end_iso: str) -> str:
@@ -84,7 +85,7 @@ def _extract_day_date(day_start_iso: str, day_end_iso: str) -> str:
     parsed_end = _parse_iso_date(day_end_iso)
     if parsed_end is not None:
         return parsed_end
-    return datetime.now(tz=UTC).date().isoformat()
+    return datetime.now(tz=JST).date().isoformat()
 
 
 def _is_day_doc_id(doc_id: str) -> bool:
@@ -199,7 +200,7 @@ class FirestoreRepository(PersistencePort):
             if _is_day_doc_id(normalized_payload_trade_date):
                 return normalized_payload_trade_date
 
-        return _extract_trade_date_from_trade_id(trade_id) or datetime.now(tz=UTC).date().isoformat()
+        return _extract_trade_date_from_trade_id(trade_id) or datetime.now(tz=JST).date().isoformat()
 
     def _runs_collection(self):
         return self._model_doc().collection(self.runs_collection_name)

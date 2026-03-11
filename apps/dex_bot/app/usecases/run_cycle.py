@@ -45,8 +45,8 @@ from shared.utils.math import round_to
 from apps.dex_bot.domain.utils.time import (
     build_run_id,
     get_bar_duration_seconds,
+    get_jst_day_range,
     get_last_closed_bar_close,
-    get_utc_day_range,
 )
 
 RUN_LOCK_TTL_SECONDS = 600
@@ -303,7 +303,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             )
             return run
 
-        day_start_iso, day_end_iso = get_utc_day_range(bar_close_time)
+        day_start_iso, day_end_iso = get_jst_day_range(bar_close_time)
         trades_today = persistence.count_trades_for_utc_day(runtime_config["pair"], day_start_iso, day_end_iso)
         recent_closed_trades = _resolve_recent_closed_trades(
             persistence=persistence,

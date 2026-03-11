@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 from apps.dex_bot.domain.model.types import Direction, SignalTimeframe
 
@@ -9,6 +9,7 @@ TIMEFRAME_TO_SECONDS: dict[SignalTimeframe, int] = {
     "2h": 2 * 60 * 60,
     "4h": 4 * 60 * 60,
 }
+JST = timezone(timedelta(hours=9))
 
 
 def get_bar_duration_seconds(timeframe: SignalTimeframe) -> int:
@@ -33,6 +34,18 @@ def get_utc_day_range(target: datetime) -> tuple[str, str]:
     )
     day_end = day_start + timedelta(days=1) - timedelta(milliseconds=1)
     return day_start.isoformat().replace("+00:00", "Z"), day_end.isoformat().replace("+00:00", "Z")
+
+
+def get_jst_day_range(target: datetime) -> tuple[str, str]:
+    target_jst = target.astimezone(JST)
+    day_start = datetime(
+        year=target_jst.year,
+        month=target_jst.month,
+        day=target_jst.day,
+        tzinfo=JST,
+    )
+    day_end = day_start + timedelta(days=1) - timedelta(milliseconds=1)
+    return day_start.isoformat(), day_end.isoformat()
 
 
 def build_trade_id(bar_close_time_iso: str, model_id: str, direction: Direction) -> str:

@@ -182,6 +182,12 @@ class FirestoreRepositoryTradeIdDateParseTest(unittest.TestCase):
             _extract_trade_date_from_trade_id("2026-02-25T08:45:00Z_ema_pullback_15m_both_v0_LONG"),
         )
 
+    def test_extract_trade_date_from_trade_id_uses_jst_bucket(self) -> None:
+        self.assertEqual(
+            "2026-02-26",
+            _extract_trade_date_from_trade_id("2026-02-25T21:45:00Z_ema_pullback_15m_both_v0_LONG"),
+        )
+
     def test_extract_trade_date_from_trade_id_returns_none_when_invalid(self) -> None:
         self.assertIsNone(_extract_trade_date_from_trade_id("invalid_trade_id"))
 
@@ -233,6 +239,22 @@ class FirestoreRepositoryRunSaveNoReadTest(unittest.TestCase):
         self.assertEqual("run_1", payload["latest_run_id"])
         self.assertEqual("2026-02-27T00:00:00Z", payload["first_executed_at_iso"])
         self.assertEqual("2026-02-27T00:00:00Z", payload["last_executed_at_iso"])
+
+    def test_save_run_uses_jst_run_date_bucket(self) -> None:
+        repo = _SaveRunRepo()
+        run: dict[str, Any] = {
+            "run_id": "run_2",
+            "result": "FAILED",
+            "summary": "FAILED: test",
+            "executed_at_iso": "2026-02-26T21:45:00Z",
+            "bar_close_time_iso": "2026-02-26T21:45:00Z",
+        }
+
+        repo.save_run(cast(Any, run))
+
+        self.assertIn("2026-02-27", repo.runs_collection.docs)
+        day_doc = repo.runs_collection.docs["2026-02-27"]
+        self.assertIn("run_2", day_doc.collection("items").docs)
 
 
 class FirestoreRepositoryOpenTradeStateCacheTest(unittest.TestCase):
