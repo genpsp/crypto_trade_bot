@@ -3,15 +3,25 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from apps.dex_bot.adapters.market_data.ohlcv_provider import OhlcvProvider
+from apps.dex_bot.adapters.market_data.ohlcv_provider import OhlcvProvider as DexOhlcvProvider
+from apps.gmo_bot.adapters.execution.gmo_api_client import GmoApiClient
+from apps.gmo_bot.adapters.market_data.ohlcv_provider import OhlcvProvider as GmoOhlcvProvider
 from research.src.adapters.csv_bar_repository import read_bars_from_csv, write_bars_to_csv
 
 TIMEFRAME_TO_BARS_PER_DAY = {"15m": 96, "2h": 12, "4h": 6}
 
 
+def _build_provider(pair: str):
+    if pair == "SOL/USDC":
+        return DexOhlcvProvider()
+    if pair == "SOL/JPY":
+        return GmoOhlcvProvider(client=GmoApiClient(api_key="", api_secret=""))
+    raise ValueError(f"unsupported pair: {pair}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fetch OHLCV data for research")
-    parser.add_argument("--pair", default="SOL/USDC", choices=["SOL/USDC"])
+    parser.add_argument("--pair", default="SOL/USDC", choices=["SOL/USDC", "SOL/JPY"])
     parser.add_argument("--timeframe", default="2h", choices=["15m", "2h", "4h"])
     parser.add_argument(
         "--years",
@@ -67,11 +77,11 @@ def main() -> None:
             )
             return
 
-    provider = OhlcvProvider()
-    if target_bars <= 1000:
-        bars = provider.fetch_bars(pair=pair, timeframe=timeframe, limit=target_bars)
-    else:
+    provider = _build_provider(pair)
+    if hasattr(provider, "fetch_bars_backfill") and target_bars > 1000:
         bars = provider.fetch_bars_backfill(pair=pair, timeframe=timeframe, total_limit=target_bars)
+    else:
+        bars = provider.fetch_bars(pair=pair, timeframe=timeframe, limit=target_bars)
     write_bars_to_csv(output, bars)
 
     print(

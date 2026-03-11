@@ -44,12 +44,20 @@ class OhlcvProvider(MarketDataPort):
             source_bars = self._aggregate_bars(source_bars, bucket_seconds=2 * 60 * 60)
         return source_bars[-limit:]
 
+    def fetch_bars_backfill(
+        self,
+        pair: Pair,
+        timeframe: SignalTimeframe,
+        total_limit: int,
+    ) -> list[OhlcvBar]:
+        return self.fetch_bars(pair=pair, timeframe=timeframe, limit=total_limit)
+
     def _fetch_recent_source_bars(self, symbol: str, interval: str, limit: int) -> list[OhlcvBar]:
         bars_by_open_time: dict[datetime, OhlcvBar] = {}
         fetched_at = self._now()
         cursor = fetched_at
         attempts = 0
-        max_attempts = 40
+        max_attempts = self._max_attempts_for_interval(interval, limit)
         while len(bars_by_open_time) < limit and attempts < max_attempts:
             date_token = self._date_token(cursor, interval)
             cache_key = f"cache:gmo:ohlcv:{symbol}:{interval}:{date_token}"
@@ -101,6 +109,20 @@ class OhlcvProvider(MarketDataPort):
         if interval == "4hour":
             return cursor.replace(year=cursor.year - 1)
         return cursor - timedelta(days=1)
+
+    def _max_attempts_for_interval(self, interval: str, limit: int) -> int:
+        if interval == "4hour":
+            bars_per_token = 365 * 6
+            return max(4, ((limit - 1) // bars_per_token) + 3)
+        if interval == "1hour":
+            bars_per_token = 24
+        elif interval == "15min":
+            bars_per_token = 96
+        else:
+            raise ValueError(f"unsupported GMO interval: {interval}")
+        if limit <= 1_000:
+            return max(40, ((limit - 1) // bars_per_token) + 10)
+        return max(400, ((limit - 1) // bars_per_token) + 10)
 
     def _now(self) -> datetime:
         current = self.now_provider() if self.now_provider else datetime.now(tz=UTC)

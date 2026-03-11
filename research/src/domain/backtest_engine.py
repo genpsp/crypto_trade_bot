@@ -25,7 +25,8 @@ from apps.dex_bot.domain.risk.swing_low_stop import (
     tighten_stop_for_long,
     tighten_stop_for_short,
 )
-from apps.dex_bot.domain.strategy.registry import evaluate_strategy_for_model
+from apps.dex_bot.domain.strategy.registry import evaluate_strategy_for_model as dex_evaluate_strategy_for_model
+from apps.gmo_bot.domain.strategy.registry import evaluate_strategy_for_model as gmo_evaluate_strategy_for_model
 from shared.utils.math import round_to
 from apps.dex_bot.domain.utils.time import get_bar_duration_seconds
 
@@ -56,10 +57,13 @@ def _safe_average(values: list[float]) -> float:
     return sum(values) / len(values)
 
 
-BASE_PORTFOLIO_NOTIONAL_USDC = 100.0
+DEFAULT_INITIAL_QUOTE_BALANCE = 100.0
 SLIPPAGE_BPS_DENOMINATOR = 10_000
 DEFAULT_OHLCV_LIMIT = 300
 OHLCV_LIMIT_FOR_15M_UPPER_TREND = 600
+
+# Preserve the existing patch point for DEX-oriented tests and callers.
+evaluate_strategy_for_model = dex_evaluate_strategy_for_model
 
 
 def _resolve_entry_direction(
@@ -89,6 +93,13 @@ def _resolve_effective_notional(base_notional_usdc: float, size_multiplier: floa
     return round_to(base_notional_usdc * size_multiplier, 2)
 
 
+def _resolve_initial_quote_balance(config: BotConfig) -> float:
+    raw = config["execution"].get("initial_quote_balance")
+    if isinstance(raw, (int, float)) and float(raw) > 0:
+        return float(raw)
+    return DEFAULT_INITIAL_QUOTE_BALANCE
+
+
 def _slippage_ratio(slippage_bps: int) -> float:
     return max(0, slippage_bps) / SLIPPAGE_BPS_DENOMINATOR
 
@@ -107,6 +118,35 @@ def _resolve_ohlcv_limit(config: BotConfig) -> int:
     return DEFAULT_OHLCV_LIMIT
 
 
+def _evaluate_strategy_for_backtest(
+    *,
+    config: BotConfig,
+    bars: list[OhlcvBar],
+    direction: ModelDirection,
+    strategy: dict[str, Any],
+    risk: dict[str, float | int],
+    exit: dict[str, str | float],
+    execution: dict[str, Any],
+) -> Any:
+    if config.get("broker") == "GMO_COIN":
+        return gmo_evaluate_strategy_for_model(
+            direction=direction,
+            bars=bars,
+            strategy=strategy,
+            risk=risk,
+            exit=exit,
+            execution=execution,
+        )
+    return evaluate_strategy_for_model(
+        direction=direction,
+        bars=bars,
+        strategy=strategy,
+        risk=risk,
+        exit=exit,
+        execution=execution,
+    )
+
+
 def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
     if len(bars) < 2:
         raise ValueError("Backtest requires at least 2 OHLCV bars")
@@ -118,7 +158,7 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
     take_profit_r_multiple = float(config["exit"]["take_profit_r_multiple"])
     ohlcv_limit = _resolve_ohlcv_limit(config)
     bar_duration_seconds = get_bar_duration_seconds(config["signal_timeframe"])
-    portfolio_quote_usdc = BASE_PORTFOLIO_NOTIONAL_USDC
+    portfolio_quote_usdc = _resolve_initial_quote_balance(config)
 
     open_position: _OpenPosition | None = None
     trades: list[BacktestTrade] = []
@@ -230,7 +270,8 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
 
         decision_window_start = max(0, index + 1 - ohlcv_limit)
         decision_bars = bars[decision_window_start : index + 1]
-        decision = evaluate_strategy_for_model(
+        decision = _evaluate_strategy_for_backtest(
+            config=config,
             direction=direction,
             bars=decision_bars,
             strategy=config["strategy"],

@@ -11,7 +11,6 @@ from apps.dex_bot.domain.risk.short_stop_loss_cooldown import (
     SHORT_STOP_LOSS_COOLDOWN_REASON,
     resolve_short_stop_loss_cooldown_state,
 )
-from apps.dex_bot.domain.strategy.registry import evaluate_strategy_for_model
 from apps.gmo_bot.app.usecases.execution_error_classifier import classify_execution_error
 from apps.gmo_bot.app.ports.execution_port import ExecutionPort
 from apps.gmo_bot.app.ports.lock_port import LockPort
@@ -22,6 +21,7 @@ from apps.gmo_bot.app.usecases.close_position import ClosePositionDependencies, 
 from apps.gmo_bot.app.usecases.open_position import OpenPositionDependencies, OpenPositionInput, open_position
 from apps.gmo_bot.app.usecases.usecase_utils import to_error_message
 from apps.gmo_bot.domain.model.types import BotConfig, Direction, ModelDirection, RunRecord, TradeRecord
+from apps.gmo_bot.domain.strategy.registry import evaluate_strategy_for_model
 from shared.utils.math import round_to
 from apps.gmo_bot.domain.utils.time import build_run_id, get_bar_duration_seconds, get_jst_day_range, get_last_closed_bar_close
 

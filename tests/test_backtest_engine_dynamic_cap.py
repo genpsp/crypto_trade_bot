@@ -89,6 +89,41 @@ def _build_enter_decision() -> EntrySignalDecision:
 
 
 class BacktestEngineDynamicCapTest(unittest.TestCase):
+    def test_backtest_uses_initial_quote_balance_override_for_min_notional_gate(self) -> None:
+        config = _build_config(strategy_name="ema_trend_pullback_15m_v0")
+        config["execution"]["min_notional_usdc"] = 5_000.0
+        config["execution"]["initial_quote_balance"] = 10_000.0
+        bars = [
+            OhlcvBar(
+                open_time=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+                close_time=datetime(2026, 1, 1, 0, 15, tzinfo=UTC),
+                open=100.0,
+                high=100.2,
+                low=99.8,
+                close=100.0,
+                volume=1_000.0,
+            ),
+            OhlcvBar(
+                open_time=datetime(2026, 1, 1, 0, 15, tzinfo=UTC),
+                close_time=datetime(2026, 1, 1, 0, 30, tzinfo=UTC),
+                open=100.0,
+                high=102.5,
+                low=99.8,
+                close=102.0,
+                volume=1_000.0,
+            ),
+        ]
+
+        with patch(
+            "research.src.domain.backtest_engine.evaluate_strategy_for_model",
+            return_value=_build_enter_decision(),
+        ):
+            report = run_backtest(bars=bars, config=config)
+
+        self.assertEqual(1, report.summary.decision_enter_count)
+        self.assertEqual(1, report.summary.closed_trades)
+        self.assertNotIn("INSUFFICIENT_QUOTE_BALANCE_FOR_MIN_NOTIONAL", report.no_signal_reason_counts)
+
     def test_15m_strategy_reduces_daily_cap_after_two_consecutive_stop_losses(self) -> None:
         config = _build_config(strategy_name="ema_trend_pullback_15m_v0")
         bars = _build_bars()

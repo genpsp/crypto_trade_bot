@@ -79,6 +79,40 @@ class GmoOhlcvProviderTest(unittest.TestCase):
         self.assertEqual(bars[1].open, 102.0)
         self.assertEqual(bars[1].close, 103.5)
 
+    def test_fetch_bars_backfills_more_than_40_days_for_large_15m_request(self) -> None:
+        now = datetime(2026, 3, 11, 12, 0, tzinfo=UTC)
+        rows_by_key: dict[tuple[str, str, str], list[dict]] = {}
+        start_open = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+
+        for day_offset in range(45):
+            day_start = start_open + timedelta(days=day_offset)
+            date_token = day_start.strftime("%Y%m%d")
+            rows: list[dict] = []
+            for bar_offset in range(96):
+                open_time = day_start + timedelta(minutes=15 * bar_offset)
+                rows.append(
+                    {
+                        "openTime": str(int(open_time.timestamp() * 1000)),
+                        "open": "100",
+                        "high": "101",
+                        "low": "99",
+                        "close": "100.5",
+                        "volume": "10",
+                    }
+                )
+            rows_by_key[("SOL_JPY", "15min", date_token)] = rows
+
+        provider = OhlcvProvider(
+            _FakeGmoClient(rows_by_key),
+            now_provider=lambda: now,
+        )
+
+        bars = provider.fetch_bars("SOL/JPY", "15m", 45 * 96)
+
+        self.assertEqual(45 * 96, len(bars))
+        self.assertEqual(datetime(2026, 1, 1, 0, 0, tzinfo=UTC), bars[0].open_time)
+        self.assertEqual(datetime(2026, 2, 14, 23, 45, tzinfo=UTC), bars[-1].open_time)
+
 
 if __name__ == "__main__":
     unittest.main()

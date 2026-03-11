@@ -1,0 +1,38 @@
+{
+  "enabled": true,
+  "broker": "GMO_COIN",
+  "pair": "SOL/JPY",
+  "direction": "BOTH",
+  "signal_timeframe": "15m",
+  "strategy": {
+    "name": "ema_trend_pullback_15m_v0",
+    "ema_fast_period": 9,
+    "ema_slow_period": 34,
+    "swing_low_lookback_bars": 12,
+    "entry": "ON_BAR_CLOSE"
+  },
+  "risk": {
+    "max_loss_per_trade_pct": 1.2,
+    "max_trades_per_day": 4,
+    "volatile_atr_pct_threshold": 0.9,
+    "storm_atr_pct_threshold": 1.4,
+    "volatile_size_multiplier": 0.7,
+    "storm_size_multiplier": 0.35
+  },
+  "execution": {
+    "mode": "LIVE",
+    "broker": "GMO_COIN",
+    "slippage_bps": 3,
+    "min_notional_jpy": 5000,
+    "leverage_multiplier": 1.0,
+    "margin_usage_ratio": 0.99
+  },
+  "exit": {
+    "stop": "SWING_LOW",
+    "take_profit_r_multiple": 1.8
+  },
+  "meta": {
+    "config_version": 1,
+    "note": "research local config for gmo_ema_pullback_15m_both_v0"
+  }
+}
