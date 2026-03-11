@@ -46,8 +46,10 @@ LONG_WEAK_UPPER_TREND_MIN_GAP_PCT = 0.05
 LONG_WEAK_TREND_CONFIRM_TIMEFRAME_MINUTES = 120
 # ショート時は4h EMA乖離が小さい弱トレンドを除外
 SHORT_UPPER_TREND_MIN_GAP_PCT = 0.05
-# ショート時は4h fast EMA がまだ上向きなら見送る
-SHORT_UPPER_FAST_SLOPE_MAX_PCT = 0.1
+# ショートの reversal guard は4h downtrend が十分に伸びた局面だけ有効化する
+SHORT_REVERSAL_GUARD_MIN_UPPER_TREND_GAP_PCT = 3.0
+# slope guard は残すが、default では無効化する
+SHORT_UPPER_FAST_SLOPE_MAX_PCT = math.inf
 # ショート時は直近3本の4h close drift が強く上向く局面を避ける
 SHORT_UPPER_CLOSE_DRIFT_MAX_PCT = 0.5
 ATR_PERIOD = 14
@@ -320,33 +322,37 @@ def evaluate_ema_trend_pullback_15m_v0(
                 diagnostics=diagnostics,
             )
         if (
-            upper_fast_slope_pct is not None
-            and upper_fast_slope_pct > SHORT_UPPER_FAST_SLOPE_MAX_PCT
+            upper_trend_gap_pct is not None
+            and upper_trend_gap_pct >= SHORT_REVERSAL_GUARD_MIN_UPPER_TREND_GAP_PCT
         ):
-            return build_no_signal(
-                (
-                    "NO_SIGNAL: short upper fast slope is still positive "
-                    f"(slope={upper_fast_slope_pct:.4f})"
-                ),
-                "SHORT_UPPER_FAST_SLOPE_TOO_POSITIVE",
-                ema_fast=ema_fast,
-                ema_slow=ema_slow,
-                diagnostics=diagnostics,
-            )
-        if (
-            upper_close_drift_pct_3 is not None
-            and upper_close_drift_pct_3 > SHORT_UPPER_CLOSE_DRIFT_MAX_PCT
-        ):
-            return build_no_signal(
-                (
-                    "NO_SIGNAL: short upper close drift is too positive "
-                    f"(drift_3={upper_close_drift_pct_3:.4f})"
-                ),
-                "SHORT_UPPER_CLOSE_DRIFT_TOO_POSITIVE",
-                ema_fast=ema_fast,
-                ema_slow=ema_slow,
-                diagnostics=diagnostics,
-            )
+            if (
+                upper_fast_slope_pct is not None
+                and upper_fast_slope_pct > SHORT_UPPER_FAST_SLOPE_MAX_PCT
+            ):
+                return build_no_signal(
+                    (
+                        "NO_SIGNAL: short upper fast slope is still positive "
+                        f"(slope={upper_fast_slope_pct:.4f})"
+                    ),
+                    "SHORT_UPPER_FAST_SLOPE_TOO_POSITIVE",
+                    ema_fast=ema_fast,
+                    ema_slow=ema_slow,
+                    diagnostics=diagnostics,
+                )
+            if (
+                upper_close_drift_pct_3 is not None
+                and upper_close_drift_pct_3 > SHORT_UPPER_CLOSE_DRIFT_MAX_PCT
+            ):
+                return build_no_signal(
+                    (
+                        "NO_SIGNAL: short upper close drift is too positive "
+                        f"(drift_3={upper_close_drift_pct_3:.4f})"
+                    ),
+                    "SHORT_UPPER_CLOSE_DRIFT_TOO_POSITIVE",
+                    ema_fast=ema_fast,
+                    ema_slow=ema_slow,
+                    diagnostics=diagnostics,
+                )
     if entry_direction == "LONG" and ema_fast <= ema_slow:
         return build_no_signal(
             (

@@ -83,11 +83,15 @@ class GmoEmaTrendPullback15mStrategyTest(unittest.TestCase):
             ),
             patch(
                 "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
-                return_value=("DOWN", 99.0, 100.0, 80),
+                return_value=("DOWN", 97.0, 100.0, 80),
             ),
             patch(
                 "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0._calculate_upper_trend_regime_metrics",
                 return_value=(0.12, 0.0),
+            ),
+            patch(
+                "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0.SHORT_UPPER_FAST_SLOPE_MAX_PCT",
+                0.1,
             ),
             patch(
                 "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0.build_ema_market_context",
@@ -132,7 +136,7 @@ class GmoEmaTrendPullback15mStrategyTest(unittest.TestCase):
             ),
             patch(
                 "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
-                return_value=("DOWN", 99.0, 100.0, 80),
+                return_value=("DOWN", 97.0, 100.0, 80),
             ),
             patch(
                 "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0._calculate_upper_trend_regime_metrics",
