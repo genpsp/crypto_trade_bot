@@ -102,9 +102,11 @@ class _FakeThread:
 class _StrictFakeNotifier:
     instances: list["_StrictFakeNotifier"] = []
 
-    def __init__(self, *, config, logger) -> None:
+    def __init__(self, *, config, logger, dedupe_store=None, dedupe_namespace: str = "bot") -> None:
         _ = config
         _ = logger
+        _ = dedupe_store
+        _ = dedupe_namespace
         self.trade_errors: list[dict[str, object]] = []
         self.startup_payloads: list[list[dict[str, str]]] = []
         self.shutdown_reasons: list[str] = []

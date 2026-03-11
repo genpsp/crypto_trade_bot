@@ -24,6 +24,18 @@ class _FakeLogger:
         _ = context
 
 
+class _FakeDedupeStore:
+    def __init__(self) -> None:
+        self._keys: set[str] = set()
+
+    def set(self, key: str, _value: str, *, ex: int, nx: bool) -> bool:
+        _ = ex
+        if nx and key in self._keys:
+            return False
+        self._keys.add(key)
+        return True
+
+
 class SlackNotifierTest(unittest.TestCase):
     def test_is_execution_error_result_handles_failed_and_skipped_markers(self) -> None:
         self.assertTrue(is_execution_error_result("FAILED", "FAILED: any error"))
@@ -125,6 +137,31 @@ class SlackNotifierTest(unittest.TestCase):
         self.assertIn("Bot起動", payload)
         self.assertIn("```", payload)
         self.assertIn("ema_pullback_15m_both_v0", payload)
+
+    def test_notify_startup_is_deduplicated_across_notifier_restarts_when_shared_store_is_available(self) -> None:
+        logger = _FakeLogger()
+        dedupe_store = _FakeDedupeStore()
+        response = Mock()
+        response.raise_for_status.return_value = None
+
+        with patch("apps.dex_bot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
+            first = SlackNotifier(
+                config=SlackAlertConfig(webhook_url="https://hooks.slack.com/services/test/test/test"),
+                logger=logger,
+                dedupe_store=dedupe_store,
+                dedupe_namespace="dex_bot",
+            )
+            second = SlackNotifier(
+                config=SlackAlertConfig(webhook_url="https://hooks.slack.com/services/test/test/test"),
+                logger=logger,
+                dedupe_store=dedupe_store,
+                dedupe_namespace="dex_bot",
+            )
+            payload = [{"model_id": "ema_pullback_15m_both_v0", "mode": "LIVE", "strategy": "ema_trend_pullback_15m_v0"}]
+            first.notify_startup(payload)
+            second.notify_startup(payload)
+
+        self.assertEqual(1, mocked_post.call_count)
 
     def test_disabled_notifier_does_not_post(self) -> None:
         logger = _FakeLogger()

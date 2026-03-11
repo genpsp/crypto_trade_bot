@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 import requests
 
@@ -41,12 +42,22 @@ def is_execution_error_result(result: str | None, summary: str | None) -> bool:
 
 
 class SlackNotifier:
-    def __init__(self, *, config: SlackAlertConfig, logger: LoggerPort):
+    def __init__(
+        self,
+        *,
+        config: SlackAlertConfig,
+        logger: LoggerPort,
+        dedupe_store: Any | None = None,
+        dedupe_namespace: str = "bot",
+    ):
         webhook_url = (config.webhook_url or "").strip()
         self._webhook_url = webhook_url if webhook_url else None
         self._logger = logger
         self._duplicate_suppression_seconds = max(config.duplicate_suppression_seconds, 0)
         self._last_sent_by_key: dict[str, datetime] = {}
+        self._dedupe_store = dedupe_store
+        normalized_namespace = dedupe_namespace.strip()
+        self._dedupe_namespace = normalized_namespace or "bot"
 
     @property
     def enabled(self) -> bool:
@@ -265,6 +276,25 @@ class SlackNotifier:
         if self._duplicate_suppression_seconds <= 0:
             return True
         now = datetime.now(tz=UTC)
+        shared_dedupe_key = f"slack_dedupe:{self._dedupe_namespace}:{dedupe_key}"
+        if self._dedupe_store is not None:
+            try:
+                claimed = self._dedupe_store.set(
+                    shared_dedupe_key,
+                    now.isoformat(),
+                    ex=self._duplicate_suppression_seconds,
+                    nx=True,
+                )
+            except Exception as error:
+                self._logger.warn(
+                    "shared slack dedupe failed",
+                    {"error": str(error), "dedupe_key": dedupe_key, "namespace": self._dedupe_namespace},
+                )
+            else:
+                if claimed:
+                    self._last_sent_by_key[dedupe_key] = now
+                    return True
+                return False
         last_sent_at = self._last_sent_by_key.get(dedupe_key)
         if last_sent_at is not None:
             elapsed = (now - last_sent_at).total_seconds()

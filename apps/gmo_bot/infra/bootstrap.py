@@ -101,6 +101,8 @@ def bootstrap() -> AppRuntime:
             duplicate_suppression_seconds=DUPLICATE_ALERT_SUPPRESSION_SECONDS,
         ),
         logger=logger,
+        dedupe_store=redis,
+        dedupe_namespace="gmo_bot",
     )
     failure_streaks_by_model: dict[str, int] = {}
     last_cycle_completed_at = datetime.now(tz=UTC)
