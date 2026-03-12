@@ -527,6 +527,12 @@ class FirestoreRepository(PersistencePort):
                 self._cache_trade_snapshot(trade_id, trade, merge=True)
         return deepcopy(trade) if isinstance(trade, dict) else None
 
+    def get_trade(self, trade_id: str) -> TradeRecord | None:
+        if not isinstance(trade_id, str) or trade_id.strip() == "":
+            return None
+        trade = self._load_trade_snapshot(trade_id)
+        return deepcopy(trade) if isinstance(trade, dict) else None
+
     def count_trades_for_utc_day(self, pair: Pair, day_start_iso: str, day_end_iso: str) -> int:
         trade_date = _extract_day_date(day_start_iso, day_end_iso)
         trades_by_id: dict[str, TradeRecord] = {}

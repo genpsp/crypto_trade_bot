@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from typing import Any
 
-LAMPORTS_PER_SOL = 1_000_000_000
 JST = timezone(timedelta(hours=9))
 
 
@@ -21,8 +20,8 @@ class ModelDailyTradeSummary:
     closed_trades: int
     win_trades: int
     loss_trades: int
-    realized_pnl_usdc: float
-    estimated_fees_usdc: float
+    realized_pnl_jpy: float
+    estimated_fees_jpy: float
     avg_slippage_bps: float
     slippage_samples: int
     failed_runs: int
@@ -45,8 +44,8 @@ class DailyTradeSummaryReport:
     total_closed_trades: int
     total_win_trades: int
     total_loss_trades: int
-    total_realized_pnl_usdc: float
-    total_estimated_fees_usdc: float
+    total_realized_pnl_jpy: float
+    total_estimated_fees_jpy: float
     total_avg_slippage_bps: float
     total_failed_runs: int
     total_skipped_runs: int
@@ -115,8 +114,8 @@ def build_daily_summary_report(
         total_closed += summary.closed_trades
         total_win += summary.win_trades
         total_loss += summary.loss_trades
-        total_pnl += summary.realized_pnl_usdc
-        total_fees += summary.estimated_fees_usdc
+        total_pnl += summary.realized_pnl_jpy
+        total_fees += summary.estimated_fees_jpy
         total_failed_runs += summary.failed_runs
         total_skipped_runs += summary.skipped_runs
         total_failed_trades += summary.failed_trades
@@ -135,8 +134,8 @@ def build_daily_summary_report(
         total_closed_trades=total_closed,
         total_win_trades=total_win,
         total_loss_trades=total_loss,
-        total_realized_pnl_usdc=round(total_pnl, 6),
-        total_estimated_fees_usdc=round(total_fees, 6),
+        total_realized_pnl_jpy=round(total_pnl, 6),
+        total_estimated_fees_jpy=round(total_fees, 6),
         total_avg_slippage_bps=round(total_avg_slippage, 4),
         total_failed_runs=total_failed_runs,
         total_skipped_runs=total_skipped_runs,
@@ -192,14 +191,14 @@ def build_model_daily_trade_summary(
             continue
 
         closed_trades += 1
-        pnl = _compute_trade_realized_pnl_usdc(trade)
+        pnl = _compute_trade_realized_pnl_jpy(trade)
         if pnl is not None:
             realized_pnl += pnl
             if pnl > 0:
                 win_trades += 1
             elif pnl < 0:
                 loss_trades += 1
-        estimated_fees += _estimate_trade_fees_usdc(trade)
+        estimated_fees += _estimate_trade_fees_jpy(trade)
         slippage_samples.extend(_collect_trade_slippage_samples_bps(trade))
 
     for run in runs:
@@ -218,8 +217,8 @@ def build_model_daily_trade_summary(
         closed_trades=closed_trades,
         win_trades=win_trades,
         loss_trades=loss_trades,
-        realized_pnl_usdc=round(realized_pnl, 6),
-        estimated_fees_usdc=round(estimated_fees, 6),
+        realized_pnl_jpy=round(realized_pnl, 6),
+        estimated_fees_jpy=round(estimated_fees, 6),
         avg_slippage_bps=round(avg_slippage_bps, 4),
         slippage_samples=len(slippage_samples),
         failed_runs=failed_runs,
@@ -250,16 +249,16 @@ def _resolve_run_executed_at(run: dict[str, Any]) -> datetime | None:
     )
 
 
-def _compute_trade_realized_pnl_usdc(trade: dict[str, Any]) -> float | None:
+def _compute_trade_realized_pnl_jpy(trade: dict[str, Any]) -> float | None:
     position = _as_dict(trade.get("position"))
     execution = _as_dict(trade.get("execution"))
     exit_result = _as_dict(execution.get("exit_result"))
 
-    entry_quote = _to_float(position.get("quote_amount_usdc"))
+    entry_quote = _to_float(position.get("quote_amount_jpy"))
     if entry_quote is None:
         return None
 
-    exit_quote = _to_float(exit_result.get("spent_quote_usdc"))
+    exit_quote = _to_float(exit_result.get("filled_quote_jpy"))
     if exit_quote is None:
         quantity = _to_float(position.get("quantity_sol"))
         exit_price = _to_float(position.get("exit_price"))
@@ -273,19 +272,11 @@ def _compute_trade_realized_pnl_usdc(trade: dict[str, Any]) -> float | None:
     return exit_quote - entry_quote
 
 
-def _estimate_trade_fees_usdc(trade: dict[str, Any]) -> float:
+def _estimate_trade_fees_jpy(trade: dict[str, Any]) -> float:
     execution = _as_dict(trade.get("execution"))
-    position = _as_dict(trade.get("position"))
-    entry_fee = _to_float(execution.get("entry_fee_lamports")) or 0.0
-    exit_fee = _to_float(execution.get("exit_fee_lamports")) or 0.0
-    total_lamports = entry_fee + exit_fee
-    if total_lamports <= 0:
-        return 0.0
-
-    price_ref = _to_float(position.get("exit_price")) or _to_float(position.get("entry_price"))
-    if price_ref is None or price_ref <= 0:
-        return 0.0
-    return (total_lamports / LAMPORTS_PER_SOL) * price_ref
+    entry_fee = _to_float(execution.get("entry_fee_jpy")) or 0.0
+    exit_fee = _to_float(execution.get("exit_fee_jpy")) or 0.0
+    return entry_fee + exit_fee
 
 
 def _collect_trade_slippage_samples_bps(trade: dict[str, Any]) -> list[float]:

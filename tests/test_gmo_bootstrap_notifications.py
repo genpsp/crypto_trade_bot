@@ -74,8 +74,14 @@ class _FakeConfigRepo:
 
 
 class _FakePersistence:
+    def __init__(self, trade: dict[str, object] | None = None) -> None:
+        self._trade = trade
+
     def find_open_trade(self, _pair: str):
         return None
+
+    def get_trade(self, _trade_id: str):
+        return self._trade
 
 
 class _FakeCronController:
@@ -108,6 +114,7 @@ class _StrictFakeNotifier:
         _ = dedupe_store
         _ = dedupe_namespace
         self.trade_errors: list[dict[str, object]] = []
+        self.trade_closed: list[dict[str, object]] = []
         self.startup_payloads: list[list[dict[str, str]]] = []
         self.shutdown_reasons: list[str] = []
         self.consecutive_failures: list[dict[str, object]] = []
@@ -140,6 +147,37 @@ class _StrictFakeNotifier:
                 "summary": summary,
                 "run_id": run_id,
                 "trade_id": trade_id,
+            }
+        )
+
+    def notify_trade_closed(
+        self,
+        *,
+        model_id: str,
+        trade_id: str,
+        pair: str,
+        direction: str,
+        close_reason: str,
+        entry_price: float | None,
+        exit_price: float | None,
+        gross_pnl: float | None,
+        fee: float | None,
+        net_pnl: float | None,
+        quote_ccy: str,
+    ) -> None:
+        self.trade_closed.append(
+            {
+                "model_id": model_id,
+                "trade_id": trade_id,
+                "pair": pair,
+                "direction": direction,
+                "close_reason": close_reason,
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "gross_pnl": gross_pnl,
+                "fee": fee,
+                "net_pnl": net_pnl,
+                "quote_ccy": quote_ccy,
             }
         )
 
@@ -189,6 +227,64 @@ class _StrictFakeNotifier:
 
 
 class GmoBootstrapNotificationsTest(unittest.TestCase):
+    def test_closed_cycle_notifies_trade_close_for_take_profit(self) -> None:
+        _StrictFakeNotifier.instances.clear()
+        closed_trade = {
+            "trade_id": "trade_1",
+            "pair": "SOL/JPY",
+            "direction": "SHORT",
+            "close_reason": "TAKE_PROFIT",
+            "position": {
+                "entry_price": 13500.0,
+                "exit_price": 13400.0,
+                "quote_amount_jpy": 6750.0,
+                "quantity_sol": 0.5,
+            },
+            "execution": {
+                "entry_fee_jpy": 3.0,
+                "exit_fee_jpy": 3.0,
+                "exit_result": {"filled_quote_jpy": 6700.0},
+            },
+        }
+        with (
+            patch("apps.gmo_bot.infra.bootstrap.load_env", return_value=_FakeEnv()),
+            patch("apps.gmo_bot.infra.bootstrap.create_logger", return_value=_FakeLogger()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreClient", _FakeFirestoreClient),
+            patch("apps.gmo_bot.infra.bootstrap.Redis.from_url", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreConfigRepository", return_value=_FakeConfigRepo()),
+            patch("apps.gmo_bot.infra.bootstrap.GmoApiClient", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.OhlcvProvider", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.PaperExecutionAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.GmoMarginExecutionAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreRepository", return_value=_FakePersistence(closed_trade)),
+            patch("apps.gmo_bot.infra.bootstrap.RedisLockAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.SlackNotifier", _StrictFakeNotifier),
+            patch("apps.gmo_bot.infra.bootstrap.create_cron_cycle", return_value=_FakeCronController()),
+            patch(
+                "apps.gmo_bot.infra.bootstrap.run_cycle",
+                return_value={
+                    "result": "CLOSED",
+                    "summary": "CLOSED: reason=TAKE_PROFIT",
+                    "run_id": "run_1",
+                    "trade_id": "trade_1",
+                },
+            ),
+            patch("apps.gmo_bot.infra.bootstrap.threading.Thread", _FakeThread),
+            patch("apps.gmo_bot.infra.bootstrap._should_execute_cycle", return_value=True),
+        ):
+            runtime = bootstrap()
+            runtime.start()
+            runtime.stop()
+
+        notifier = _StrictFakeNotifier.instances[0]
+        self.assertEqual(1, len(notifier.trade_closed))
+        self.assertEqual("trade_1", notifier.trade_closed[0]["trade_id"])
+        self.assertEqual("TAKE_PROFIT", notifier.trade_closed[0]["close_reason"])
+        self.assertEqual("JPY", notifier.trade_closed[0]["quote_ccy"])
+        self.assertAlmostEqual(50.0, notifier.trade_closed[0]["gross_pnl"])
+        self.assertAlmostEqual(6.0, notifier.trade_closed[0]["fee"])
+        self.assertAlmostEqual(44.0, notifier.trade_closed[0]["net_pnl"])
+
     def test_failed_cycle_uses_current_notifier_signatures(self) -> None:
         _StrictFakeNotifier.instances.clear()
         with (

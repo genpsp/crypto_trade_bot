@@ -8,6 +8,10 @@ import requests
 
 from apps.dex_bot.app.ports.logger_port import LoggerPort
 from apps.dex_bot.infra.alerting.daily_trade_summary import DailyTradeSummaryReport, ModelDailyTradeSummary
+from apps.gmo_bot.infra.alerting.daily_trade_summary import (
+    DailyTradeSummaryReport as GmoDailyTradeSummaryReport,
+    ModelDailyTradeSummary as GmoModelDailyTradeSummary,
+)
 
 _REQUEST_TIMEOUT_SECONDS = 5
 _DEFAULT_DUPLICATE_SUPPRESSION_SECONDS = 300
@@ -117,6 +121,45 @@ class SlackNotifier:
         dedupe_key = f"trade_error:{model_id}:{result}:{summary}"
         self._send(message=message, dedupe_key=dedupe_key)
 
+    def notify_trade_closed(
+        self,
+        *,
+        model_id: str,
+        trade_id: str,
+        pair: str,
+        direction: str,
+        close_reason: str,
+        entry_price: float | None,
+        exit_price: float | None,
+        gross_pnl: float | None,
+        fee: float | None,
+        net_pnl: float | None,
+        quote_ccy: str,
+    ) -> None:
+        if not self.enabled:
+            return
+        lines = [
+            f"model={model_id}",
+            f"trade_id={trade_id}",
+            f"pair={pair}",
+            f"direction={direction}",
+            f"reason={close_reason}",
+        ]
+        if entry_price is not None:
+            lines.append(f"entry_price={entry_price:.6f}")
+        if exit_price is not None:
+            lines.append(f"exit_price={exit_price:.6f}")
+        if gross_pnl is not None:
+            lines.append(
+                f"gross_pnl_{quote_ccy.lower()}={self._format_quote_value(gross_pnl, quote_ccy)}"
+            )
+        if fee is not None:
+            lines.append(f"fee_{quote_ccy.lower()}={self._format_quote_value(fee, quote_ccy)}")
+        if net_pnl is not None:
+            lines.append(f"net_pnl_{quote_ccy.lower()}={self._format_quote_value(net_pnl, quote_ccy)}")
+        message = self._format_message(self._trade_close_title(close_reason), lines)
+        self._send(message=message, dedupe_key=f"trade_closed:{trade_id}:{close_reason}")
+
     def notify_runtime_config_error(
         self,
         *,
@@ -221,38 +264,34 @@ class SlackNotifier:
 
         header = f"*【日次トレード結果サマリ（JST）】* `{report.target_date_jst}`"
         generated = f"集計時刻: `{report.generated_at_jst}`"
-        separator = "-" * 138
-
-        lines = [
-            f"{'model_id':<{_MODEL_ID_COLUMN_WIDTH}}"
-            "  closed  win  loss  win_rate   pnl_usdc   fee_usdc  avg_slip  fail_run  skip_run fail_trd cancel_trd",
-            separator,
-        ]
-        if report.model_summaries:
-            for summary in report.model_summaries:
-                lines.append(self._format_daily_summary_row(summary))
-        else:
-            lines.append("(対象モデルなし)")
-
-        lines.append(separator)
-        lines.append(
-            self._format_daily_total_row(
-                closed=report.total_closed_trades,
-                win=report.total_win_trades,
-                loss=report.total_loss_trades,
-                win_rate=report.total_win_rate_pct,
-                pnl_usdc=report.total_realized_pnl_usdc,
-                fee_usdc=report.total_estimated_fees_usdc,
-                avg_slip_bps=report.total_avg_slippage_bps,
-                failed_runs=report.total_failed_runs,
-                skipped_runs=report.total_skipped_runs,
-                failed_trades=report.total_failed_trades,
-                canceled_trades=report.total_canceled_trades,
-            )
-        )
-
-        message = f"{header}\n{generated}\n```\n" + "\n".join(lines) + "\n```"
+        message = f"{header}\n{generated}\n```\n" + "\n".join(self._build_dex_daily_summary_lines(report)) + "\n```"
         self._send(message=message, dedupe_key=f"daily_summary_jst:{report.target_date_jst}")
+
+    def notify_combined_daily_trade_summary_jst(
+        self,
+        *,
+        dex_report: DailyTradeSummaryReport,
+        gmo_report: GmoDailyTradeSummaryReport,
+    ) -> None:
+        if not self.enabled:
+            return
+
+        target_date_jst = dex_report.target_date_jst
+        generated_at_jst = max(dex_report.generated_at_jst, gmo_report.generated_at_jst)
+        header = f"*【日次トレード結果サマリ（JST）】* `{target_date_jst}`"
+        generated = f"集計時刻: `{generated_at_jst}`"
+        sections = [
+            "*DEX*",
+            "```",
+            *self._build_dex_daily_summary_lines(dex_report),
+            "```",
+            "*GMO*",
+            "```",
+            *self._build_gmo_daily_summary_lines(gmo_report),
+            "```",
+        ]
+        message = f"{header}\n{generated}\n" + "\n".join(sections)
+        self._send(message=message, dedupe_key=f"daily_summary_jst:{target_date_jst}")
 
     def _send(self, *, message: str, dedupe_key: str | None) -> None:
         if self._webhook_url is None:
@@ -307,6 +346,78 @@ class SlackNotifier:
         detail = "\n".join(lines)
         return f"{title}\n```\n{detail}\n```"
 
+    def _trade_close_title(self, close_reason: str) -> str:
+        if close_reason == "TAKE_PROFIT":
+            return "利確確定"
+        if close_reason == "STOP_LOSS":
+            return "損切確定"
+        return "Trade決済確定"
+
+    def _format_quote_value(self, value: float, quote_ccy: str) -> str:
+        if quote_ccy == "JPY":
+            return f"{value:.2f}"
+        return f"{value:.4f}"
+
+    def _build_dex_daily_summary_lines(self, report: DailyTradeSummaryReport) -> list[str]:
+        separator = "-" * 138
+        lines = [
+            f"{'model_id':<{_MODEL_ID_COLUMN_WIDTH}}"
+            "  closed  win  loss  win_rate   pnl_usdc   fee_usdc  avg_slip  fail_run  skip_run fail_trd cancel_trd",
+            separator,
+        ]
+        if report.model_summaries:
+            for summary in report.model_summaries:
+                lines.append(self._format_daily_summary_row(summary))
+        else:
+            lines.append("(対象モデルなし)")
+        lines.append(separator)
+        lines.append(
+            self._format_daily_total_row(
+                closed=report.total_closed_trades,
+                win=report.total_win_trades,
+                loss=report.total_loss_trades,
+                win_rate=report.total_win_rate_pct,
+                pnl_usdc=report.total_realized_pnl_usdc,
+                fee_usdc=report.total_estimated_fees_usdc,
+                avg_slip_bps=report.total_avg_slippage_bps,
+                failed_runs=report.total_failed_runs,
+                skipped_runs=report.total_skipped_runs,
+                failed_trades=report.total_failed_trades,
+                canceled_trades=report.total_canceled_trades,
+            )
+        )
+        return lines
+
+    def _build_gmo_daily_summary_lines(self, report: GmoDailyTradeSummaryReport) -> list[str]:
+        separator = "-" * 138
+        lines = [
+            f"{'model_id':<{_MODEL_ID_COLUMN_WIDTH}}"
+            "  closed  win  loss  win_rate    pnl_jpy    fee_jpy  avg_slip  fail_run  skip_run fail_trd cancel_trd",
+            separator,
+        ]
+        if report.model_summaries:
+            for summary in report.model_summaries:
+                lines.append(self._format_gmo_daily_summary_row(summary))
+        else:
+            lines.append("(対象モデルなし)")
+        lines.append(separator)
+        lines.append(
+            self._format_gmo_daily_total_row(
+                closed=report.total_closed_trades,
+                win=report.total_win_trades,
+                loss=report.total_loss_trades,
+                win_rate=report.total_win_rate_pct,
+                pnl_jpy=report.total_realized_pnl_jpy,
+                fee_jpy=report.total_estimated_fees_jpy,
+                avg_slip_bps=report.total_avg_slippage_bps,
+                failed_runs=report.total_failed_runs,
+                skipped_runs=report.total_skipped_runs,
+                failed_trades=report.total_failed_trades,
+                canceled_trades=report.total_canceled_trades,
+            )
+        )
+        return lines
+
     def _format_daily_summary_row(self, summary: ModelDailyTradeSummary) -> str:
         model_id = summary.model_id[:_MODEL_ID_COLUMN_WIDTH]
         return (
@@ -347,6 +458,53 @@ class SlackNotifier:
             f"{win_rate:>10.1f}%"
             f"{pnl_usdc:>11.2f}"
             f"{fee_usdc:>11.3f}"
+            f"{avg_slip_bps:>10.2f}"
+            f"{failed_runs:>10}"
+            f"{skipped_runs:>10}"
+            f"{failed_trades:>9}"
+            f"{canceled_trades:>11}"
+        )
+
+    def _format_gmo_daily_summary_row(self, summary: GmoModelDailyTradeSummary) -> str:
+        model_id = summary.model_id[:_MODEL_ID_COLUMN_WIDTH]
+        return (
+            f"{model_id:<{_MODEL_ID_COLUMN_WIDTH}}"
+            f"{summary.closed_trades:>8}"
+            f"{summary.win_trades:>5}"
+            f"{summary.loss_trades:>6}"
+            f"{summary.win_rate_pct:>10.1f}%"
+            f"{summary.realized_pnl_jpy:>11.0f}"
+            f"{summary.estimated_fees_jpy:>11.0f}"
+            f"{summary.avg_slippage_bps:>10.2f}"
+            f"{summary.failed_runs:>10}"
+            f"{summary.skipped_runs:>10}"
+            f"{summary.failed_trades:>9}"
+            f"{summary.canceled_trades:>11}"
+        )
+
+    def _format_gmo_daily_total_row(
+        self,
+        *,
+        closed: int,
+        win: int,
+        loss: int,
+        win_rate: float,
+        pnl_jpy: float,
+        fee_jpy: float,
+        avg_slip_bps: float,
+        failed_runs: int,
+        skipped_runs: int,
+        failed_trades: int,
+        canceled_trades: int,
+    ) -> str:
+        return (
+            f"{'TOTAL':<{_MODEL_ID_COLUMN_WIDTH}}"
+            f"{closed:>8}"
+            f"{win:>5}"
+            f"{loss:>6}"
+            f"{win_rate:>10.1f}%"
+            f"{pnl_jpy:>11.0f}"
+            f"{fee_jpy:>11.0f}"
             f"{avg_slip_bps:>10.2f}"
             f"{failed_runs:>10}"
             f"{skipped_runs:>10}"

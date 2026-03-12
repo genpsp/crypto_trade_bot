@@ -36,6 +36,12 @@ from apps.dex_bot.infra.config.firestore_config_repo import (
 )
 from apps.dex_bot.infra.logging.logger import create_logger
 from apps.dex_bot.infra.scheduler.cron_cycle import CronController, create_cron_cycle
+from apps.gmo_bot.infra.alerting.daily_trade_summary import (
+    build_daily_trade_summary_report as build_gmo_daily_summary_report,
+)
+from apps.gmo_bot.infra.config.firestore_config_repo import (
+    FirestoreConfigRepository as GmoFirestoreConfigRepository,
+)
 
 CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 3
 STALE_CYCLE_ALERT_MINUTES = 10
@@ -74,6 +80,13 @@ class ModelRuntimeSpec:
     config_fingerprint: str
 
 
+@dataclass(frozen=True)
+class DailySummaryModelSource:
+    model_id: str
+    trades_collection_name: str
+    runs_collection_name: str
+
+
 def _should_execute_cycle(
     *,
     is_five_minute_window: bool,
@@ -95,6 +108,7 @@ def bootstrap() -> AppRuntime:
     redis = Redis.from_url(env.REDIS_URL, decode_responses=True)
 
     config_repo = FirestoreConfigRepository(firestore)
+    gmo_config_repo = GmoFirestoreConfigRepository(firestore)
     market_data = OhlcvProvider(redis=redis)
     quote_client = JupiterQuoteClient(redis=redis)
     paper_execution: ExecutionPort = PaperExecutionAdapter(quote_client, logger)
@@ -290,6 +304,81 @@ def bootstrap() -> AppRuntime:
             )
         failure_streaks_by_model[model_id] = 0
 
+    def _to_float(value: Any) -> float | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        return None
+
+    def _as_dict(value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        return {}
+
+    def _compute_dex_close_metrics(trade: TradeRecord) -> tuple[float | None, float | None, float | None]:
+        position = _as_dict(trade.get("position"))
+        execution = _as_dict(trade.get("execution"))
+        exit_result = _as_dict(execution.get("exit_result"))
+
+        entry_quote = _to_float(position.get("quote_amount_usdc"))
+        exit_quote = _to_float(exit_result.get("spent_quote_usdc"))
+        if exit_quote is None:
+            quantity = _to_float(position.get("quantity_sol"))
+            exit_price = _to_float(position.get("exit_price"))
+            if quantity is not None and exit_price is not None:
+                exit_quote = quantity * exit_price
+
+        gross_pnl: float | None = None
+        direction = str(trade.get("direction") or "LONG")
+        if entry_quote is not None and exit_quote is not None:
+            gross_pnl = entry_quote - exit_quote if direction == "SHORT" else exit_quote - entry_quote
+
+        entry_fee = _to_float(execution.get("entry_fee_lamports")) or 0.0
+        exit_fee = _to_float(execution.get("exit_fee_lamports")) or 0.0
+        total_lamports = entry_fee + exit_fee
+        fee_usdc = 0.0
+        if total_lamports > 0:
+            price_ref = _to_float(position.get("exit_price")) or _to_float(position.get("entry_price"))
+            if price_ref is not None and price_ref > 0:
+                fee_usdc = (total_lamports / 1_000_000_000) * price_ref
+        fee = fee_usdc if total_lamports > 0 else 0.0
+
+        net_pnl = gross_pnl - fee if gross_pnl is not None else None
+        return gross_pnl, fee, net_pnl
+
+    def _maybe_notify_trade_closed(context: ModelRuntimeContext, result: dict[str, str | None]) -> None:
+        if result.get("result") != "CLOSED":
+            return
+        trade_id = result.get("trade_id")
+        if not isinstance(trade_id, str) or trade_id.strip() == "":
+            return
+
+        trade = context.persistence.get_trade(trade_id)
+        if not isinstance(trade, dict):
+            logger.warn("closed trade notification skipped because trade snapshot is missing", {"trade_id": trade_id})
+            return
+
+        close_reason = str(trade.get("close_reason") or "")
+        if close_reason not in ("TAKE_PROFIT", "STOP_LOSS"):
+            return
+
+        position = _as_dict(trade.get("position"))
+        gross_pnl, fee, net_pnl = _compute_dex_close_metrics(trade)
+        notifier.notify_trade_closed(
+            model_id=context.model_id,
+            trade_id=trade_id,
+            pair=str(trade.get("pair") or context.pair),
+            direction=str(trade.get("direction") or ""),
+            close_reason=close_reason,
+            entry_price=_to_float(position.get("entry_price")),
+            exit_price=_to_float(position.get("exit_price")),
+            gross_pnl=gross_pnl,
+            fee=fee,
+            net_pnl=net_pnl,
+            quote_ccy="USDC",
+        )
+
     def _watchdog_runner() -> None:
         nonlocal stale_cycle_alert_active
         threshold_minutes = STALE_CYCLE_ALERT_MINUTES
@@ -324,6 +413,49 @@ def bootstrap() -> AppRuntime:
                     items.append(data)
         return items
 
+    def _load_daily_summary_payloads(
+        sources: list[DailySummaryModelSource],
+        day_doc_ids: list[str],
+    ) -> list[tuple[str, list[dict[str, Any]], list[dict[str, Any]]]]:
+        payloads: list[tuple[str, list[dict[str, Any]], list[dict[str, Any]]]] = []
+        for source in sources:
+            trades = _load_items_for_day_docs(
+                model_id=source.model_id,
+                collection_name=source.trades_collection_name,
+                day_doc_ids=day_doc_ids,
+            )
+            runs = _load_items_for_day_docs(
+                model_id=source.model_id,
+                collection_name=source.runs_collection_name,
+                day_doc_ids=day_doc_ids,
+            )
+            payloads.append((source.model_id, trades, runs))
+        payloads.sort(key=lambda payload: payload[0])
+        return payloads
+
+    def _build_gmo_daily_summary_sources() -> list[DailySummaryModelSource]:
+        sources: list[DailySummaryModelSource] = []
+        for model_id in gmo_config_repo.list_model_ids():
+            try:
+                metadata = gmo_config_repo.get_model_metadata(model_id)
+            except Exception as error:
+                logger.error(
+                    "failed to load gmo model metadata for daily summary",
+                    {"model_id": model_id, "error": str(error)},
+                )
+                continue
+            if not metadata.enabled or metadata.mode != "LIVE":
+                continue
+            sources.append(
+                DailySummaryModelSource(
+                    model_id=model_id,
+                    trades_collection_name="trades",
+                    runs_collection_name="runs",
+                )
+            )
+        sources.sort(key=lambda source: source.model_id)
+        return sources
+
     def _maybe_send_daily_trade_summary(now_utc: datetime, contexts: list[ModelRuntimeContext]) -> None:
         if not notifier.enabled:
             return
@@ -348,32 +480,42 @@ def bootstrap() -> AppRuntime:
 
             window = build_daily_summary_window(target_date_jst)
             day_doc_ids = iter_utc_day_ids(window)
-            model_payloads: list[tuple[str, list[dict[str, Any]], list[dict[str, Any]]]] = []
-
+            dex_sources: list[DailySummaryModelSource] = []
             for context in contexts:
                 spec = runtime_specs.get(context.model_id)
                 if spec is None or spec.mode != "LIVE":
                     continue
-                trades = _load_items_for_day_docs(
-                    model_id=context.model_id,
-                    collection_name=context.persistence.trades_collection_name,
-                    day_doc_ids=day_doc_ids,
+                dex_sources.append(
+                    DailySummaryModelSource(
+                        model_id=context.model_id,
+                        trades_collection_name=context.persistence.trades_collection_name,
+                        runs_collection_name=context.persistence.runs_collection_name,
+                    )
                 )
-                model_payloads.append((context.model_id, trades, []))
 
-            model_payloads.sort(key=lambda payload: payload[0])
-            report = build_daily_summary_report(
+            dex_report = build_daily_summary_report(
                 target_date_jst=target_date_jst,
                 generated_at_utc=now_utc,
-                model_payloads=model_payloads,
+                model_payloads=_load_daily_summary_payloads(dex_sources, day_doc_ids),
             )
-            notifier.notify_daily_trade_summary_jst(report=report)
+            gmo_sources = _build_gmo_daily_summary_sources()
+            gmo_report = build_gmo_daily_summary_report(
+                target_date_jst=target_date_jst,
+                generated_at_utc=now_utc,
+                model_payloads=_load_daily_summary_payloads(gmo_sources, day_doc_ids),
+            )
+            notifier.notify_combined_daily_trade_summary_jst(
+                dex_report=dex_report,
+                gmo_report=gmo_report,
+            )
             logger.info(
                 "daily trade summary sent",
                 {
                     "target_date_jst": target_date_jst,
-                    "model_count": len(model_payloads),
-                    "models": [model_id for model_id, _, _ in model_payloads],
+                    "dex_model_count": len(dex_report.model_summaries),
+                    "gmo_model_count": len(gmo_report.model_summaries),
+                    "dex_models": [summary.model_id for summary in dex_report.model_summaries],
+                    "gmo_models": [summary.model_id for summary in gmo_report.model_summaries],
                 },
             )
         except Exception as error:
@@ -598,6 +740,7 @@ def bootstrap() -> AppRuntime:
             )
         )
         _apply_failure_streak_and_alert(result, context.model_id)
+        _maybe_notify_trade_closed(context, result)
         _mark_cycle_completed()
         if should_suppress_run_cycle_log(result):  # type: ignore[arg-type]
             return

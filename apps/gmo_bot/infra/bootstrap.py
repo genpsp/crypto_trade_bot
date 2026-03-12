@@ -240,6 +240,72 @@ def bootstrap() -> AppRuntime:
             )
         failure_streaks_by_model[model_id] = 0
 
+    def _to_float(value: Any) -> float | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        return None
+
+    def _as_dict(value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        return {}
+
+    def _compute_gmo_close_metrics(trade: TradeRecord) -> tuple[float | None, float, float | None]:
+        position = _as_dict(trade.get("position"))
+        execution = _as_dict(trade.get("execution"))
+        exit_result = _as_dict(execution.get("exit_result"))
+
+        entry_quote = _to_float(position.get("quote_amount_jpy"))
+        exit_quote = _to_float(exit_result.get("filled_quote_jpy"))
+        if exit_quote is None:
+            quantity = _to_float(position.get("quantity_sol"))
+            exit_price = _to_float(position.get("exit_price"))
+            if quantity is not None and exit_price is not None:
+                exit_quote = quantity * exit_price
+
+        gross_pnl: float | None = None
+        direction = str(trade.get("direction") or "LONG")
+        if entry_quote is not None and exit_quote is not None:
+            gross_pnl = entry_quote - exit_quote if direction == "SHORT" else exit_quote - entry_quote
+
+        fee = (_to_float(execution.get("entry_fee_jpy")) or 0.0) + (_to_float(execution.get("exit_fee_jpy")) or 0.0)
+        net_pnl = gross_pnl - fee if gross_pnl is not None else None
+        return gross_pnl, fee, net_pnl
+
+    def _maybe_notify_trade_closed(context: ModelRuntimeContext, result: dict[str, str | None]) -> None:
+        if result.get("result") != "CLOSED":
+            return
+        trade_id = result.get("trade_id")
+        if not isinstance(trade_id, str) or trade_id.strip() == "":
+            return
+
+        trade = context.persistence.get_trade(trade_id)
+        if not isinstance(trade, dict):
+            logger.warn("closed trade notification skipped because trade snapshot is missing", {"trade_id": trade_id})
+            return
+
+        close_reason = str(trade.get("close_reason") or "")
+        if close_reason not in ("TAKE_PROFIT", "STOP_LOSS"):
+            return
+
+        position = _as_dict(trade.get("position"))
+        gross_pnl, fee, net_pnl = _compute_gmo_close_metrics(trade)
+        notifier.notify_trade_closed(
+            model_id=context.model_id,
+            trade_id=trade_id,
+            pair=str(trade.get("pair") or context.pair),
+            direction=str(trade.get("direction") or ""),
+            close_reason=close_reason,
+            entry_price=_to_float(position.get("entry_price")),
+            exit_price=_to_float(position.get("exit_price")),
+            gross_pnl=gross_pnl,
+            fee=fee,
+            net_pnl=net_pnl,
+            quote_ccy="JPY",
+        )
+
     def _refresh_runtime_specs() -> None:
         nonlocal runtime_pause_state, last_runtime_refresh_at, warned_no_enabled_models
         refreshed_contexts: dict[str, ModelRuntimeContext] = {}
@@ -348,6 +414,7 @@ def bootstrap() -> AppRuntime:
             )
         )
         _apply_failure_streak_and_alert(result, context.model_id)
+        _maybe_notify_trade_closed(context, result)
         logger.info(
             "run_cycle finished",
             {
