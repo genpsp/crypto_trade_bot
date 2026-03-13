@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from apps.dex_bot.domain.model.types import NoSignalDecision, OhlcvBar
@@ -142,7 +143,54 @@ class _DummyPersistence:
         self.saved_runs.append(run)
 
 
+class _OpenTradePersistence(_DummyPersistence):
+    def __init__(self, config: BotConfig, trade: TradeRecord) -> None:
+        super().__init__(config)
+        self.trade = trade
+
+    def find_open_trade(self, pair: Pair) -> TradeRecord | None:
+        _ = pair
+        return self.trade
+
+
 class GmoRunCyclePersistenceTest(unittest.TestCase):
+    def test_partial_close_run_is_persisted_without_failed_result(self) -> None:
+        config = _build_config()
+        trade: TradeRecord = {
+            "trade_id": "trade_1",
+            "pair": "SOL/JPY",
+            "direction": "SHORT",
+            "state": "CONFIRMED",
+            "position": {
+                "status": "OPEN",
+                "stop_price": 9990.0,
+                "take_profit_price": 9990.0,
+            },
+        }
+        persistence = _OpenTradePersistence(config, trade)
+        deps = RunCycleDependencies(
+            execution=_DummyExecution(),
+            lock=_DummyLock(),
+            logger=_DummyLogger(),
+            market_data=_DummyMarketData([]),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 10, 7, 7, tzinfo=UTC),
+        )
+
+        with patch(
+            "apps.gmo_bot.app.usecases.run_cycle.close_position",
+            return_value=SimpleNamespace(
+                status="PARTIALLY_CLOSED",
+                summary="PARTIALLY_CLOSED: partial close detected: expected 0.6 SOL, got 0.5 SOL",
+            ),
+        ):
+            run = run_cycle(deps)
+
+        self.assertEqual("PARTIALLY_CLOSED", run["result"])
+        self.assertEqual(1, len(persistence.saved_runs))
+        self.assertEqual("PARTIALLY_CLOSED", persistence.saved_runs[0]["result"])
+
     def test_no_signal_run_is_not_persisted(self) -> None:
         config = _build_config()
         bar_close = datetime(2026, 3, 10, 7, 0, tzinfo=UTC)
@@ -233,6 +281,7 @@ class GmoRunCyclePersistenceTest(unittest.TestCase):
     def test_should_persist_run_record_matches_runtime_policy(self) -> None:
         self.assertTrue(_should_persist_run_record({"result": "OPENED"}))
         self.assertTrue(_should_persist_run_record({"result": "CLOSED"}))
+        self.assertTrue(_should_persist_run_record({"result": "PARTIALLY_CLOSED"}))
         self.assertTrue(_should_persist_run_record({"result": "FAILED"}))
         self.assertFalse(_should_persist_run_record({"result": "NO_SIGNAL"}))
         self.assertFalse(_should_persist_run_record({"result": "HOLD"}))

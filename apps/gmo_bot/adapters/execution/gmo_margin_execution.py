@@ -130,15 +130,21 @@ class GmoMarginExecutionAdapter(ExecutionPort):
         total_size = 0.0
         total_quote = 0.0
         total_fee = 0.0
+        total_realized_pnl = 0.0
+        has_realized_pnl = False
         lots_by_position_id: dict[int, float] = defaultdict(float)
         execution_ids: list[str] = []
         for execution in executions:
             size = _to_float(execution.get("size")) or 0.0
             price = _to_float(execution.get("price")) or 0.0
             fee = _to_float(execution.get("fee")) or 0.0
+            loss_gain = _to_float(execution.get("lossGain"))
             total_size += size
             total_quote += price * size
             total_fee += fee
+            if loss_gain is not None:
+                total_realized_pnl += loss_gain
+                has_realized_pnl = True
             position_id = execution.get("positionId")
             if isinstance(position_id, int):
                 lots_by_position_id[position_id] += size
@@ -153,7 +159,7 @@ class GmoMarginExecutionAdapter(ExecutionPort):
             for position_id, size in sorted(lots_by_position_id.items())
             if size > 0
         ]
-        return {
+        result = {
             "status": "CONFIRMED",
             "avg_fill_price": avg_fill_price,
             "filled_base_sol": total_size,
@@ -162,6 +168,9 @@ class GmoMarginExecutionAdapter(ExecutionPort):
             "execution_ids": execution_ids,
             "lots": lots,
         }
+        if has_realized_pnl:
+            result["realized_pnl_jpy"] = total_realized_pnl
+        return result
 
 
 def _to_float(value: Any) -> float | None:

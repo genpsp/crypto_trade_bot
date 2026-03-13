@@ -255,19 +255,31 @@ def bootstrap() -> AppRuntime:
     def _compute_gmo_close_metrics(trade: TradeRecord) -> tuple[float | None, float, float | None]:
         position = _as_dict(trade.get("position"))
         execution = _as_dict(trade.get("execution"))
+        realized_pnl = _to_float(execution.get("realized_pnl_jpy"))
         exit_result = _as_dict(execution.get("exit_result"))
 
         entry_quote = _to_float(position.get("quote_amount_jpy"))
         exit_quote = _to_float(exit_result.get("filled_quote_jpy"))
-        if exit_quote is None:
-            quantity = _to_float(position.get("quantity_sol"))
+        quantity = _to_float(position.get("quantity_sol"))
+        filled_base = _to_float(exit_result.get("filled_base_sol"))
+        has_partial_size_mismatch = (
+            realized_pnl is None
+            and quantity is not None
+            and filled_base is not None
+            and abs(filled_base - quantity) > 1e-9
+        )
+        if (
+            has_partial_size_mismatch
+        ):
+            exit_quote = None
+        if exit_quote is None and not has_partial_size_mismatch:
             exit_price = _to_float(position.get("exit_price"))
             if quantity is not None and exit_price is not None:
                 exit_quote = quantity * exit_price
 
-        gross_pnl: float | None = None
+        gross_pnl: float | None = realized_pnl
         direction = str(trade.get("direction") or "LONG")
-        if entry_quote is not None and exit_quote is not None:
+        if gross_pnl is None and entry_quote is not None and exit_quote is not None:
             gross_pnl = entry_quote - exit_quote if direction == "SHORT" else exit_quote - entry_quote
 
         fee = (_to_float(execution.get("entry_fee_jpy")) or 0.0) + (_to_float(execution.get("exit_fee_jpy")) or 0.0)

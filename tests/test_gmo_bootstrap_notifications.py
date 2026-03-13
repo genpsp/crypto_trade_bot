@@ -285,6 +285,67 @@ class GmoBootstrapNotificationsTest(unittest.TestCase):
         self.assertAlmostEqual(6.0, notifier.trade_closed[0]["fee"])
         self.assertAlmostEqual(44.0, notifier.trade_closed[0]["net_pnl"])
 
+    def test_closed_cycle_prefers_stored_realized_pnl_for_partial_close_trade(self) -> None:
+        _StrictFakeNotifier.instances.clear()
+        closed_trade = {
+            "trade_id": "trade_2",
+            "pair": "SOL/JPY",
+            "direction": "SHORT",
+            "close_reason": "STOP_LOSS",
+            "position": {
+                "entry_price": 13568.0,
+                "exit_price": 13944.0,
+                "quote_amount_jpy": 1356.8,
+                "quantity_sol": 0.1,
+            },
+            "execution": {
+                "entry_fee_jpy": 3.0,
+                "exit_fee_jpy": 4.0,
+                "realized_pnl_jpy": -95.1,
+                "exit_result": {
+                    "filled_base_sol": 0.1,
+                    "filled_quote_jpy": 1394.4,
+                },
+            },
+        }
+        with (
+            patch("apps.gmo_bot.infra.bootstrap.load_env", return_value=_FakeEnv()),
+            patch("apps.gmo_bot.infra.bootstrap.create_logger", return_value=_FakeLogger()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreClient", _FakeFirestoreClient),
+            patch("apps.gmo_bot.infra.bootstrap.Redis.from_url", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreConfigRepository", return_value=_FakeConfigRepo()),
+            patch("apps.gmo_bot.infra.bootstrap.GmoApiClient", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.OhlcvProvider", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.PaperExecutionAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.GmoMarginExecutionAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreRepository", return_value=_FakePersistence(closed_trade)),
+            patch("apps.gmo_bot.infra.bootstrap.RedisLockAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.SlackNotifier", _StrictFakeNotifier),
+            patch("apps.gmo_bot.infra.bootstrap.create_cron_cycle", return_value=_FakeCronController()),
+            patch(
+                "apps.gmo_bot.infra.bootstrap.run_cycle",
+                return_value={
+                    "result": "CLOSED",
+                    "summary": "CLOSED: reason=STOP_LOSS",
+                    "run_id": "run_2",
+                    "trade_id": "trade_2",
+                },
+            ),
+            patch("apps.gmo_bot.infra.bootstrap.threading.Thread", _FakeThread),
+            patch("apps.gmo_bot.infra.bootstrap._should_execute_cycle", return_value=True),
+        ):
+            runtime = bootstrap()
+            runtime.start()
+            runtime.stop()
+
+        notifier = _StrictFakeNotifier.instances[0]
+        self.assertEqual(1, len(notifier.trade_closed))
+        self.assertEqual("trade_2", notifier.trade_closed[0]["trade_id"])
+        self.assertEqual("STOP_LOSS", notifier.trade_closed[0]["close_reason"])
+        self.assertAlmostEqual(-95.1, notifier.trade_closed[0]["gross_pnl"])
+        self.assertAlmostEqual(7.0, notifier.trade_closed[0]["fee"])
+        self.assertAlmostEqual(-102.1, notifier.trade_closed[0]["net_pnl"])
+
     def test_failed_cycle_uses_current_notifier_signatures(self) -> None:
         _StrictFakeNotifier.instances.clear()
         with (
@@ -323,6 +384,43 @@ class GmoBootstrapNotificationsTest(unittest.TestCase):
         self.assertEqual(1, len(notifier.startup_payloads))
         self.assertEqual(["shutdown signal received"], notifier.shutdown_reasons)
         self.assertEqual([], notifier.consecutive_failures)
+
+    def test_partial_close_cycle_does_not_trigger_error_notifications(self) -> None:
+        _StrictFakeNotifier.instances.clear()
+        with (
+            patch("apps.gmo_bot.infra.bootstrap.load_env", return_value=_FakeEnv()),
+            patch("apps.gmo_bot.infra.bootstrap.create_logger", return_value=_FakeLogger()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreClient", _FakeFirestoreClient),
+            patch("apps.gmo_bot.infra.bootstrap.Redis.from_url", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreConfigRepository", return_value=_FakeConfigRepo()),
+            patch("apps.gmo_bot.infra.bootstrap.GmoApiClient", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.OhlcvProvider", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.PaperExecutionAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.GmoMarginExecutionAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreRepository", return_value=_FakePersistence()),
+            patch("apps.gmo_bot.infra.bootstrap.RedisLockAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.SlackNotifier", _StrictFakeNotifier),
+            patch("apps.gmo_bot.infra.bootstrap.create_cron_cycle", return_value=_FakeCronController()),
+            patch(
+                "apps.gmo_bot.infra.bootstrap.run_cycle",
+                return_value={
+                    "result": "PARTIALLY_CLOSED",
+                    "summary": "PARTIALLY_CLOSED: partial close detected: expected 0.6 SOL, got 0.5 SOL",
+                    "run_id": "run_1",
+                    "trade_id": "trade_1",
+                },
+            ),
+            patch("apps.gmo_bot.infra.bootstrap.threading.Thread", _FakeThread),
+            patch("apps.gmo_bot.infra.bootstrap._should_execute_cycle", return_value=True),
+        ):
+            runtime = bootstrap()
+            runtime.start()
+            runtime.stop()
+
+        notifier = _StrictFakeNotifier.instances[0]
+        self.assertEqual([], notifier.trade_errors)
+        self.assertEqual([], notifier.consecutive_failures)
+        self.assertEqual([], notifier.trade_closed)
 
     def test_disabled_model_is_not_loaded_into_runtime(self) -> None:
         _StrictFakeNotifier.instances.clear()

@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime, time, timedelta, timezone
 from typing import Any
 
 JST = timezone(timedelta(hours=9))
+POSITION_SIZE_EPSILON = 1e-9
 
 
 @dataclass(frozen=True)
@@ -252,15 +253,26 @@ def _resolve_run_executed_at(run: dict[str, Any]) -> datetime | None:
 def _compute_trade_realized_pnl_jpy(trade: dict[str, Any]) -> float | None:
     position = _as_dict(trade.get("position"))
     execution = _as_dict(trade.get("execution"))
+    realized_pnl_jpy = _to_float(execution.get("realized_pnl_jpy"))
+    if realized_pnl_jpy is not None:
+        return realized_pnl_jpy
     exit_result = _as_dict(execution.get("exit_result"))
 
     entry_quote = _to_float(position.get("quote_amount_jpy"))
     if entry_quote is None:
         return None
 
+    quantity = _to_float(position.get("quantity_sol"))
+    filled_base = _to_float(exit_result.get("filled_base_sol"))
+    if (
+        quantity is not None
+        and filled_base is not None
+        and abs(filled_base - quantity) > POSITION_SIZE_EPSILON
+    ):
+        return None
+
     exit_quote = _to_float(exit_result.get("filled_quote_jpy"))
     if exit_quote is None:
-        quantity = _to_float(position.get("quantity_sol"))
         exit_price = _to_float(position.get("exit_price"))
         if quantity is None or exit_price is None:
             return None

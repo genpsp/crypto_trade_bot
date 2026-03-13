@@ -101,6 +101,74 @@ class GmoDailyTradeSummaryTest(unittest.TestCase):
         self.assertEqual(1, report.total_failed_trades)
         self.assertEqual(1, report.total_canceled_trades)
 
+    def test_build_daily_trade_summary_report_prefers_stored_realized_pnl_on_partial_close(self) -> None:
+        report = build_daily_trade_summary_report(
+            target_date_jst="2026-03-11",
+            generated_at_utc=datetime(2026, 3, 11, 15, 5, tzinfo=UTC),
+            model_payloads=[
+                (
+                    "gmo_ema_pullback_15m_both_v0",
+                    [
+                        {
+                            "trade_id": "partial_short",
+                            "direction": "SHORT",
+                            "state": "CLOSED",
+                            "created_at": "2026-03-11T02:45:00Z",
+                            "position": {
+                                "quote_amount_jpy": 1356.8,
+                                "quantity_sol": 0.1,
+                                "entry_trigger_price": 13574.0,
+                                "entry_price": 13568.0,
+                                "exit_trigger_price": 13944.0,
+                                "exit_price": 13944.0,
+                                "exit_time_iso": "2026-03-11T04:33:00Z",
+                            },
+                            "execution": {
+                                "entry_fee_jpy": 3.0,
+                                "exit_fee_jpy": 4.0,
+                                "realized_pnl_jpy": -95.1,
+                                "exit_result": {
+                                    "filled_base_sol": 0.1,
+                                    "filled_quote_jpy": 1394.4,
+                                },
+                            },
+                        },
+                        {
+                            "trade_id": "broken_partial_short",
+                            "direction": "SHORT",
+                            "state": "CLOSED",
+                            "created_at": "2026-03-11T02:45:00Z",
+                            "position": {
+                                "quote_amount_jpy": 8140.8,
+                                "quantity_sol": 0.6,
+                                "entry_trigger_price": 13574.0,
+                                "entry_price": 13568.0,
+                                "exit_trigger_price": 13675.0,
+                                "exit_price": 13683.0,
+                                "exit_time_iso": "2026-03-11T04:33:00Z",
+                            },
+                            "execution": {
+                                "entry_fee_jpy": 3.0,
+                                "exit_fee_jpy": 3.0,
+                                "exit_result": {
+                                    "filled_base_sol": 0.5,
+                                    "filled_quote_jpy": 6841.5,
+                                },
+                            },
+                        },
+                    ],
+                    [],
+                )
+            ],
+        )
+
+        summary = report.model_summaries[0]
+        self.assertEqual(2, summary.closed_trades)
+        self.assertEqual(0, summary.win_trades)
+        self.assertEqual(1, summary.loss_trades)
+        self.assertAlmostEqual(-95.1, summary.realized_pnl_jpy)
+        self.assertAlmostEqual(13.0, summary.estimated_fees_jpy)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -113,7 +113,7 @@ def _is_execution_error_skip_summary(summary: str) -> bool:
 
 def _should_persist_run_record(run: RunRecord) -> bool:
     result = str(run.get("result") or "")
-    if result in ("OPENED", "CLOSED", "FAILED"):
+    if result in ("OPENED", "CLOSED", "PARTIALLY_CLOSED", "FAILED"):
         return True
     if result != "SKIPPED":
         return False
@@ -204,7 +204,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                         close_price=mark_price,
                     ),
                 )
-                run["result"] = "CLOSED" if closed.status == "CLOSED" else "FAILED"
+                run["result"] = closed.status if closed.status in ("CLOSED", "PARTIALLY_CLOSED") else "FAILED"
                 run["summary"] = closed.summary
                 return run
             run["result"] = "HOLD"

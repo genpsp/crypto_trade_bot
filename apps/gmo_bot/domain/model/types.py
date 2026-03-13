@@ -80,6 +80,7 @@ class TradeResultSnapshot(TypedDict, total=False):
     filled_base_sol: float
     filled_quote_jpy: float
     fee_jpy: float
+    realized_pnl_jpy: float
     execution_ids: list[str]
     lots: list[PositionLotSnapshot]
 
@@ -91,6 +92,7 @@ class TradeExecutionSnapshot(TypedDict, total=False):
     exit_submission_state: Literal["SUBMITTED", "CONFIRMED", "FAILED"]
     entry_fee_jpy: float
     exit_fee_jpy: float
+    realized_pnl_jpy: float
     entry_error: str
     exit_error: str
     entry_order: TradeOrderSnapshot
@@ -138,6 +140,7 @@ class TradeRecord(TypedDict, total=False):
 RunResult = Literal[
     "OPENED",
     "CLOSED",
+    "PARTIALLY_CLOSED",
     "NO_SIGNAL",
     "HOLD",
     "SKIPPED",
