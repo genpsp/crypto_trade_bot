@@ -109,6 +109,14 @@ class _DummyMarketData:
         return self.bars
 
 
+class _MaintenanceMarketData:
+    def fetch_bars(self, pair: str, timeframe: str, limit: int) -> list[OhlcvBar]:
+        _ = pair
+        _ = timeframe
+        _ = limit
+        raise RuntimeError("GMO API error status=5: ERR-5201: MAINTENANCE. Please wait for a while")
+
+
 class _DummyPersistence:
     def __init__(self, config: BotConfig) -> None:
         self.config = config
@@ -278,11 +286,35 @@ class GmoRunCyclePersistenceTest(unittest.TestCase):
         self.assertFalse(lock.has_entry_attempt(expected_bar_close_iso))
         self.assertEqual([], persistence.saved_runs)
 
+    def test_market_data_maintenance_is_skipped_and_persisted(self) -> None:
+        persistence = _DummyPersistence(_build_config())
+        deps = RunCycleDependencies(
+            execution=_DummyExecution(),
+            lock=_DummyLock(),
+            logger=_DummyLogger(),
+            market_data=_MaintenanceMarketData(),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 14, 0, 20, tzinfo=UTC),
+        )
+
+        run = run_cycle(deps)
+
+        self.assertEqual("SKIPPED", run["result"])
+        self.assertEqual("SKIPPED: market data unavailable (maintenance)", run["summary"])
+        self.assertIn("ERR-5201", str(run.get("reason")))
+        self.assertEqual(1, len(persistence.saved_runs))
+        self.assertEqual("SKIPPED", persistence.saved_runs[0]["result"])
+        self.assertEqual("SKIPPED: market data unavailable (maintenance)", persistence.saved_runs[0]["summary"])
+
     def test_should_persist_run_record_matches_runtime_policy(self) -> None:
         self.assertTrue(_should_persist_run_record({"result": "OPENED"}))
         self.assertTrue(_should_persist_run_record({"result": "CLOSED"}))
         self.assertTrue(_should_persist_run_record({"result": "PARTIALLY_CLOSED"}))
         self.assertTrue(_should_persist_run_record({"result": "FAILED"}))
+        self.assertTrue(
+            _should_persist_run_record({"result": "SKIPPED", "summary": "SKIPPED: market data unavailable (maintenance)"})
+        )
         self.assertFalse(_should_persist_run_record({"result": "NO_SIGNAL"}))
         self.assertFalse(_should_persist_run_record({"result": "HOLD"}))
         self.assertFalse(_should_persist_run_record({"result": "SKIPPED_ENTRY"}))

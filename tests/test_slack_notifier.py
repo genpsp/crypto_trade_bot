@@ -9,6 +9,10 @@ from apps.dex_bot.infra.alerting.slack_notifier import SlackAlertConfig, SlackNo
 from apps.gmo_bot.infra.alerting.daily_trade_summary import (
     build_daily_trade_summary_report as build_gmo_daily_trade_summary_report,
 )
+from apps.gmo_bot.infra.alerting.slack_notifier import (
+    is_execution_error_result as is_gmo_execution_error_result,
+    is_market_data_maintenance_result,
+)
 
 
 class _FakeLogger:
@@ -121,6 +125,30 @@ class SlackNotifierTest(unittest.TestCase):
         self.assertIn("gross_pnl_usdc=2.5000", payload)
         self.assertIn("fee_usdc=0.0230", payload)
         self.assertIn("net_pnl_usdc=2.4770", payload)
+
+    def test_gmo_maintenance_is_not_classified_as_execution_error(self) -> None:
+        reason = "GMO API error status=5: ERR-5201: MAINTENANCE. Please wait for a while"
+        self.assertTrue(
+            is_market_data_maintenance_result(
+                "FAILED",
+                "FAILED: unhandled run_cycle error",
+                reason,
+            )
+        )
+        self.assertFalse(
+            is_gmo_execution_error_result(
+                "FAILED",
+                "FAILED: unhandled run_cycle error",
+                reason,
+            )
+        )
+        self.assertFalse(
+            is_gmo_execution_error_result(
+                "SKIPPED",
+                "SKIPPED: market data unavailable (maintenance)",
+                reason,
+            )
+        )
 
     def test_notify_runtime_config_error_is_deduplicated(self) -> None:
         logger = _FakeLogger()

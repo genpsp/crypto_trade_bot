@@ -38,6 +38,10 @@ _EXECUTION_ERROR_SKIP_MARKERS = (
     "exit slippage exceeded",
     "exit route/liquidity unavailable",
 )
+_MARKET_DATA_MAINTENANCE_MARKERS = (
+    "err-5201",
+    "maintenance",
+)
 
 
 @dataclass
@@ -111,13 +115,24 @@ def _is_execution_error_skip_summary(summary: str) -> bool:
     return classify_execution_error(normalized).action == "SKIP"
 
 
+def _is_market_data_maintenance_error_message(message: str) -> bool:
+    normalized = message.strip().lower()
+    return all(marker in normalized for marker in _MARKET_DATA_MAINTENANCE_MARKERS)
+
+
+def _is_market_data_maintenance_skip_summary(summary: str) -> bool:
+    normalized = summary.strip().lower()
+    return normalized.startswith("skipped: market data unavailable")
+
+
 def _should_persist_run_record(run: RunRecord) -> bool:
     result = str(run.get("result") or "")
     if result in ("OPENED", "CLOSED", "PARTIALLY_CLOSED", "FAILED"):
         return True
     if result != "SKIPPED":
         return False
-    return _is_execution_error_skip_summary(str(run.get("summary") or ""))
+    summary = str(run.get("summary") or "")
+    return _is_execution_error_skip_summary(summary) or _is_market_data_maintenance_skip_summary(summary)
 
 
 def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
@@ -218,7 +233,17 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             return run
 
         ohlcv_limit = _resolve_ohlcv_limit(runtime_config)
-        bars = market_data.fetch_bars(runtime_config["pair"], timeframe, ohlcv_limit)
+        try:
+            bars = market_data.fetch_bars(runtime_config["pair"], timeframe, ohlcv_limit)
+        except Exception as error:
+            error_message = to_error_message(error)
+            if _is_market_data_maintenance_error_message(error_message):
+                run["result"] = "SKIPPED"
+                run["summary"] = "SKIPPED: market data unavailable (maintenance)"
+                run["reason"] = error_message
+                logger.warn("market data maintenance detected", {"model_id": model_id, "error": error_message})
+                return run
+            raise
         closed_bars = [bar for bar in bars if bar.close_time <= bar_close_time]
         latest_closed_bar = closed_bars[-1] if closed_bars else None
         if latest_closed_bar is None:

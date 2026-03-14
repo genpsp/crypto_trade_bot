@@ -20,6 +20,10 @@ _EXECUTION_ERROR_SKIP_MARKERS = (
     "exit slippage exceeded",
     "exit route/liquidity unavailable",
 )
+_MARKET_DATA_MAINTENANCE_MARKERS = (
+    "err-5201",
+    "maintenance",
+)
 
 
 @dataclass(frozen=True)
@@ -30,7 +34,23 @@ class SlackAlertConfig:
     duplicate_suppression_seconds: int = _DEFAULT_DUPLICATE_SUPPRESSION_SECONDS
 
 
-def is_execution_error_result(result: str | None, summary: str | None) -> bool:
+def is_market_data_maintenance_result(
+    result: str | None,
+    summary: str | None,
+    reason: str | None = None,
+) -> bool:
+    normalized_summary = (summary or "").strip().lower()
+    normalized_reason = (reason or "").strip().lower()
+    if normalized_summary.startswith("skipped: market data unavailable"):
+        return True
+    if result not in ("FAILED", "SKIPPED"):
+        return False
+    return all(marker in normalized_reason for marker in _MARKET_DATA_MAINTENANCE_MARKERS)
+
+
+def is_execution_error_result(result: str | None, summary: str | None, reason: str | None = None) -> bool:
+    if is_market_data_maintenance_result(result, summary, reason):
+        return False
     if result == "FAILED":
         return True
     if result != "SKIPPED":

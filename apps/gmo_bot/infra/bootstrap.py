@@ -18,7 +18,12 @@ from apps.gmo_bot.adapters.persistence.firestore_repo import FirestoreRepository
 from apps.gmo_bot.app.ports.execution_port import ExecutionPort
 from apps.gmo_bot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
 from apps.gmo_bot.domain.model.types import TradeRecord
-from apps.gmo_bot.infra.alerting import SlackAlertConfig, SlackNotifier, is_execution_error_result
+from apps.gmo_bot.infra.alerting import (
+    SlackAlertConfig,
+    SlackNotifier,
+    is_execution_error_result,
+    is_market_data_maintenance_result,
+)
 from apps.gmo_bot.infra.config.env import load_env
 from apps.gmo_bot.infra.config.firestore_config_repo import (
     GLOBAL_CONTROL_COLLECTION_ID,
@@ -204,10 +209,13 @@ def bootstrap() -> AppRuntime:
     def _apply_failure_streak_and_alert(result: dict[str, str | None], model_id: str) -> None:
         run_result = str(result.get("result") or "")
         summary = str(result.get("summary") or "")
+        reason = str(result.get("reason") or "")
         run_id = result.get("run_id")
         trade_id = result.get("trade_id")
 
-        if is_execution_error_result(run_result, summary):
+        market_data_maintenance = is_market_data_maintenance_result(run_result, summary, reason)
+
+        if is_execution_error_result(run_result, summary, reason):
             notifier.notify_trade_error(
                 model_id=model_id,
                 result=run_result,
@@ -217,6 +225,9 @@ def bootstrap() -> AppRuntime:
             )
 
         threshold = CONSECUTIVE_FAILURE_ALERT_THRESHOLD
+        if market_data_maintenance:
+            failure_streaks_by_model[model_id] = 0
+            return
         if run_result == "FAILED":
             streak = failure_streaks_by_model.get(model_id, 0) + 1
             failure_streaks_by_model[model_id] = streak
