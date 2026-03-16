@@ -14,3 +14,5 @@
 運用メモ:
 - まずは局所的に実装し、重複が増えてから共通化する。
 - 早すぎる抽象化は避ける。
+- VPS へ手動接続する時は `ssh root@160.251.203.188` を使わず、必ず `make ssh-gmo-vps` を使う。
+- VPS 上の確認系コマンドも `make gmo-vps-ps` / `make gmo-vps-gmo-logs` / `make gmo-vps-dex-logs` を優先する。

@@ -18,6 +18,20 @@
 - Docker / Docker Compose
 - Firestore サービスアカウント JSON
 
+## VPS接続
+
+この repo から VPS へ手動接続する時は、`ssh root@160.251.203.188` を使わず、必ず次を使います。
+
+```bash
+make ssh-gmo-vps
+```
+
+補助コマンド:
+
+- `make gmo-vps-ps`
+- `make gmo-vps-gmo-logs`
+- `make gmo-vps-dex-logs`
+
 ## 環境変数
 
 必須:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import asdict
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 import math
 import time
 from typing import Any
@@ -67,6 +68,7 @@ class GmoMarginExecutionAdapter(ExecutionPort):
 
     def submit_protective_exit_orders(self, request: SubmitProtectiveExitOrdersRequest) -> ProtectiveExitOrdersSubmission:
         symbol = PAIR_SYMBOL_MAP["SOL/JPY"]
+        rule = self.get_symbol_rule("SOL/JPY")
         settle_positions = []
         for lot in request.lots:
             normalized_size = self._normalize_size(symbol, lot["size_sol"])
@@ -75,13 +77,25 @@ class GmoMarginExecutionAdapter(ExecutionPort):
             settle_positions.append({"positionId": lot["position_id"], "size": _decimal_str(normalized_size)})
         if not settle_positions:
             raise RuntimeError("no closeable position lots")
+        normalized_take_profit_price = _round_take_profit_price(
+            request.take_profit_price,
+            rule.tick_size,
+            request.side,
+        )
+        normalized_stop_price = _round_stop_price(
+            request.stop_price,
+            rule.tick_size,
+            request.side,
+        )
+        if normalized_take_profit_price <= 0 or normalized_stop_price <= 0:
+            raise RuntimeError("protective exit price rounded to 0")
 
         take_profit_order_id = self.client.create_close_order(
             symbol=symbol,
             side=request.side,
             execution_type="LIMIT",
             settle_positions=settle_positions,
-            price=request.take_profit_price,
+            price=normalized_take_profit_price,
             time_in_force="FAS",
         )
         stop_loss_order_id = self.client.create_close_order(
@@ -89,7 +103,7 @@ class GmoMarginExecutionAdapter(ExecutionPort):
             side=request.side,
             execution_type="STOP",
             settle_positions=settle_positions,
-            price=request.stop_price,
+            price=normalized_stop_price,
             time_in_force="FAK",
         )
         return ProtectiveExitOrdersSubmission(
@@ -242,6 +256,27 @@ def _round_down_to_step(value: float, step: float) -> float:
         return 0.0
     scaled = math.floor(value / step)
     return round(scaled * step, 10)
+
+
+def _round_take_profit_price(value: float, step: float, side: str) -> float:
+    if side == "SELL":
+        return _round_price_to_step(value, step, rounding=ROUND_FLOOR)
+    return _round_price_to_step(value, step, rounding=ROUND_CEILING)
+
+
+def _round_stop_price(value: float, step: float, side: str) -> float:
+    if side == "SELL":
+        return _round_price_to_step(value, step, rounding=ROUND_CEILING)
+    return _round_price_to_step(value, step, rounding=ROUND_FLOOR)
+
+
+def _round_price_to_step(value: float, step: float, *, rounding: str) -> float:
+    if value <= 0 or step <= 0:
+        return 0.0
+    value_decimal = Decimal(str(value))
+    step_decimal = Decimal(str(step))
+    scaled = (value_decimal / step_decimal).to_integral_value(rounding=rounding)
+    return float(scaled * step_decimal)
 
 
 def _decimal_str(value: float) -> str:

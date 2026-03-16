@@ -84,6 +84,66 @@ class GmoMarginExecutionAdapterTest(unittest.TestCase):
         self.assertEqual("LIMIT", fake_client.close_order_calls[0]["execution_type"])
         self.assertEqual("STOP", fake_client.close_order_calls[1]["execution_type"])
 
+    def test_submit_protective_exit_orders_rounds_long_exit_prices_with_safe_direction(self) -> None:
+        adapter = GmoMarginExecutionAdapter(client=_FakeClient(), logger=_FakeLogger())
+        with patch.object(
+            adapter,
+            "get_symbol_rule",
+            return_value=SymbolRule(symbol="SOL_JPY", tick_size=1.0, size_step=0.01, min_order_size=0.01),
+        ):
+            adapter.submit_protective_exit_orders(
+                SubmitProtectiveExitOrdersRequest(
+                    side="SELL",
+                    lots=[{"position_id": 10, "size_sol": 0.5}],
+                    take_profit_price=15191.228,
+                    stop_price=14775.54,
+                )
+            )
+
+        fake_client = adapter.client
+        self.assertEqual(15191.0, fake_client.close_order_calls[0]["price"])
+        self.assertEqual(14776.0, fake_client.close_order_calls[1]["price"])
+
+    def test_submit_protective_exit_orders_rounds_short_exit_prices_with_safe_direction(self) -> None:
+        adapter = GmoMarginExecutionAdapter(client=_FakeClient(), logger=_FakeLogger())
+        with patch.object(
+            adapter,
+            "get_symbol_rule",
+            return_value=SymbolRule(symbol="SOL_JPY", tick_size=1.0, size_step=0.01, min_order_size=0.01),
+        ):
+            adapter.submit_protective_exit_orders(
+                SubmitProtectiveExitOrdersRequest(
+                    side="BUY",
+                    lots=[{"position_id": 10, "size_sol": 0.5}],
+                    take_profit_price=15191.228,
+                    stop_price=14775.54,
+                )
+            )
+
+        fake_client = adapter.client
+        self.assertEqual(15192.0, fake_client.close_order_calls[0]["price"])
+        self.assertEqual(14775.0, fake_client.close_order_calls[1]["price"])
+
+    def test_submit_protective_exit_orders_keeps_exact_tick_prices_with_decimal_tick(self) -> None:
+        adapter = GmoMarginExecutionAdapter(client=_FakeClient(), logger=_FakeLogger())
+        with patch.object(
+            adapter,
+            "get_symbol_rule",
+            return_value=SymbolRule(symbol="SOL_JPY", tick_size=0.1, size_step=0.01, min_order_size=0.01),
+        ):
+            adapter.submit_protective_exit_orders(
+                SubmitProtectiveExitOrdersRequest(
+                    side="BUY",
+                    lots=[{"position_id": 10, "size_sol": 0.5}],
+                    take_profit_price=0.3,
+                    stop_price=1.2,
+                )
+            )
+
+        fake_client = adapter.client
+        self.assertEqual(0.3, fake_client.close_order_calls[0]["price"])
+        self.assertEqual(1.2, fake_client.close_order_calls[1]["price"])
+
 
 if __name__ == "__main__":
     unittest.main()
