@@ -167,6 +167,10 @@ class GmoApiClient:
         data = payload.get("data")
         if isinstance(data, list):
             return [item for item in data if isinstance(item, dict)]
+        if isinstance(data, dict):
+            nested_list = data.get("list")
+            if isinstance(nested_list, list):
+                return [item for item in nested_list if isinstance(item, dict)]
         raise RuntimeError(f"GMO openPositions payload invalid for symbol={symbol}")
 
     def get_active_orders(self, symbol: str) -> list[dict[str, Any]]:
@@ -174,6 +178,10 @@ class GmoApiClient:
         data = payload.get("data")
         if isinstance(data, list):
             return [item for item in data if isinstance(item, dict)]
+        if isinstance(data, dict):
+            nested_list = data.get("list")
+            if isinstance(nested_list, list):
+                return [item for item in nested_list if isinstance(item, dict)]
         raise RuntimeError(f"GMO activeOrders payload invalid for symbol={symbol}")
 
     def cancel_order(self, order_id: int) -> None:
