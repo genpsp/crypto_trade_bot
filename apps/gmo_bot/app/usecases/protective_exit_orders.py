@@ -32,6 +32,15 @@ def has_active_protective_exit_orders(trade: TradeRecord) -> bool:
     )
 
 
+def has_active_stop_loss_order(trade: TradeRecord) -> bool:
+    execution = trade.get("execution", {})
+    if not isinstance(execution, dict):
+        return False
+    stop_loss_order_id = execution.get("stop_loss_order_id")
+    stop_loss_status = execution.get("stop_loss_order_status")
+    return isinstance(stop_loss_order_id, int) and stop_loss_status in ACTIVE_EXIT_ORDER_STATUSES
+
+
 def mark_protective_exit_orders_inactive(
     trade: TradeRecord,
     *,
@@ -42,9 +51,9 @@ def mark_protective_exit_orders_inactive(
     execution = trade.setdefault("execution", {})
     if not isinstance(execution, dict):
         return
-    if "take_profit_order_id" in execution:
+    if "take_profit_order_id" in execution or "take_profit_order_status" in execution:
         execution["take_profit_order_status"] = take_profit_status
-    if "stop_loss_order_id" in execution:
+    if "stop_loss_order_id" in execution or "stop_loss_order_status" in execution:
         execution["stop_loss_order_status"] = stop_loss_status
     if error_message is not None:
         execution["protective_exit_error"] = error_message
@@ -82,6 +91,11 @@ def arm_protective_exit_orders(
         return ArmProtectiveExitOrdersResult(status="FAILED", summary="FAILED: trade is not open")
     if has_active_protective_exit_orders(trade):
         return ArmProtectiveExitOrdersResult(status="SKIPPED", summary="SKIPPED: protective exit orders already armed")
+    if has_active_stop_loss_order(trade):
+        return ArmProtectiveExitOrdersResult(
+            status="SKIPPED",
+            summary="SKIPPED: protective stop order already armed; take profit remains client-managed",
+        )
     if getattr(dependencies.execution, "protective_exit_enabled", True) is False:
         return ArmProtectiveExitOrdersResult(status="FAILED", summary="FAILED: protective exits are disabled")
 
@@ -125,15 +139,22 @@ def arm_protective_exit_orders(
             summary=f"FAILED: protective exits not armed: {message}",
         )
 
-    execution_snapshot["take_profit_order_id"] = submission.take_profit_order.order_id
+    if submission.stop_loss_order is None:
+        return ArmProtectiveExitOrdersResult(status="FAILED", summary="FAILED: protective stop order was not created")
+
+    execution_snapshot.pop("take_profit_order_id", None)
+    execution_snapshot.pop("take_profit_order", None)
+    execution_snapshot["take_profit_order_status"] = "CLIENT_MANAGED"
     execution_snapshot["stop_loss_order_id"] = submission.stop_loss_order.order_id
-    execution_snapshot["take_profit_order_status"] = "ORDERED"
     execution_snapshot["stop_loss_order_status"] = "WAITING"
     execution_snapshot.pop("protective_exit_error", None)
-    if submission.take_profit_order.order:
-        execution_snapshot["take_profit_order"] = submission.take_profit_order.order
     if submission.stop_loss_order.order:
         execution_snapshot["stop_loss_order"] = submission.stop_loss_order.order
+    stop_order_price = None
+    if submission.stop_loss_order.order:
+        raw_stop_order_price = submission.stop_loss_order.order.get("price")
+        if isinstance(raw_stop_order_price, (int, float)):
+            stop_order_price = float(raw_stop_order_price)
 
     dependencies.persistence.update_trade(
         trade["trade_id"],
@@ -143,16 +164,17 @@ def arm_protective_exit_orders(
         "protective exit orders armed",
         {
             "trade_id": trade.get("trade_id"),
-            "take_profit_order_id": submission.take_profit_order.order_id,
+            "take_profit_order_id": None,
             "stop_loss_order_id": submission.stop_loss_order.order_id,
             "take_profit_price": round_to(take_profit_price, 6),
             "stop_price": round_to(stop_price, 6),
+            "stop_order_price": round_to(stop_order_price, 6) if stop_order_price is not None else None,
         },
     )
     return ArmProtectiveExitOrdersResult(
-        status="ARMED",
+        status="ARMED_STOP_ONLY",
         summary=(
-            "ARMED: protective exit orders placed "
-            f"(tp_order_id={submission.take_profit_order.order_id}, sl_order_id={submission.stop_loss_order.order_id})"
+            "ARMED_STOP_ONLY: protective stop order placed "
+            f"(sl_order_id={submission.stop_loss_order.order_id}); take profit remains client-managed"
         ),
     )

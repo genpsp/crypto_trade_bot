@@ -41,8 +41,8 @@ class OrderSubmission:
 
 @dataclass
 class ProtectiveExitOrdersSubmission:
-    take_profit_order: OrderSubmission
-    stop_loss_order: OrderSubmission
+    take_profit_order: OrderSubmission | None = None
+    stop_loss_order: OrderSubmission | None = None
 
 
 @dataclass

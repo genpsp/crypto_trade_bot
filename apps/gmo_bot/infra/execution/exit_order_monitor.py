@@ -63,6 +63,13 @@ class GmoExitOrderMonitor:
             return
         execution_result = context.execution._aggregate_executions(executions)  # noqa: SLF001
         close_reason = "TAKE_PROFIT" if exit_kind == "take_profit" else "STOP_LOSS"
+        execution_snapshot = trade.get("execution", {})
+        order_snapshot = (
+            execution_snapshot.get("take_profit_order") if exit_kind == "take_profit" else execution_snapshot.get("stop_loss_order")
+        )
+        close_price = _to_float(order_snapshot.get("price")) if isinstance(order_snapshot, dict) else None
+        if close_price is None:
+            close_price = float(trade["position"]["take_profit_price"] if close_reason == "TAKE_PROFIT" else trade["position"]["stop_price"])
         result = apply_confirmed_exit_result(
             logger=self.logger,
             persistence=context.persistence,
@@ -70,7 +77,7 @@ class GmoExitOrderMonitor:
             execution_result=execution_result,
             order_id=order_id,
             close_reason=close_reason,
-            close_price=float(trade["position"]["take_profit_price"] if close_reason == "TAKE_PROFIT" else trade["position"]["stop_price"]),
+            close_price=close_price,
         )
         self._cancel_sibling_order(context, trade, sibling_order_id=sibling_order_id, sibling_status_key=sibling_status_key)
         self.logger.info(

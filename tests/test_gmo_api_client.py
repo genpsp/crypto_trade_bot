@@ -63,6 +63,22 @@ class GmoApiClientOrderIdParsingTest(unittest.TestCase):
 
         post_mock.assert_called_once_with("/v1/cancelOrder", {"orderId": 12345})
 
+    def test_get_open_positions_accepts_list_payload(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        payload = {"status": 0, "data": [{"positionId": 10, "size": "0.5", "orderdSize": "0.1"}]}
+        with patch.object(client, "private_get", return_value=payload):
+            positions = client.get_open_positions("SOL_JPY")
+
+        self.assertEqual([{"positionId": 10, "size": "0.5", "orderdSize": "0.1"}], positions)
+
+    def test_get_active_orders_accepts_list_payload(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        payload = {"status": 0, "data": [{"orderId": 123, "settleType": "CLOSE"}]}
+        with patch.object(client, "private_get", return_value=payload):
+            orders = client.get_active_orders("SOL_JPY")
+
+        self.assertEqual([{"orderId": 123, "settleType": "CLOSE"}], orders)
+
 
 if __name__ == "__main__":
     unittest.main()

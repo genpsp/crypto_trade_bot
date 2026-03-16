@@ -23,6 +23,7 @@ from apps.gmo_bot.app.ports.logger_port import LoggerPort
 PAIR_SYMBOL_MAP = {"SOL/JPY": "SOL_JPY"}
 POLL_INTERVAL_SECONDS = 0.4
 SYMBOL_RULE_CACHE_TTL_SECONDS = 300
+CLOSE_ORDER_ACTIVE_STATUSES = {"ORDERED", "WAITING"}
 
 
 class GmoMarginExecutionAdapter(ExecutionPort):
@@ -69,35 +70,20 @@ class GmoMarginExecutionAdapter(ExecutionPort):
     def submit_protective_exit_orders(self, request: SubmitProtectiveExitOrdersRequest) -> ProtectiveExitOrdersSubmission:
         symbol = PAIR_SYMBOL_MAP["SOL/JPY"]
         rule = self.get_symbol_rule("SOL/JPY")
-        settle_positions = []
-        for lot in request.lots:
-            normalized_size = self._normalize_size(symbol, lot["size_sol"])
-            if normalized_size <= 0:
-                continue
-            settle_positions.append({"positionId": lot["position_id"], "size": _decimal_str(normalized_size)})
+        settle_positions = self._build_settle_positions(symbol, request.lots)
         if not settle_positions:
-            raise RuntimeError("no closeable position lots")
-        normalized_take_profit_price = _round_take_profit_price(
-            request.take_profit_price,
-            rule.tick_size,
-            request.side,
-        )
+            canceled_orders = self._cancel_conflicting_close_orders(symbol=symbol, side=request.side)
+            if canceled_orders > 0:
+                settle_positions = self._build_settle_positions(symbol, request.lots)
+        if not settle_positions:
+            raise RuntimeError("no settable position lots for protective stop order")
         normalized_stop_price = _round_stop_price(
             request.stop_price,
             rule.tick_size,
             request.side,
         )
-        if normalized_take_profit_price <= 0 or normalized_stop_price <= 0:
+        if normalized_stop_price <= 0:
             raise RuntimeError("protective exit price rounded to 0")
-
-        take_profit_order_id = self.client.create_close_order(
-            symbol=symbol,
-            side=request.side,
-            execution_type="LIMIT",
-            settle_positions=settle_positions,
-            price=normalized_take_profit_price,
-            time_in_force="FAS",
-        )
         stop_loss_order_id = self.client.create_close_order(
             symbol=symbol,
             side=request.side,
@@ -107,13 +93,9 @@ class GmoMarginExecutionAdapter(ExecutionPort):
             time_in_force="FAK",
         )
         return ProtectiveExitOrdersSubmission(
-            take_profit_order=OrderSubmission(
-                order_id=take_profit_order_id,
-                order={"order_id": take_profit_order_id},
-            ),
             stop_loss_order=OrderSubmission(
                 order_id=stop_loss_order_id,
-                order={"order_id": stop_loss_order_id},
+                order={"order_id": stop_loss_order_id, "price": normalized_stop_price},
             ),
         )
 
@@ -193,6 +175,55 @@ class GmoMarginExecutionAdapter(ExecutionPort):
             return 0.0
         return normalized
 
+    def _build_settle_positions(self, symbol: str, lots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        rule = self.get_symbol_rule("SOL/JPY")
+        open_positions = self.client.get_open_positions(symbol)
+        open_position_map: dict[int, dict[str, Any]] = {}
+        for position in open_positions:
+            position_id = position.get("positionId")
+            if isinstance(position_id, int):
+                open_position_map[position_id] = position
+
+        settle_positions: list[dict[str, Any]] = []
+        for lot in lots:
+            position_id = lot.get("position_id")
+            requested_size = _to_float(lot.get("size_sol"))
+            if not isinstance(position_id, int) or requested_size is None:
+                continue
+            normalized_requested_size = self._normalize_size(symbol, requested_size)
+            if normalized_requested_size <= 0:
+                continue
+            open_position = open_position_map.get(position_id)
+            if not isinstance(open_position, dict):
+                continue
+            actual_size = _to_float(open_position.get("size")) or 0.0
+            ordered_size = _to_float(open_position.get("orderdSize")) or 0.0
+            settable_size = _round_down_to_step(max(actual_size - ordered_size, 0.0), rule.size_step)
+            final_size = _round_down_to_step(min(normalized_requested_size, settable_size), rule.size_step)
+            if final_size <= 0:
+                continue
+            settle_positions.append({"positionId": position_id, "size": _decimal_str(final_size)})
+        return settle_positions
+
+    def _cancel_conflicting_close_orders(self, *, symbol: str, side: str) -> int:
+        canceled = 0
+        for order in self.client.get_active_orders(symbol):
+            order_side = str(order.get("side") or "").upper()
+            settle_type = str(order.get("settleType") or "").upper()
+            status = str(order.get("status") or order.get("orderStatus") or "").upper()
+            order_id = order.get("orderId")
+            if order_side != side or settle_type != "CLOSE" or status not in CLOSE_ORDER_ACTIVE_STATUSES:
+                continue
+            if not isinstance(order_id, int):
+                continue
+            self.client.cancel_order(order_id)
+            canceled += 1
+            self.logger.warn(
+                "canceled conflicting GMO close order before arming protective stop",
+                {"symbol": symbol, "side": side, "order_id": order_id, "status": status},
+            )
+        return canceled
+
     def _aggregate_executions(self, executions: list[dict[str, Any]]) -> dict[str, Any]:
         total_size = 0.0
         total_quote = 0.0
@@ -256,12 +287,6 @@ def _round_down_to_step(value: float, step: float) -> float:
         return 0.0
     scaled = math.floor(value / step)
     return round(scaled * step, 10)
-
-
-def _round_take_profit_price(value: float, step: float, side: str) -> float:
-    if side == "SELL":
-        return _round_price_to_step(value, step, rounding=ROUND_FLOOR)
-    return _round_price_to_step(value, step, rounding=ROUND_CEILING)
 
 
 def _round_stop_price(value: float, step: float, side: str) -> float:

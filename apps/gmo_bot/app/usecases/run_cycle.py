@@ -24,6 +24,7 @@ from apps.gmo_bot.app.usecases.protective_exit_orders import (
     ArmProtectiveExitOrdersInput,
     arm_protective_exit_orders,
     has_active_protective_exit_orders,
+    has_active_stop_loss_order,
 )
 from apps.gmo_bot.app.usecases.usecase_utils import to_error_message
 from apps.gmo_bot.domain.model.types import BotConfig, Direction, ModelDirection, RunRecord, TradeRecord
@@ -194,18 +195,19 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                 run["summary"] = "HOLD: protective exit orders are armed and managed by exchange"
                 return run
 
-            protective_exit_result = arm_protective_exit_orders(
-                ArmProtectiveExitOrdersDependencies(
-                    execution=execution,
-                    logger=logger,
-                    persistence=persistence,
-                ),
-                ArmProtectiveExitOrdersInput(config=runtime_config, trade=open_trade),
-            )
-            if protective_exit_result.status == "ARMED":
-                run["result"] = "HOLD"
-                run["summary"] = "HOLD: protective exit orders armed for existing open position"
-                return run
+            if not has_active_stop_loss_order(open_trade):
+                protective_exit_result = arm_protective_exit_orders(
+                    ArmProtectiveExitOrdersDependencies(
+                        execution=execution,
+                        logger=logger,
+                        persistence=persistence,
+                    ),
+                    ArmProtectiveExitOrdersInput(config=runtime_config, trade=open_trade),
+                )
+                if protective_exit_result.status == "ARMED":
+                    run["result"] = "HOLD"
+                    run["summary"] = "HOLD: protective exit orders armed for existing open position"
+                    return run
 
             mark_price = execution.get_mark_price(runtime_config["pair"])
             trigger_reason = "NONE"

@@ -23,8 +23,7 @@ class _FakeExecution:
     def submit_protective_exit_orders(self, request):
         self.protective_request = request
         return ProtectiveExitOrdersSubmission(
-            take_profit_order=OrderSubmission(order_id=456, order={"order_id": 456}),
-            stop_loss_order=OrderSubmission(order_id=789, order={"order_id": 789}),
+            stop_loss_order=OrderSubmission(order_id=789, order={"order_id": 789, "price": request.stop_price}),
         )
 
     def confirm_order(self, order_id: int, timeout_ms: int):
@@ -161,8 +160,8 @@ class GmoOpenPositionTest(unittest.TestCase):
         self.assertEqual(persistence.trade["position"]["status"], "OPEN")
         self.assertEqual(persistence.trade["position"]["quantity_sol"], 5.0)
         self.assertEqual(20000.0, persistence.trade["execution"]["entry_reference_price"])
-        self.assertEqual(456, persistence.trade["execution"]["take_profit_order_id"])
         self.assertEqual(789, persistence.trade["execution"]["stop_loss_order_id"])
+        self.assertEqual("CLIENT_MANAGED", persistence.trade["execution"]["take_profit_order_status"])
 
 
 if __name__ == "__main__":

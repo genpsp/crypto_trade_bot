@@ -70,8 +70,9 @@ class TradePlanSnapshot(TypedDict):
     r_multiple: float
 
 
-class TradeOrderSnapshot(TypedDict):
+class TradeOrderSnapshot(TypedDict, total=False):
     order_id: int
+    price: float
 
 
 class TradeResultSnapshot(TypedDict, total=False):

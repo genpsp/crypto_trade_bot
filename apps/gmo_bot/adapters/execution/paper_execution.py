@@ -63,21 +63,17 @@ class PaperExecutionAdapter(ExecutionPort):
         return OrderSubmission(order_id=order_id, order={"order_id": order_id}, result=result)
 
     def submit_protective_exit_orders(self, request: SubmitProtectiveExitOrdersRequest) -> ProtectiveExitOrdersSubmission:
-        tp_order_id = self._next_order_id()
         sl_order_id = self._next_order_id()
         self.logger.info(
-            "paper gmo protective exits simulated",
+            "paper gmo protective stop simulated",
             {
-                "tp_order_id": tp_order_id,
                 "sl_order_id": sl_order_id,
                 "side": request.side,
-                "take_profit_price": request.take_profit_price,
                 "stop_price": request.stop_price,
             },
         )
         return ProtectiveExitOrdersSubmission(
-            take_profit_order=OrderSubmission(order_id=tp_order_id, order={"order_id": tp_order_id}),
-            stop_loss_order=OrderSubmission(order_id=sl_order_id, order={"order_id": sl_order_id}),
+            stop_loss_order=OrderSubmission(order_id=sl_order_id, order={"order_id": sl_order_id, "price": request.stop_price}),
         )
 
     def confirm_order(self, order_id: int, timeout_ms: int) -> OrderConfirmation:

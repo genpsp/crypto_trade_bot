@@ -162,6 +162,20 @@ class GmoApiClient:
                 return [item for item in nested_list if isinstance(item, dict)]
         raise RuntimeError(f"GMO executions payload invalid for order_id={order_id}")
 
+    def get_open_positions(self, symbol: str) -> list[dict[str, Any]]:
+        payload = self.private_get("/v1/openPositions", {"symbol": symbol})
+        data = payload.get("data")
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+        raise RuntimeError(f"GMO openPositions payload invalid for symbol={symbol}")
+
+    def get_active_orders(self, symbol: str) -> list[dict[str, Any]]:
+        payload = self.private_get("/v1/activeOrders", {"symbol": symbol})
+        data = payload.get("data")
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+        raise RuntimeError(f"GMO activeOrders payload invalid for symbol={symbol}")
+
     def cancel_order(self, order_id: int) -> None:
         self.private_post("/v1/cancelOrder", {"orderId": order_id})
 
