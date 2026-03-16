@@ -189,6 +189,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             )
 
         effective_notional_jpy = round_to(target_size_sol * mark_price, 2)
+        trade["execution"]["entry_reference_price"] = round_to(mark_price, 6)
         trade["plan"] = {
             "summary": _build_plan_summary(
                 direction,

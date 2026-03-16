@@ -88,6 +88,8 @@ class TradeResultSnapshot(TypedDict, total=False):
 class TradeExecutionSnapshot(TypedDict, total=False):
     entry_order_id: int
     exit_order_id: int
+    entry_reference_price: float
+    exit_reference_price: float
     entry_submission_state: Literal["SUBMITTED", "CONFIRMED", "FAILED"]
     exit_submission_state: Literal["SUBMITTED", "CONFIRMED", "FAILED"]
     entry_fee_jpy: float

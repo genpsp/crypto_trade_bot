@@ -141,6 +141,7 @@ def close_position(dependencies: ClosePositionDependencies, input_data: ClosePos
     close_side = "SELL" if direction == "LONG" else "BUY"
 
     try:
+        trade["execution"]["exit_reference_price"] = round_to(input_data.close_price, 6)
         submission = execution.submit_close_order(
             SubmitCloseOrderRequest(
                 side=close_side,

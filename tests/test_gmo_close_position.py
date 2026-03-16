@@ -209,6 +209,7 @@ class GmoClosePositionTest(unittest.TestCase):
         self.assertAlmostEqual(-58.0, trade["execution"]["realized_pnl_jpy"])
         self.assertAlmostEqual(3.0, trade["execution"]["exit_fee_jpy"])
         self.assertEqual("CONFIRMED", trade["execution"]["exit_submission_state"])
+        self.assertAlmostEqual(13675.0, trade["execution"]["exit_reference_price"])
 
     def test_final_fill_closes_trade_and_keeps_cumulative_realized_pnl(self) -> None:
         trade = _build_open_trade()
@@ -239,6 +240,7 @@ class GmoClosePositionTest(unittest.TestCase):
         self.assertEqual("CLOSED", trade["position"]["status"])
         self.assertAlmostEqual(-96.0, trade["execution"]["realized_pnl_jpy"])
         self.assertAlmostEqual(4.0, trade["execution"]["exit_fee_jpy"])
+        self.assertAlmostEqual(13944.0, trade["execution"]["exit_reference_price"])
         self.assertEqual("STOP_LOSS", trade["close_reason"])
 
 

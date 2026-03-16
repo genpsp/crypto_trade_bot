@@ -137,6 +137,7 @@ class GmoOpenPositionTest(unittest.TestCase):
         self.assertEqual(persistence.trade["state"], "CONFIRMED")
         self.assertEqual(persistence.trade["position"]["status"], "OPEN")
         self.assertEqual(persistence.trade["position"]["quantity_sol"], 5.0)
+        self.assertEqual(20000.0, persistence.trade["execution"]["entry_reference_price"])
 
 
 if __name__ == "__main__":

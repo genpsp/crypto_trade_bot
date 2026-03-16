@@ -293,16 +293,17 @@ def _estimate_trade_fees_jpy(trade: dict[str, Any]) -> float:
 
 def _collect_trade_slippage_samples_bps(trade: dict[str, Any]) -> list[float]:
     position = _as_dict(trade.get("position"))
+    execution = _as_dict(trade.get("execution"))
     samples: list[float] = []
-    entry_trigger = _to_float(position.get("entry_trigger_price"))
-    entry_price = _to_float(position.get("entry_price"))
-    if entry_trigger is not None and entry_trigger > 0 and entry_price is not None:
-        samples.append(abs(entry_price - entry_trigger) / entry_trigger * 10_000)
+    entry_reference = _to_float(execution.get("entry_reference_price"))
+    entry_price = _to_float(position.get("entry_price")) or _to_float(_as_dict(execution.get("entry_result")).get("avg_fill_price"))
+    if entry_reference is not None and entry_reference > 0 and entry_price is not None:
+        samples.append(abs(entry_price - entry_reference) / entry_reference * 10_000)
 
-    exit_trigger = _to_float(position.get("exit_trigger_price"))
-    exit_price = _to_float(position.get("exit_price"))
-    if exit_trigger is not None and exit_trigger > 0 and exit_price is not None:
-        samples.append(abs(exit_price - exit_trigger) / exit_trigger * 10_000)
+    exit_reference = _to_float(execution.get("exit_reference_price"))
+    exit_price = _to_float(position.get("exit_price")) or _to_float(_as_dict(execution.get("exit_result")).get("avg_fill_price"))
+    if exit_reference is not None and exit_reference > 0 and exit_price is not None:
+        samples.append(abs(exit_price - exit_reference) / exit_reference * 10_000)
     return samples
 
 

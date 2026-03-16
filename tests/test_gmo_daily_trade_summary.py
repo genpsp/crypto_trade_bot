@@ -30,6 +30,8 @@ class GmoDailyTradeSummaryTest(unittest.TestCase):
                                 "exit_time_iso": "2026-02-25T18:00:00Z",
                             },
                             "execution": {
+                                "entry_reference_price": 13010.0,
+                                "exit_reference_price": 13240.0,
                                 "entry_fee_jpy": 3.0,
                                 "exit_fee_jpy": 4.0,
                                 "exit_result": {"filled_quote_jpy": 6625.0},
@@ -50,6 +52,8 @@ class GmoDailyTradeSummaryTest(unittest.TestCase):
                                 "exit_time_iso": "2026-02-25T19:00:00Z",
                             },
                             "execution": {
+                                "entry_reference_price": 13610.0,
+                                "exit_reference_price": 13790.0,
                                 "entry_fee_jpy": 3.0,
                                 "exit_fee_jpy": 3.0,
                                 "exit_result": {"filled_quote_jpy": 6900.0},
@@ -90,6 +94,7 @@ class GmoDailyTradeSummaryTest(unittest.TestCase):
         self.assertEqual(1, summary.failed_trades)
         self.assertEqual(1, summary.canceled_trades)
         self.assertEqual(4, summary.slippage_samples)
+        self.assertAlmostEqual(7.4596, summary.avg_slippage_bps, places=4)
 
         self.assertEqual(2, report.total_closed_trades)
         self.assertEqual(1, report.total_win_trades)
@@ -124,6 +129,8 @@ class GmoDailyTradeSummaryTest(unittest.TestCase):
                                 "exit_time_iso": "2026-03-11T04:33:00Z",
                             },
                             "execution": {
+                                "entry_reference_price": 13570.0,
+                                "exit_reference_price": 13940.0,
                                 "entry_fee_jpy": 3.0,
                                 "exit_fee_jpy": 4.0,
                                 "realized_pnl_jpy": -95.1,
@@ -168,6 +175,45 @@ class GmoDailyTradeSummaryTest(unittest.TestCase):
         self.assertEqual(1, summary.loss_trades)
         self.assertAlmostEqual(-95.1, summary.realized_pnl_jpy)
         self.assertAlmostEqual(13.0, summary.estimated_fees_jpy)
+        self.assertEqual(2, summary.slippage_samples)
+
+    def test_build_daily_trade_summary_report_ignores_legacy_trigger_based_slippage_values(self) -> None:
+        report = build_daily_trade_summary_report(
+            target_date_jst="2026-03-11",
+            generated_at_utc=datetime(2026, 3, 11, 15, 5, tzinfo=UTC),
+            model_payloads=[
+                (
+                    "gmo_ema_pullback_15m_both_v0",
+                    [
+                        {
+                            "trade_id": "legacy_trade",
+                            "direction": "LONG",
+                            "state": "CLOSED",
+                            "created_at": "2026-03-11T02:45:00Z",
+                            "position": {
+                                "quote_amount_jpy": 6500.0,
+                                "quantity_sol": 0.5,
+                                "entry_trigger_price": 13000.0,
+                                "entry_price": 13100.0,
+                                "exit_trigger_price": 13200.0,
+                                "exit_price": 13250.0,
+                                "exit_time_iso": "2026-03-11T04:33:00Z",
+                            },
+                            "execution": {
+                                "entry_fee_jpy": 3.0,
+                                "exit_fee_jpy": 3.0,
+                                "exit_result": {"filled_quote_jpy": 6625.0},
+                            },
+                        }
+                    ],
+                    [],
+                )
+            ],
+        )
+
+        summary = report.model_summaries[0]
+        self.assertEqual(0, summary.slippage_samples)
+        self.assertAlmostEqual(0.0, summary.avg_slippage_bps)
 
 
 if __name__ == "__main__":
