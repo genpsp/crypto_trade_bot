@@ -42,6 +42,27 @@ class GmoApiClientOrderIdParsingTest(unittest.TestCase):
 
         self.assertEqual([{"executionId": 1530581068, "side": "SELL"}], executions)
 
+    def test_create_ws_access_token_accepts_string_payload(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        with patch.object(client, "private_post", return_value={"status": 0, "data": "token_123"}):
+            token = client.create_ws_access_token()
+
+        self.assertEqual("token_123", token)
+
+    def test_extend_ws_access_token_accepts_null_payload(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        with patch.object(client, "private_put", return_value={"status": 0, "data": None}) as put_mock:
+            client.extend_ws_access_token("token_123")
+
+        put_mock.assert_called_once_with("/v1/ws-auth", {"token": "token_123"})
+
+    def test_cancel_order_posts_order_id(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        with patch.object(client, "private_post", return_value={"status": 0, "data": None}) as post_mock:
+            client.cancel_order(12345)
+
+        post_mock.assert_called_once_with("/v1/cancelOrder", {"orderId": 12345})
+
 
 if __name__ == "__main__":
     unittest.main()

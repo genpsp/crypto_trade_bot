@@ -95,6 +95,10 @@ def _build_open_trade() -> TradeRecord:
             "entry_fee_jpy": 3.0,
             "entry_order_id": 8218604890,
             "entry_order": {"order_id": 8218604890},
+            "take_profit_order_id": 8218604891,
+            "take_profit_order_status": "ORDERED",
+            "stop_loss_order_id": 8218604892,
+            "stop_loss_order_status": "WAITING",
         },
         "position": {
             "status": "OPEN",
@@ -112,6 +116,9 @@ def _build_open_trade() -> TradeRecord:
 
 
 class _PartialCloseExecution:
+    def __init__(self) -> None:
+        self.canceled_orders: list[int] = []
+
     def submit_close_order(self, request):
         _ = request
         return OrderSubmission(order_id=8218873898, order={"order_id": 8218873898})
@@ -144,8 +151,22 @@ class _PartialCloseExecution:
         _ = pair
         raise NotImplementedError
 
+    def cancel_order(self, order_id: int) -> None:
+        self.canceled_orders.append(order_id)
+
+    def get_order(self, order_id: int):
+        _ = order_id
+        return None
+
+    def get_executions(self, order_id: int):
+        _ = order_id
+        return []
+
 
 class _FinalCloseExecution:
+    def __init__(self) -> None:
+        self.canceled_orders: list[int] = []
+
     def submit_close_order(self, request):
         _ = request
         return OrderSubmission(order_id=8219000000, order={"order_id": 8219000000})
@@ -178,15 +199,27 @@ class _FinalCloseExecution:
         _ = pair
         raise NotImplementedError
 
+    def cancel_order(self, order_id: int) -> None:
+        self.canceled_orders.append(order_id)
+
+    def get_order(self, order_id: int):
+        _ = order_id
+        return None
+
+    def get_executions(self, order_id: int):
+        _ = order_id
+        return []
+
 
 class GmoClosePositionTest(unittest.TestCase):
     def test_partial_fill_keeps_trade_open_and_accumulates_realized_pnl(self) -> None:
         trade = _build_open_trade()
         persistence = _FakePersistence(trade)
+        execution = _PartialCloseExecution()
 
         result = close_position(
             ClosePositionDependencies(
-                execution=_PartialCloseExecution(),
+                execution=execution,
                 lock=object(),  # unused
                 logger=_FakeLogger(),
                 persistence=persistence,
@@ -210,6 +243,9 @@ class GmoClosePositionTest(unittest.TestCase):
         self.assertAlmostEqual(3.0, trade["execution"]["exit_fee_jpy"])
         self.assertEqual("CONFIRMED", trade["execution"]["exit_submission_state"])
         self.assertAlmostEqual(13675.0, trade["execution"]["exit_reference_price"])
+        self.assertEqual([8218604891, 8218604892], execution.canceled_orders)
+        self.assertEqual("INACTIVE", trade["execution"]["take_profit_order_status"])
+        self.assertEqual("INACTIVE", trade["execution"]["stop_loss_order_status"])
 
     def test_final_fill_closes_trade_and_keeps_cumulative_realized_pnl(self) -> None:
         trade = _build_open_trade()
@@ -219,10 +255,11 @@ class GmoClosePositionTest(unittest.TestCase):
         trade["execution"]["realized_pnl_jpy"] = -58.0
         trade["execution"]["exit_fee_jpy"] = 3.0
         persistence = _FakePersistence(trade)
+        execution = _FinalCloseExecution()
 
         result = close_position(
             ClosePositionDependencies(
-                execution=_FinalCloseExecution(),
+                execution=execution,
                 lock=object(),  # unused
                 logger=_FakeLogger(),
                 persistence=persistence,
@@ -242,6 +279,9 @@ class GmoClosePositionTest(unittest.TestCase):
         self.assertAlmostEqual(4.0, trade["execution"]["exit_fee_jpy"])
         self.assertAlmostEqual(13944.0, trade["execution"]["exit_reference_price"])
         self.assertEqual("STOP_LOSS", trade["close_reason"])
+        self.assertEqual([8218604891, 8218604892], execution.canceled_orders)
+        self.assertEqual("INACTIVE", trade["execution"]["take_profit_order_status"])
+        self.assertEqual("INACTIVE", trade["execution"]["stop_loss_order_status"])
 
 
 if __name__ == "__main__":

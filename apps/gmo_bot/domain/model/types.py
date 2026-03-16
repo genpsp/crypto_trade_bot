@@ -88,8 +88,12 @@ class TradeResultSnapshot(TypedDict, total=False):
 class TradeExecutionSnapshot(TypedDict, total=False):
     entry_order_id: int
     exit_order_id: int
+    take_profit_order_id: int
+    stop_loss_order_id: int
     entry_reference_price: float
     exit_reference_price: float
+    take_profit_order_status: str
+    stop_loss_order_status: str
     entry_submission_state: Literal["SUBMITTED", "CONFIRMED", "FAILED"]
     exit_submission_state: Literal["SUBMITTED", "CONFIRMED", "FAILED"]
     entry_fee_jpy: float
@@ -97,10 +101,13 @@ class TradeExecutionSnapshot(TypedDict, total=False):
     realized_pnl_jpy: float
     entry_error: str
     exit_error: str
+    protective_exit_error: str
     entry_order: TradeOrderSnapshot
     entry_result: TradeResultSnapshot
     exit_order: TradeOrderSnapshot
     exit_result: TradeResultSnapshot
+    take_profit_order: TradeOrderSnapshot
+    stop_loss_order: TradeOrderSnapshot
 
 
 class TradePositionSnapshot(TypedDict, total=False):

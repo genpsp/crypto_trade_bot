@@ -25,6 +25,7 @@ from apps.gmo_bot.infra.alerting import (
     is_market_data_maintenance_result,
 )
 from apps.gmo_bot.infra.config.env import load_env
+from apps.gmo_bot.infra.execution.exit_order_monitor import ExitMonitorContext, GmoExitOrderMonitor
 from apps.gmo_bot.infra.config.firestore_config_repo import (
     GLOBAL_CONTROL_COLLECTION_ID,
     GLOBAL_CONTROL_DOC_ID,
@@ -39,6 +40,7 @@ CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 3
 STALE_CYCLE_ALERT_MINUTES = 10
 DUPLICATE_ALERT_SUPPRESSION_SECONDS = 300
 RUNTIME_REFRESH_FALLBACK_INTERVAL_SECONDS = 900
+EXIT_FALLBACK_POLL_INTERVAL_SECONDS = 10
 
 
 @dataclass
@@ -85,6 +87,21 @@ def bootstrap() -> AppRuntime:
     market_data = OhlcvProvider(client=api_client, redis=redis)
     paper_execution: ExecutionPort = PaperExecutionAdapter(logger)
     live_execution: ExecutionPort = GmoMarginExecutionAdapter(api_client, logger)
+    exit_monitor = GmoExitOrderMonitor(
+        api_client=api_client,
+        logger=logger,
+        context_provider=lambda: [
+            ExitMonitorContext(
+                model_id=context.model_id,
+                pair=context.pair,
+                execution=context.execution,
+                persistence=context.persistence,
+                lock=context.lock,
+            )
+            for context in _active_model_contexts()
+            if hasattr(context.execution, "cancel_order") and hasattr(context.execution, "get_executions")
+        ],
+    )
 
     model_contexts: dict[str, ModelRuntimeContext] = {}
     runtime_specs: dict[str, ModelRuntimeSpec] = {}
@@ -115,6 +132,8 @@ def bootstrap() -> AppRuntime:
     cycle_state_lock = threading.Lock()
     watchdog_stop_event = threading.Event()
     watchdog_thread: threading.Thread | None = None
+    exit_fallback_stop_event = threading.Event()
+    exit_fallback_thread: threading.Thread | None = None
     warned_no_enabled_models = False
 
     def _build_runtime_summary(spec: ModelRuntimeSpec) -> dict[str, str]:
@@ -414,6 +433,16 @@ def bootstrap() -> AppRuntime:
                     model_ids=sorted(runtime_specs.keys()),
                 )
 
+    def _exit_fallback_loop() -> None:
+        while not exit_fallback_stop_event.wait(EXIT_FALLBACK_POLL_INTERVAL_SECONDS):
+            if getattr(live_execution, "protective_exit_enabled", True):
+                continue
+            _refresh_runtime_if_needed()
+            _refresh_pause_if_needed()
+            pause_all = bool(runtime_pause_state)
+            for context in _active_model_contexts():
+                _run_model_cycle(context, pause_all)
+
     def _run_model_cycle(context: ModelRuntimeContext, pause_all: bool) -> None:
         open_trade = context.persistence.find_open_trade(context.pair)
         now = datetime.now(tz=UTC)
@@ -460,10 +489,17 @@ def bootstrap() -> AppRuntime:
     cron_controller: CronController | None = None
 
     def start() -> None:
-        nonlocal cron_controller, watchdog_thread
+        nonlocal cron_controller, watchdog_thread, exit_fallback_thread
         _refresh_runtime_if_needed(force=True)
         _refresh_pause_if_needed(force=True)
         _start_firestore_watchers()
+        if hasattr(live_execution, "set_protective_exit_enabled"):
+            try:
+                live_execution.set_protective_exit_enabled(True)
+                exit_monitor.start()
+            except Exception as error:
+                live_execution.set_protective_exit_enabled(False)
+                logger.warn("gmo exit websocket monitor disabled; falling back to polling exits", {"error": str(error)})
         logger.info("bot startup: run first cycle immediately")
         _run_all_models()
         cron_controller = create_cron_cycle(_run_all_models, logger)
@@ -471,18 +507,30 @@ def bootstrap() -> AppRuntime:
         watchdog_stop_event.clear()
         watchdog_thread = threading.Thread(target=_watchdog_loop, name="gmo-bot-watchdog", daemon=True)
         watchdog_thread.start()
+        exit_fallback_stop_event.clear()
+        exit_fallback_thread = threading.Thread(
+            target=_exit_fallback_loop,
+            name="gmo-bot-exit-fallback",
+            daemon=True,
+        )
+        exit_fallback_thread.start()
         notifier.notify_startup(_current_runtime_summaries())
 
     def stop() -> None:
-        nonlocal cron_controller, watchdog_thread
+        nonlocal cron_controller, watchdog_thread, exit_fallback_thread
         notifier.notify_shutdown(reason="shutdown signal received")
+        exit_monitor.stop()
         watchdog_stop_event.set()
+        exit_fallback_stop_event.set()
         if cron_controller is not None:
             cron_controller.stop()
             cron_controller = None
         if watchdog_thread is not None:
             watchdog_thread.join(timeout=2)
             watchdog_thread = None
+        if exit_fallback_thread is not None:
+            exit_fallback_thread.join(timeout=2)
+            exit_fallback_thread = None
         _stop_firestore_watchers()
         logger.info("bot stopped")
 

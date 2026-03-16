@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from dataclasses import dataclass
+from typing import Any, Literal, Protocol
 
 from apps.gmo_bot.domain.model.types import PositionLotSnapshot, TradeOrderSnapshot, TradeResultSnapshot
 
@@ -25,10 +25,24 @@ class SubmitCloseOrderRequest:
 
 
 @dataclass
+class SubmitProtectiveExitOrdersRequest:
+    side: OrderSide
+    lots: list[PositionLotSnapshot]
+    take_profit_price: float
+    stop_price: float
+
+
+@dataclass
 class OrderSubmission:
     order_id: int
     order: TradeOrderSnapshot | None = None
     result: TradeResultSnapshot | None = None
+
+
+@dataclass
+class ProtectiveExitOrdersSubmission:
+    take_profit_order: OrderSubmission
+    stop_loss_order: OrderSubmission
 
 
 @dataclass
@@ -51,7 +65,18 @@ class ExecutionPort(Protocol):
 
     def submit_close_order(self, request: SubmitCloseOrderRequest) -> OrderSubmission: ...
 
+    def submit_protective_exit_orders(
+        self,
+        request: SubmitProtectiveExitOrdersRequest,
+    ) -> ProtectiveExitOrdersSubmission: ...
+
     def confirm_order(self, order_id: int, timeout_ms: int) -> OrderConfirmation: ...
+
+    def cancel_order(self, order_id: int) -> None: ...
+
+    def get_order(self, order_id: int) -> dict[str, Any] | None: ...
+
+    def get_executions(self, order_id: int) -> list[dict[str, Any]]: ...
 
     def get_mark_price(self, pair: str) -> float: ...
 

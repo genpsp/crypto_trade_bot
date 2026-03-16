@@ -15,6 +15,11 @@ from apps.gmo_bot.app.ports.execution_port import ExecutionPort, SubmitEntryOrde
 from apps.gmo_bot.app.ports.lock_port import LockPort
 from apps.gmo_bot.app.ports.logger_port import LoggerPort
 from apps.gmo_bot.app.ports.persistence_port import PersistencePort
+from apps.gmo_bot.app.usecases.protective_exit_orders import (
+    ArmProtectiveExitOrdersDependencies,
+    ArmProtectiveExitOrdersInput,
+    arm_protective_exit_orders,
+)
 from apps.gmo_bot.app.usecases.usecase_utils import now_iso, strip_none, summarize_error_for_log, to_error_message
 from apps.gmo_bot.domain.model.trade_state import assert_trade_state_transition
 from apps.gmo_bot.domain.model.types import BotConfig, Direction, EntrySignalDecision, TradeRecord, TradeState
@@ -301,6 +306,14 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             trade["position"]["take_profit_price"],
         )
         move_state("CONFIRMED")
+        protective_exit_result = arm_protective_exit_orders(
+            ArmProtectiveExitOrdersDependencies(
+                execution=execution,
+                logger=logger,
+                persistence=persistence,
+            ),
+            ArmProtectiveExitOrdersInput(config=config, trade=trade),
+        )
         logger.info(
             "gmo trade opened",
             {
@@ -319,7 +332,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             trade_id=trade_id,
             summary=(
                 f"OPENED: order_id={submission.order_id}, qty={trade['position']['quantity_sol']} SOL, "
-                f"direction={direction}"
+                f"direction={direction}, protective_exits={protective_exit_result.status}"
             ),
         )
     except Exception as error:

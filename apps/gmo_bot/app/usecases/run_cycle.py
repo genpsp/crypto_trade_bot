@@ -19,6 +19,12 @@ from apps.gmo_bot.app.ports.market_data_port import MarketDataPort
 from apps.gmo_bot.app.ports.persistence_port import PersistencePort
 from apps.gmo_bot.app.usecases.close_position import ClosePositionDependencies, ClosePositionInput, close_position
 from apps.gmo_bot.app.usecases.open_position import OpenPositionDependencies, OpenPositionInput, open_position
+from apps.gmo_bot.app.usecases.protective_exit_orders import (
+    ArmProtectiveExitOrdersDependencies,
+    ArmProtectiveExitOrdersInput,
+    arm_protective_exit_orders,
+    has_active_protective_exit_orders,
+)
 from apps.gmo_bot.app.usecases.usecase_utils import to_error_message
 from apps.gmo_bot.domain.model.types import BotConfig, Direction, ModelDirection, RunRecord, TradeRecord
 from apps.gmo_bot.domain.strategy.registry import evaluate_strategy_for_model
@@ -183,6 +189,24 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
         open_trade = dependencies.prefetched_open_trade if dependencies.use_prefetched_open_trade else persistence.find_open_trade(runtime_config["pair"])
         if open_trade:
             run["trade_id"] = open_trade["trade_id"]
+            if has_active_protective_exit_orders(open_trade):
+                run["result"] = "HOLD"
+                run["summary"] = "HOLD: protective exit orders are armed and managed by exchange"
+                return run
+
+            protective_exit_result = arm_protective_exit_orders(
+                ArmProtectiveExitOrdersDependencies(
+                    execution=execution,
+                    logger=logger,
+                    persistence=persistence,
+                ),
+                ArmProtectiveExitOrdersInput(config=runtime_config, trade=open_trade),
+            )
+            if protective_exit_result.status == "ARMED":
+                run["result"] = "HOLD"
+                run["summary"] = "HOLD: protective exit orders armed for existing open position"
+                return run
+
             mark_price = execution.get_mark_price(runtime_config["pair"])
             trigger_reason = "NONE"
             trade_direction = open_trade.get("direction", runtime_config["direction"])

@@ -6,8 +6,10 @@ from apps.gmo_bot.app.ports.execution_port import (
     ExecutionPort,
     OrderConfirmation,
     OrderSubmission,
+    ProtectiveExitOrdersSubmission,
     SubmitCloseOrderRequest,
     SubmitEntryOrderRequest,
+    SubmitProtectiveExitOrdersRequest,
     SymbolRule,
 )
 from apps.gmo_bot.app.ports.logger_port import LoggerPort
@@ -60,10 +62,39 @@ class PaperExecutionAdapter(ExecutionPort):
         )
         return OrderSubmission(order_id=order_id, order={"order_id": order_id}, result=result)
 
+    def submit_protective_exit_orders(self, request: SubmitProtectiveExitOrdersRequest) -> ProtectiveExitOrdersSubmission:
+        tp_order_id = self._next_order_id()
+        sl_order_id = self._next_order_id()
+        self.logger.info(
+            "paper gmo protective exits simulated",
+            {
+                "tp_order_id": tp_order_id,
+                "sl_order_id": sl_order_id,
+                "side": request.side,
+                "take_profit_price": request.take_profit_price,
+                "stop_price": request.stop_price,
+            },
+        )
+        return ProtectiveExitOrdersSubmission(
+            take_profit_order=OrderSubmission(order_id=tp_order_id, order={"order_id": tp_order_id}),
+            stop_loss_order=OrderSubmission(order_id=sl_order_id, order={"order_id": sl_order_id}),
+        )
+
     def confirm_order(self, order_id: int, timeout_ms: int) -> OrderConfirmation:
         _ = order_id
         _ = timeout_ms
         return OrderConfirmation(confirmed=True)
+
+    def cancel_order(self, order_id: int) -> None:
+        self.logger.info("paper gmo cancel simulated", {"order_id": order_id})
+
+    def get_order(self, order_id: int):
+        _ = order_id
+        return None
+
+    def get_executions(self, order_id: int):
+        _ = order_id
+        return []
 
     def get_mark_price(self, pair: str) -> float:
         if pair != "SOL/JPY":

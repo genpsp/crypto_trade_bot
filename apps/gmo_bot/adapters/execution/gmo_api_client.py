@@ -39,6 +39,9 @@ class GmoApiClient:
     def private_post(self, path: str, body: dict[str, Any]) -> Any:
         return self._request("POST", self.private_base_url, path, body=body, private=True)
 
+    def private_put(self, path: str, body: dict[str, Any]) -> Any:
+        return self._request("PUT", self.private_base_url, path, body=body, private=True)
+
     def get_ticker(self, symbol: str) -> dict[str, Any]:
         payload = self.public_get("/v1/ticker", {"symbol": symbol})
         data = payload.get("data")
@@ -75,6 +78,22 @@ class GmoApiClient:
         if isinstance(data, dict):
             return data
         raise RuntimeError("GMO margin payload invalid")
+
+    def create_ws_access_token(self) -> str:
+        payload = self.private_post("/v1/ws-auth", {})
+        data = payload.get("data")
+        if isinstance(data, str) and data.strip():
+            return data
+        raise RuntimeError("GMO /v1/ws-auth payload invalid")
+
+    def extend_ws_access_token(self, token: str) -> None:
+        payload = self.private_put("/v1/ws-auth", {"token": token})
+        data = payload.get("data")
+        if isinstance(data, str) and data == token:
+            return
+        if data is None:
+            return
+        raise RuntimeError("GMO /v1/ws-auth refresh payload invalid")
 
     def create_order(
         self,
@@ -142,6 +161,9 @@ class GmoApiClient:
             if isinstance(nested_list, list):
                 return [item for item in nested_list if isinstance(item, dict)]
         raise RuntimeError(f"GMO executions payload invalid for order_id={order_id}")
+
+    def cancel_order(self, order_id: int) -> None:
+        self.private_post("/v1/cancelOrder", {"orderId": order_id})
 
     def _request(
         self,

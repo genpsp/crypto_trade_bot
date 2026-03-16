@@ -105,6 +105,14 @@ class _FakeThread:
         return None
 
 
+class _FakeLiveExecution:
+    def __init__(self) -> None:
+        self.protective_exit_enabled = True
+
+    def set_protective_exit_enabled(self, enabled: bool) -> None:
+        self.protective_exit_enabled = enabled
+
+
 class _StrictFakeNotifier:
     instances: list["_StrictFakeNotifier"] = []
 
@@ -227,6 +235,34 @@ class _StrictFakeNotifier:
 
 
 class GmoBootstrapNotificationsTest(unittest.TestCase):
+    def test_websocket_monitor_failure_disables_protective_exits_for_fallback_polling(self) -> None:
+        _StrictFakeNotifier.instances.clear()
+        live_execution = _FakeLiveExecution()
+        with (
+            patch("apps.gmo_bot.infra.bootstrap.load_env", return_value=_FakeEnv()),
+            patch("apps.gmo_bot.infra.bootstrap.create_logger", return_value=_FakeLogger()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreClient", _FakeFirestoreClient),
+            patch("apps.gmo_bot.infra.bootstrap.Redis.from_url", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreConfigRepository", return_value=_FakeConfigRepo()),
+            patch("apps.gmo_bot.infra.bootstrap.GmoApiClient", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.OhlcvProvider", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.PaperExecutionAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.GmoMarginExecutionAdapter", return_value=live_execution),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreRepository", return_value=_FakePersistence()),
+            patch("apps.gmo_bot.infra.bootstrap.RedisLockAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.SlackNotifier", _StrictFakeNotifier),
+            patch("apps.gmo_bot.infra.bootstrap.create_cron_cycle", return_value=_FakeCronController()),
+            patch("apps.gmo_bot.infra.bootstrap.run_cycle", return_value={"result": "NO_SIGNAL", "summary": "NO_SIGNAL"}),
+            patch("apps.gmo_bot.infra.bootstrap.threading.Thread", _FakeThread),
+            patch("apps.gmo_bot.infra.bootstrap._should_execute_cycle", return_value=False),
+            patch("apps.gmo_bot.infra.bootstrap.GmoExitOrderMonitor.start", side_effect=RuntimeError("ws down")),
+        ):
+            runtime = bootstrap()
+            runtime.start()
+            runtime.stop()
+
+        self.assertFalse(live_execution.protective_exit_enabled)
+
     def test_market_data_maintenance_failure_does_not_notify_trade_error_or_streak(self) -> None:
         _StrictFakeNotifier.instances.clear()
         with (

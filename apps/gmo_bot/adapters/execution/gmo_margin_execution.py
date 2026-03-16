@@ -11,8 +11,10 @@ from apps.gmo_bot.app.ports.execution_port import (
     ExecutionPort,
     OrderConfirmation,
     OrderSubmission,
+    ProtectiveExitOrdersSubmission,
     SubmitCloseOrderRequest,
     SubmitEntryOrderRequest,
+    SubmitProtectiveExitOrdersRequest,
     SymbolRule,
 )
 from apps.gmo_bot.app.ports.logger_port import LoggerPort
@@ -27,6 +29,10 @@ class GmoMarginExecutionAdapter(ExecutionPort):
         self.client = client
         self.logger = logger
         self._symbol_rule_cache: dict[str, tuple[float, SymbolRule]] = {}
+        self.protective_exit_enabled = True
+
+    def set_protective_exit_enabled(self, enabled: bool) -> None:
+        self.protective_exit_enabled = enabled
 
     def submit_entry_order(self, request: SubmitEntryOrderRequest) -> OrderSubmission:
         symbol = PAIR_SYMBOL_MAP["SOL/JPY"]
@@ -58,6 +64,44 @@ class GmoMarginExecutionAdapter(ExecutionPort):
             settle_positions=settle_positions,
         )
         return OrderSubmission(order_id=order_id, order={"order_id": order_id})
+
+    def submit_protective_exit_orders(self, request: SubmitProtectiveExitOrdersRequest) -> ProtectiveExitOrdersSubmission:
+        symbol = PAIR_SYMBOL_MAP["SOL/JPY"]
+        settle_positions = []
+        for lot in request.lots:
+            normalized_size = self._normalize_size(symbol, lot["size_sol"])
+            if normalized_size <= 0:
+                continue
+            settle_positions.append({"positionId": lot["position_id"], "size": _decimal_str(normalized_size)})
+        if not settle_positions:
+            raise RuntimeError("no closeable position lots")
+
+        take_profit_order_id = self.client.create_close_order(
+            symbol=symbol,
+            side=request.side,
+            execution_type="LIMIT",
+            settle_positions=settle_positions,
+            price=request.take_profit_price,
+            time_in_force="FAS",
+        )
+        stop_loss_order_id = self.client.create_close_order(
+            symbol=symbol,
+            side=request.side,
+            execution_type="STOP",
+            settle_positions=settle_positions,
+            price=request.stop_price,
+            time_in_force="FAK",
+        )
+        return ProtectiveExitOrdersSubmission(
+            take_profit_order=OrderSubmission(
+                order_id=take_profit_order_id,
+                order={"order_id": take_profit_order_id},
+            ),
+            stop_loss_order=OrderSubmission(
+                order_id=stop_loss_order_id,
+                order={"order_id": stop_loss_order_id},
+            ),
+        )
 
     def confirm_order(self, order_id: int, timeout_ms: int) -> OrderConfirmation:
         deadline = time.time() + (timeout_ms / 1000)
@@ -98,6 +142,15 @@ class GmoMarginExecutionAdapter(ExecutionPort):
         if not isinstance(available_amount, str):
             raise RuntimeError("GMO availableAmount is invalid")
         return float(available_amount)
+
+    def cancel_order(self, order_id: int) -> None:
+        self.client.cancel_order(order_id)
+
+    def get_order(self, order_id: int) -> dict[str, Any] | None:
+        return self.client.get_order(order_id)
+
+    def get_executions(self, order_id: int) -> list[dict[str, Any]]:
+        return self.client.get_executions(order_id)
 
     def get_symbol_rule(self, pair: str) -> SymbolRule:
         symbol = PAIR_SYMBOL_MAP[pair]

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from apps.gmo_bot.app.ports.execution_port import OrderConfirmation, OrderSubmission, SymbolRule
+from apps.gmo_bot.app.ports.execution_port import (
+    OrderConfirmation,
+    OrderSubmission,
+    ProtectiveExitOrdersSubmission,
+    SymbolRule,
+)
 from apps.gmo_bot.app.usecases.open_position import OpenPositionDependencies, OpenPositionInput, open_position
 from apps.gmo_bot.domain.model.types import BotConfig, EntrySignalDecision, TradeRecord
 
@@ -14,6 +19,13 @@ class _FakeExecution:
 
     def submit_close_order(self, request):
         raise NotImplementedError
+
+    def submit_protective_exit_orders(self, request):
+        self.protective_request = request
+        return ProtectiveExitOrdersSubmission(
+            take_profit_order=OrderSubmission(order_id=456, order={"order_id": 456}),
+            stop_loss_order=OrderSubmission(order_id=789, order={"order_id": 789}),
+        )
 
     def confirm_order(self, order_id: int, timeout_ms: int):
         _ = order_id
@@ -40,6 +52,17 @@ class _FakeExecution:
 
     def get_symbol_rule(self, pair: str) -> SymbolRule:
         return SymbolRule(symbol="SOL_JPY", tick_size=1.0, size_step=0.01, min_order_size=0.01)
+
+    def cancel_order(self, order_id: int) -> None:
+        _ = order_id
+
+    def get_order(self, order_id: int):
+        _ = order_id
+        return None
+
+    def get_executions(self, order_id: int):
+        _ = order_id
+        return []
 
 
 class _FakePersistence:
@@ -138,6 +161,8 @@ class GmoOpenPositionTest(unittest.TestCase):
         self.assertEqual(persistence.trade["position"]["status"], "OPEN")
         self.assertEqual(persistence.trade["position"]["quantity_sol"], 5.0)
         self.assertEqual(20000.0, persistence.trade["execution"]["entry_reference_price"])
+        self.assertEqual(456, persistence.trade["execution"]["take_profit_order_id"])
+        self.assertEqual(789, persistence.trade["execution"]["stop_loss_order_id"])
 
 
 if __name__ == "__main__":
