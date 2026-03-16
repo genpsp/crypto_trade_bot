@@ -18,6 +18,7 @@ PRIVATE_WS_URL_BASE = "wss://api.coin.z.com/ws/private/v1"
 DEFAULT_CHANNELS = ("orderEvents", "executionEvents")
 TOKEN_REFRESH_SECONDS = 45 * 60
 RECONNECT_DELAY_SECONDS = 3.0
+SUBSCRIBE_INTERVAL_SECONDS = 1.1
 
 
 class GmoPrivateWebSocketClient:
@@ -103,7 +104,9 @@ class GmoPrivateWebSocketClient:
                 self.logger.warn("gmo private websocket token refresh failed", {"error": str(error)})
 
     def _on_open(self, ws_app: Any) -> None:
-        for channel in self.channels:
+        for index, channel in enumerate(self.channels):
+            if index > 0:
+                time.sleep(SUBSCRIBE_INTERVAL_SECONDS)
             ws_app.send(json.dumps({"command": "subscribe", "channel": channel}))
         self.logger.info("gmo private websocket subscribed", {"channels": list(self.channels)})
 
