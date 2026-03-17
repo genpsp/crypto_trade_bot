@@ -41,6 +41,7 @@ STALE_CYCLE_ALERT_MINUTES = 10
 DUPLICATE_ALERT_SUPPRESSION_SECONDS = 300
 RUNTIME_REFRESH_FALLBACK_INTERVAL_SECONDS = 900
 EXIT_FALLBACK_POLL_INTERVAL_SECONDS = 10
+OPEN_TRADE_POLL_INTERVAL_SECONDS = 5
 
 
 @dataclass
@@ -75,6 +76,12 @@ def _should_execute_cycle(*, is_five_minute_window: bool, has_open_trade: bool, 
     if is_five_minute_window:
         return True
     return has_open_trade
+
+
+def _should_log_cycle_result(*, run_result: str, high_frequency_poll: bool) -> bool:
+    if not high_frequency_poll:
+        return True
+    return run_result != "HOLD"
 
 
 def bootstrap() -> AppRuntime:
@@ -134,6 +141,8 @@ def bootstrap() -> AppRuntime:
     watchdog_thread: threading.Thread | None = None
     exit_fallback_stop_event = threading.Event()
     exit_fallback_thread: threading.Thread | None = None
+    open_trade_poll_stop_event = threading.Event()
+    open_trade_poll_thread: threading.Thread | None = None
     warned_no_enabled_models = False
 
     def _build_runtime_summary(spec: ModelRuntimeSpec) -> dict[str, str]:
@@ -443,8 +452,15 @@ def bootstrap() -> AppRuntime:
             for context in _active_model_contexts():
                 _run_model_cycle(context, pause_all)
 
-    def _run_model_cycle(context: ModelRuntimeContext, pause_all: bool) -> None:
-        open_trade = context.persistence.find_open_trade(context.pair)
+    def _run_model_cycle(
+        context: ModelRuntimeContext,
+        pause_all: bool,
+        *,
+        prefetched_open_trade: TradeRecord | None = None,
+        use_prefetched_open_trade: bool = False,
+        high_frequency_poll: bool = False,
+    ) -> None:
+        open_trade = prefetched_open_trade if use_prefetched_open_trade else context.persistence.find_open_trade(context.pair)
         now = datetime.now(tz=UTC)
         is_five_minute_window = now.minute % 5 == 0
         if not _should_execute_cycle(
@@ -461,22 +477,24 @@ def bootstrap() -> AppRuntime:
                 market_data=market_data,
                 persistence=context.persistence,
                 model_id=context.model_id,
-                prefetched_open_trade=open_trade,
-                use_prefetched_open_trade=True,
+                prefetched_open_trade=open_trade if use_prefetched_open_trade else None,
+                use_prefetched_open_trade=use_prefetched_open_trade,
             )
         )
         _apply_failure_streak_and_alert(result, context.model_id)
         _maybe_notify_trade_closed(context, result)
-        logger.info(
-            "run_cycle finished",
-            {
-                "model_id": context.model_id,
-                "run_id": result.get("run_id"),
-                "result": result.get("result"),
-                "summary": result.get("summary"),
-                "trade_id": result.get("trade_id"),
-            },
-        )
+        run_result = str(result.get("result") or "")
+        if _should_log_cycle_result(run_result=run_result, high_frequency_poll=high_frequency_poll):
+            logger.info(
+                "run_cycle finished",
+                {
+                    "model_id": context.model_id,
+                    "run_id": result.get("run_id"),
+                    "result": result.get("result"),
+                    "summary": result.get("summary"),
+                    "trade_id": result.get("trade_id"),
+                },
+            )
 
     def _run_all_models() -> None:
         _refresh_runtime_if_needed()
@@ -486,10 +504,29 @@ def bootstrap() -> AppRuntime:
             _run_model_cycle(context, pause_all)
         _mark_cycle_completed()
 
+    def _open_trade_poll_loop() -> None:
+        while not open_trade_poll_stop_event.wait(OPEN_TRADE_POLL_INTERVAL_SECONDS):
+            if not getattr(live_execution, "protective_exit_enabled", True):
+                continue
+            _refresh_runtime_if_needed()
+            _refresh_pause_if_needed()
+            pause_all = bool(runtime_pause_state)
+            for context in _active_model_contexts():
+                open_trade = context.persistence.find_open_trade(context.pair)
+                if open_trade is None:
+                    continue
+                _run_model_cycle(
+                    context,
+                    pause_all,
+                    prefetched_open_trade=open_trade,
+                    use_prefetched_open_trade=True,
+                    high_frequency_poll=True,
+                )
+
     cron_controller: CronController | None = None
 
     def start() -> None:
-        nonlocal cron_controller, watchdog_thread, exit_fallback_thread
+        nonlocal cron_controller, watchdog_thread, exit_fallback_thread, open_trade_poll_thread
         _refresh_runtime_if_needed(force=True)
         _refresh_pause_if_needed(force=True)
         _start_firestore_watchers()
@@ -514,14 +551,22 @@ def bootstrap() -> AppRuntime:
             daemon=True,
         )
         exit_fallback_thread.start()
+        open_trade_poll_stop_event.clear()
+        open_trade_poll_thread = threading.Thread(
+            target=_open_trade_poll_loop,
+            name="gmo-bot-open-trade-poll",
+            daemon=True,
+        )
+        open_trade_poll_thread.start()
         notifier.notify_startup(_current_runtime_summaries())
 
     def stop() -> None:
-        nonlocal cron_controller, watchdog_thread, exit_fallback_thread
+        nonlocal cron_controller, watchdog_thread, exit_fallback_thread, open_trade_poll_thread
         notifier.notify_shutdown(reason="shutdown signal received")
         exit_monitor.stop()
         watchdog_stop_event.set()
         exit_fallback_stop_event.set()
+        open_trade_poll_stop_event.set()
         if cron_controller is not None:
             cron_controller.stop()
             cron_controller = None
@@ -531,6 +576,9 @@ def bootstrap() -> AppRuntime:
         if exit_fallback_thread is not None:
             exit_fallback_thread.join(timeout=2)
             exit_fallback_thread = None
+        if open_trade_poll_thread is not None:
+            open_trade_poll_thread.join(timeout=2)
+            open_trade_poll_thread = None
         _stop_firestore_watchers()
         logger.info("bot stopped")
 
