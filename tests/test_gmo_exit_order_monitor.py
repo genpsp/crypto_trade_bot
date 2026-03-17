@@ -110,6 +110,22 @@ class _FakeExecution:
         raise NotImplementedError
 
 
+class _PartialStopExecution(_FakeExecution):
+    def get_executions(self, order_id: int):
+        if order_id == 789:
+            return [
+                {
+                    "executionId": 2,
+                    "positionId": 10,
+                    "size": "0.3",
+                    "price": "13910",
+                    "fee": "3",
+                    "lossGain": "-45",
+                }
+            ]
+        return super().get_executions(order_id)
+
+
 def _build_trade() -> dict:
     return {
         "trade_id": "trade_1",
@@ -185,6 +201,38 @@ class GmoExitOrderMonitorTest(unittest.TestCase):
             monitor._handle_event({"channel": "orderEvents", "orderId": "789", "orderStatus": "EXPIRED"})
 
         close_position_mock.assert_called_once()
+
+    def test_duplicate_partial_execution_event_is_not_double_counted(self) -> None:
+        trade = _build_trade()
+        trade["execution"]["take_profit_order_status"] = "CLIENT_MANAGED"
+        trade["position"]["quantity_sol"] = 0.6
+        trade["position"]["quote_amount_jpy"] = 8400.0
+        trade["position"]["lots"] = [{"position_id": 10, "size_sol": 0.6}]
+        execution = _PartialStopExecution()
+        persistence = _FakePersistence(trade)
+        monitor = GmoExitOrderMonitor(
+            api_client=object(),
+            logger=_FakeLogger(),
+            context_provider=lambda: [
+                ExitMonitorContext(
+                    model_id="gmo_ema_pullback_15m_both_v0",
+                    pair="SOL/JPY",
+                    execution=execution,
+                    persistence=persistence,
+                    lock=object(),
+                )
+            ],
+        )
+
+        monitor._handle_event({"channel": "executionEvents", "orderId": "789"})
+        self.assertEqual("CONFIRMED", trade["state"])
+        self.assertAlmostEqual(0.3, trade["position"]["quantity_sol"])
+        self.assertEqual("WAITING", trade["execution"]["stop_loss_order_status"])
+
+        monitor._handle_event({"channel": "executionEvents", "orderId": "789"})
+        self.assertEqual("CONFIRMED", trade["state"])
+        self.assertAlmostEqual(0.3, trade["position"]["quantity_sol"])
+        self.assertEqual("WAITING", trade["execution"]["stop_loss_order_status"])
 
 
 if __name__ == "__main__":

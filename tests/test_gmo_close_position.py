@@ -9,6 +9,7 @@ from apps.gmo_bot.app.usecases.close_position import (
     ClosePositionDependencies,
     ClosePositionInput,
     close_position,
+    reconcile_protective_exit_execution,
 )
 from apps.gmo_bot.domain.model.types import BotConfig, TradeRecord
 
@@ -159,8 +160,18 @@ class _PartialCloseExecution:
         return None
 
     def get_executions(self, order_id: int):
-        _ = order_id
-        return []
+        if order_id != 8218604892:
+            return []
+        return [
+            {
+                "executionId": 1530999999,
+                "positionId": 281135490,
+                "size": "0.6",
+                "price": "13651",
+                "fee": "3",
+                "lossGain": "-49.8",
+            }
+        ]
 
 
 class _FinalCloseExecution:
@@ -250,6 +261,50 @@ class _ProtectiveStopAlreadyFilledExecution:
 
     def cancel_order(self, order_id: int) -> None:
         self.canceled_orders.append(order_id)
+        raise RuntimeError("GMO API error status=1: ERR-5122: The request is invalid due to the status of the specified order.")
+
+    def get_order(self, order_id: int):
+        _ = order_id
+        return {"orderId": 8218604892, "status": "EXECUTED"}
+
+    def get_executions(self, order_id: int):
+        if order_id != 8218604892:
+            return []
+        return [
+            {
+                "executionId": 1530999999,
+                "positionId": 281135490,
+                "size": "0.6",
+                "price": "13651",
+                "fee": "3",
+                "lossGain": "-49.8",
+            }
+        ]
+
+
+class _ProtectiveStopExecutedWithoutExecutionsVisible:
+    def submit_close_order(self, request):
+        _ = request
+        raise RuntimeError("GMO API error status=1: ERR-254: Not found position.")
+
+    def confirm_order(self, order_id: int, timeout_ms: int):
+        _ = order_id
+        _ = timeout_ms
+        return OrderConfirmation(confirmed=False, error="order status=EXECUTED")
+
+    def get_mark_price(self, pair: str) -> float:
+        _ = pair
+        raise NotImplementedError
+
+    def get_available_margin_jpy(self) -> float:
+        raise NotImplementedError
+
+    def get_symbol_rule(self, pair: str):
+        _ = pair
+        raise NotImplementedError
+
+    def cancel_order(self, order_id: int) -> None:
+        _ = order_id
         raise RuntimeError("GMO API error status=1: ERR-5122: The request is invalid due to the status of the specified order.")
 
     def get_order(self, order_id: int):
@@ -359,6 +414,23 @@ class GmoClosePositionTest(unittest.TestCase):
         self.assertEqual("STOP_LOSS", trade["close_reason"])
         self.assertAlmostEqual(13651.0, trade["execution"]["exit_reference_price"])
         self.assertEqual("EXECUTED", trade["execution"]["stop_loss_order_status"])
+
+    def test_reconcile_protective_stop_returns_pending_when_order_is_executed_but_executions_are_not_visible(self) -> None:
+        trade = _build_open_trade()
+        trade["execution"]["stop_loss_order"] = {"order_id": 8218604892, "price": 13651.0}
+        persistence = _FakePersistence(trade)
+        execution = _ProtectiveStopExecutedWithoutExecutionsVisible()
+
+        reconciled = reconcile_protective_exit_execution(
+            execution=execution,
+            logger=_FakeLogger(),
+            persistence=persistence,
+            trade=trade,
+            close_reason="STOP_LOSS",
+        )
+
+        self.assertEqual("PENDING", reconciled.status)
+        self.assertEqual("EXECUTED", reconciled.order_status)
 
 
 if __name__ == "__main__":

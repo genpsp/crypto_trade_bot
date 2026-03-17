@@ -590,7 +590,6 @@ class FirestoreRepository(PersistencePort):
         return deepcopy(filtered[:limit])
 
     def save_run(self, run: RunRecord) -> None:
-        self._touch_model_metadata()
         runs_collection = self._runs_collection()
         run_date = _extract_run_date(run)
         day_ref = runs_collection.document(run_date)

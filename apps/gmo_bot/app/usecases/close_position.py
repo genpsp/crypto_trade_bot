@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
@@ -54,7 +55,91 @@ def _to_float(value: Any) -> float | None:
         return None
     if isinstance(value, (int, float)):
         return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
     return None
+
+
+def _to_str(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped if stripped else None
+    if value is None:
+        return None
+    return str(value)
+
+
+def _processed_exit_execution_ids(trade: TradeRecord) -> set[str]:
+    execution_snapshot = trade.get("execution", {})
+    if not isinstance(execution_snapshot, dict):
+        return set()
+    processed = execution_snapshot.get("processed_exit_execution_ids")
+    if not isinstance(processed, list):
+        return set()
+    return {execution_id for execution_id in (_to_str(item) for item in processed) if execution_id is not None}
+
+
+def collect_unprocessed_exit_executions(trade: TradeRecord, executions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    processed_ids = _processed_exit_execution_ids(trade)
+    if not processed_ids:
+        return executions
+    new_executions: list[dict[str, Any]] = []
+    for execution in executions:
+        execution_id = _to_str(execution.get("executionId"))
+        if execution_id is None or execution_id not in processed_ids:
+            new_executions.append(execution)
+    return new_executions
+
+
+def aggregate_execution_records(executions: list[dict[str, Any]]) -> dict[str, Any]:
+    total_size = 0.0
+    total_quote = 0.0
+    total_fee = 0.0
+    total_realized_pnl = 0.0
+    has_realized_pnl = False
+    lots_by_position_id: dict[int, float] = defaultdict(float)
+    execution_ids: list[str] = []
+
+    for execution in executions:
+        size = _to_float(execution.get("size")) or 0.0
+        price = _to_float(execution.get("price")) or 0.0
+        fee = _to_float(execution.get("fee")) or 0.0
+        loss_gain = _to_float(execution.get("lossGain"))
+        total_size += size
+        total_quote += price * size
+        total_fee += fee
+        if loss_gain is not None:
+            total_realized_pnl += loss_gain
+            has_realized_pnl = True
+        position_id = execution.get("positionId")
+        if isinstance(position_id, int):
+            lots_by_position_id[position_id] += size
+        execution_id = _to_str(execution.get("executionId"))
+        if execution_id is not None:
+            execution_ids.append(execution_id)
+
+    if total_size <= 0:
+        raise RuntimeError("GMO executions resolved but filled size is 0")
+
+    result = {
+        "status": "CONFIRMED",
+        "avg_fill_price": total_quote / total_size,
+        "filled_base_sol": total_size,
+        "filled_quote_jpy": total_quote,
+        "fee_jpy": total_fee,
+        "execution_ids": execution_ids,
+        "lots": [
+            {"position_id": position_id, "size_sol": size}
+            for position_id, size in sorted(lots_by_position_id.items())
+            if size > 0
+        ],
+    }
+    if has_realized_pnl:
+        result["realized_pnl_jpy"] = total_realized_pnl
+    return result
 
 
 def _subtract_filled_lots(
@@ -194,13 +279,15 @@ def reconcile_protective_exit_execution(
     if order_id is None:
         return ProtectiveExitReconciliationResult(status="UNAVAILABLE")
 
-    confirmation = execution.confirm_order(order_id, PROTECTIVE_EXIT_RECONCILE_TIMEOUT_MS)
-    if confirmation.confirmed and confirmation.result is not None:
+    executions = execution.get_executions(order_id)
+    new_executions = collect_unprocessed_exit_executions(trade, executions)
+    if new_executions:
+        execution_result = aggregate_execution_records(new_executions)
         close_result = apply_confirmed_exit_result(
             logger=logger,
             persistence=persistence,
             trade=trade,
-            execution_result=confirmation.result,
+            execution_result=execution_result,
             order_id=order_id,
             close_reason=close_reason,
             close_price=_resolve_protective_exit_close_price(trade, close_reason),
@@ -218,7 +305,7 @@ def reconcile_protective_exit_execution(
         raw_status = order.get("status") or order.get("orderStatus")
         if isinstance(raw_status, str) and raw_status.strip():
             order_status = raw_status.upper()
-    if order_status in {"SUBMITTED", "ORDERED", "WAITING", "INACTIVE"}:
+    if order_status in {"SUBMITTED", "ORDERED", "WAITING", "INACTIVE", "EXECUTED"}:
         return ProtectiveExitReconciliationResult(
             status="PENDING",
             order_id=order_id,
@@ -279,6 +366,13 @@ def apply_confirmed_exit_result(
     trade["execution"]["exit_order_id"] = order_id
     trade["execution"]["exit_result"] = execution_result
     trade["execution"]["exit_submission_state"] = "CONFIRMED"
+    processed_execution_ids = _processed_exit_execution_ids(trade)
+    processed_execution_ids.update(
+        execution_id
+        for execution_id in (_to_str(item) for item in execution_result.get("execution_ids", []))
+        if execution_id is not None
+    )
+    trade["execution"]["processed_exit_execution_ids"] = sorted(processed_execution_ids)
     existing_exit_fee_jpy = _to_float(trade["execution"].get("exit_fee_jpy")) or 0.0
     exit_fee_jpy = _to_float(execution_result.get("fee_jpy")) or 0.0
     trade["execution"]["exit_fee_jpy"] = round_to(existing_exit_fee_jpy + exit_fee_jpy, 6)
@@ -323,12 +417,15 @@ def apply_confirmed_exit_result(
             f"partial close detected: expected {round_to(open_quantity_sol, 9)} SOL, "
             f"got {round_to(filled_size_sol, 9)} SOL"
         )
-        mark_protective_exit_orders_inactive(
-            trade,
-            take_profit_status="INACTIVE",
-            stop_loss_status="INACTIVE",
-            error_message="partial close requires protective exit re-arm",
-        )
+        is_take_profit_order = trade["execution"].get("take_profit_order_id") == order_id
+        is_stop_loss_order = trade["execution"].get("stop_loss_order_id") == order_id
+        if not is_take_profit_order and not is_stop_loss_order:
+            mark_protective_exit_orders_inactive(
+                trade,
+                take_profit_status="INACTIVE",
+                stop_loss_status="INACTIVE",
+                error_message="partial close requires protective exit re-arm",
+            )
         persistence.update_trade(
             trade["trade_id"],
             strip_none(
@@ -465,25 +562,43 @@ def close_position(dependencies: ClosePositionDependencies, input_data: ClosePos
     except Exception as error:
         message = to_error_message(error)
         if input_data.close_reason in ("TAKE_PROFIT", "STOP_LOSS"):
-            reconciled = reconcile_protective_exit_execution(
-                execution=execution,
-                logger=logger,
-                persistence=persistence,
-                trade=trade,
-                close_reason=input_data.close_reason,
-            )
-            if reconciled.close_result is not None:
+            try:
+                reconciled = reconcile_protective_exit_execution(
+                    execution=execution,
+                    logger=logger,
+                    persistence=persistence,
+                    trade=trade,
+                    close_reason=input_data.close_reason,
+                )
+            except Exception as reconcile_error:
                 logger.warn(
-                    "gmo close_position reconciled protective exit after manual close failure",
+                    "gmo protective exit reconciliation failed after manual close failure",
                     {
                         "trade_id": trade["trade_id"],
                         "close_reason": input_data.close_reason,
                         "error": message,
-                        "protective_order_id": reconciled.order_id,
-                        "protective_order_status": reconciled.order_status,
+                        "reconcile_error": to_error_message(reconcile_error),
                     },
                 )
-                return reconciled.close_result
+            else:
+                if reconciled.close_result is not None:
+                    logger.warn(
+                        "gmo close_position reconciled protective exit after manual close failure",
+                        {
+                            "trade_id": trade["trade_id"],
+                            "close_reason": input_data.close_reason,
+                            "error": message,
+                            "protective_order_id": reconciled.order_id,
+                            "protective_order_status": reconciled.order_status,
+                        },
+                    )
+                    return reconciled.close_result
+                if reconciled.status == "PENDING":
+                    return ClosePositionResult(
+                        status="PENDING",
+                        trade_id=trade["trade_id"],
+                        summary="PENDING: protective exit execution pending settlement details",
+                    )
         logger.error("gmo close_position failed", {"trade_id": trade["trade_id"], "error": message})
         trade["execution"]["exit_submission_state"] = "FAILED"
         trade["execution"]["exit_error"] = message

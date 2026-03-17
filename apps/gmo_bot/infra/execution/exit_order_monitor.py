@@ -8,8 +8,10 @@ from apps.gmo_bot.adapters.execution.private_ws_client import GmoPrivateWebSocke
 from apps.gmo_bot.app.usecases.close_position import (
     ClosePositionDependencies,
     ClosePositionInput,
+    aggregate_execution_records,
     apply_confirmed_exit_result,
     close_position,
+    collect_unprocessed_exit_executions,
 )
 from apps.gmo_bot.app.usecases.protective_exit_orders import has_active_protective_exit_orders
 
@@ -59,9 +61,10 @@ class GmoExitOrderMonitor:
         context, trade, exit_kind = resolved
         sibling_order_id, sibling_status_key = self._sibling_order_state(trade, filled_kind=exit_kind)
         executions = context.execution.get_executions(order_id)
-        if not executions:
+        new_executions = collect_unprocessed_exit_executions(trade, executions)
+        if not new_executions:
             return
-        execution_result = context.execution._aggregate_executions(executions)  # noqa: SLF001
+        execution_result = aggregate_execution_records(new_executions)
         close_reason = "TAKE_PROFIT" if exit_kind == "take_profit" else "STOP_LOSS"
         execution_snapshot = trade.get("execution", {})
         order_snapshot = (
@@ -79,7 +82,8 @@ class GmoExitOrderMonitor:
             close_reason=close_reason,
             close_price=close_price,
         )
-        self._cancel_sibling_order(context, trade, sibling_order_id=sibling_order_id, sibling_status_key=sibling_status_key)
+        if result.status == "CLOSED":
+            self._cancel_sibling_order(context, trade, sibling_order_id=sibling_order_id, sibling_status_key=sibling_status_key)
         self.logger.info(
             "gmo exit order execution processed",
             {

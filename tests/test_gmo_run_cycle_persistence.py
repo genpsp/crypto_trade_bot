@@ -403,6 +403,46 @@ class GmoRunCyclePersistenceTest(unittest.TestCase):
         self.assertEqual("CLOSED", run["result"])
         self.assertEqual("CLOSED: reason=STOP_LOSS", run["summary"])
 
+    def test_close_position_pending_is_mapped_to_hold(self) -> None:
+        config = _build_config()
+        trade: TradeRecord = {
+            "trade_id": "trade_stop_pending_close",
+            "pair": "SOL/JPY",
+            "direction": "LONG",
+            "state": "CONFIRMED",
+            "execution": {
+                "take_profit_order_status": "CLIENT_MANAGED",
+                "stop_loss_order_status": "FAILED",
+            },
+            "position": {
+                "status": "OPEN",
+                "stop_price": 10010.0,
+                "take_profit_price": 10100.0,
+            },
+        }
+        persistence = _OpenTradePersistence(config, trade)
+        deps = RunCycleDependencies(
+            execution=_DummyExecution(),
+            lock=_DummyLock(),
+            logger=_DummyLogger(),
+            market_data=_DummyMarketData([]),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 17, 3, 40, tzinfo=UTC),
+        )
+
+        with patch(
+            "apps.gmo_bot.app.usecases.run_cycle.arm_protective_exit_orders",
+            return_value=SimpleNamespace(status="FAILED", summary="FAILED"),
+        ), patch(
+            "apps.gmo_bot.app.usecases.run_cycle.close_position",
+            return_value=SimpleNamespace(status="PENDING", summary="PENDING: protective exit execution pending settlement details"),
+        ):
+            run = run_cycle(deps)
+
+        self.assertEqual("HOLD", run["result"])
+        self.assertEqual("PENDING: protective exit execution pending settlement details", run["summary"])
+
     def test_should_persist_run_record_matches_runtime_policy(self) -> None:
         self.assertTrue(_should_persist_run_record({"result": "OPENED"}))
         self.assertTrue(_should_persist_run_record({"result": "CLOSED"}))
