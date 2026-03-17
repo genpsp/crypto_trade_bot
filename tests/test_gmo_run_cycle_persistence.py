@@ -54,6 +54,15 @@ class _DummyExecution:
         _ = pair
         return 10000.0
 
+    def confirm_order(self, order_id: int, timeout_ms: int):
+        _ = order_id
+        _ = timeout_ms
+        raise NotImplementedError
+
+    def get_order(self, order_id: int):
+        _ = order_id
+        raise NotImplementedError
+
 
 class _DummyLock:
     def __init__(self) -> None:
@@ -306,6 +315,93 @@ class GmoRunCyclePersistenceTest(unittest.TestCase):
         self.assertEqual(1, len(persistence.saved_runs))
         self.assertEqual("SKIPPED", persistence.saved_runs[0]["result"])
         self.assertEqual("SKIPPED: market data unavailable (maintenance)", persistence.saved_runs[0]["summary"])
+
+    def test_active_stop_loss_reconciliation_pending_returns_hold(self) -> None:
+        config = _build_config()
+        trade: TradeRecord = {
+            "trade_id": "trade_stop_pending",
+            "pair": "SOL/JPY",
+            "direction": "LONG",
+            "state": "CONFIRMED",
+            "execution": {
+                "take_profit_order_status": "CLIENT_MANAGED",
+                "stop_loss_order_id": 123,
+                "stop_loss_order_status": "WAITING",
+            },
+            "position": {
+                "status": "OPEN",
+                "stop_price": 10010.0,
+                "take_profit_price": 10100.0,
+            },
+        }
+        persistence = _OpenTradePersistence(config, trade)
+        deps = RunCycleDependencies(
+            execution=_DummyExecution(),
+            lock=_DummyLock(),
+            logger=_DummyLogger(),
+            market_data=_DummyMarketData([]),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 17, 3, 40, tzinfo=UTC),
+        )
+
+        with patch(
+            "apps.gmo_bot.app.usecases.run_cycle.reconcile_protective_exit_execution",
+            return_value=SimpleNamespace(status="PENDING", close_result=None),
+        ) as reconcile_mock, patch(
+            "apps.gmo_bot.app.usecases.run_cycle.close_position"
+        ) as close_position_mock:
+            run = run_cycle(deps)
+
+        reconcile_mock.assert_called_once()
+        close_position_mock.assert_not_called()
+        self.assertEqual("HOLD", run["result"])
+        self.assertEqual("HOLD: protective stop order triggered and exchange execution is pending", run["summary"])
+
+    def test_active_stop_loss_reconciliation_closed_returns_closed(self) -> None:
+        config = _build_config()
+        trade: TradeRecord = {
+            "trade_id": "trade_stop_closed",
+            "pair": "SOL/JPY",
+            "direction": "LONG",
+            "state": "CONFIRMED",
+            "execution": {
+                "take_profit_order_status": "CLIENT_MANAGED",
+                "stop_loss_order_id": 123,
+                "stop_loss_order_status": "WAITING",
+            },
+            "position": {
+                "status": "OPEN",
+                "stop_price": 10010.0,
+                "take_profit_price": 10100.0,
+            },
+        }
+        persistence = _OpenTradePersistence(config, trade)
+        deps = RunCycleDependencies(
+            execution=_DummyExecution(),
+            lock=_DummyLock(),
+            logger=_DummyLogger(),
+            market_data=_DummyMarketData([]),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 17, 3, 40, tzinfo=UTC),
+        )
+
+        with patch(
+            "apps.gmo_bot.app.usecases.run_cycle.reconcile_protective_exit_execution",
+            return_value=SimpleNamespace(
+                status="CLOSED",
+                close_result=SimpleNamespace(status="CLOSED", summary="CLOSED: reason=STOP_LOSS"),
+            ),
+        ) as reconcile_mock, patch(
+            "apps.gmo_bot.app.usecases.run_cycle.close_position"
+        ) as close_position_mock:
+            run = run_cycle(deps)
+
+        reconcile_mock.assert_called_once()
+        close_position_mock.assert_not_called()
+        self.assertEqual("CLOSED", run["result"])
+        self.assertEqual("CLOSED: reason=STOP_LOSS", run["summary"])
 
     def test_should_persist_run_record_matches_runtime_policy(self) -> None:
         self.assertTrue(_should_persist_run_record({"result": "OPENED"}))

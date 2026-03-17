@@ -211,3 +211,16 @@ def _to_int(value: Any) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def _to_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None

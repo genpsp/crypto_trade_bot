@@ -14,6 +14,7 @@ from apps.gmo_bot.domain.model.types import BotConfig, CloseReason, TradeRecord,
 from shared.utils.math import round_to
 
 ORDER_CONFIRM_TIMEOUT_MS = 20_000
+PROTECTIVE_EXIT_RECONCILE_TIMEOUT_MS = 250
 POSITION_SIZE_EPSILON = 1e-9
 
 
@@ -38,6 +39,14 @@ class ClosePositionDependencies:
     lock: LockPort
     logger: LoggerPort
     persistence: PersistencePort
+
+
+@dataclass
+class ProtectiveExitReconciliationResult:
+    status: str
+    close_result: ClosePositionResult | None = None
+    order_id: int | None = None
+    order_status: str | None = None
 
 
 def _to_float(value: Any) -> float | None:
@@ -133,6 +142,93 @@ def _cancel_protective_exit_orders_best_effort(
             trade["trade_id"],
             strip_none({"execution": execution_snapshot, "updated_at": now_iso()}),
         )
+
+
+def _resolve_protective_exit_order_snapshot(
+    trade: TradeRecord,
+    close_reason: CloseReason,
+) -> tuple[int | None, dict[str, Any] | None, str | None]:
+    execution_snapshot = trade.get("execution", {})
+    if not isinstance(execution_snapshot, dict):
+        return None, None, None
+
+    if close_reason == "TAKE_PROFIT":
+        order_id = execution_snapshot.get("take_profit_order_id")
+        order_snapshot = execution_snapshot.get("take_profit_order")
+        order_status = execution_snapshot.get("take_profit_order_status")
+    else:
+        order_id = execution_snapshot.get("stop_loss_order_id")
+        order_snapshot = execution_snapshot.get("stop_loss_order")
+        order_status = execution_snapshot.get("stop_loss_order_status")
+
+    resolved_order_id = order_id if isinstance(order_id, int) else None
+    resolved_snapshot = order_snapshot if isinstance(order_snapshot, dict) else None
+    resolved_status = order_status if isinstance(order_status, str) else None
+    return resolved_order_id, resolved_snapshot, resolved_status
+
+
+def _resolve_protective_exit_close_price(trade: TradeRecord, close_reason: CloseReason) -> float:
+    _, order_snapshot, _ = _resolve_protective_exit_order_snapshot(trade, close_reason)
+    if isinstance(order_snapshot, dict):
+        order_price = _to_float(order_snapshot.get("price"))
+        if order_price is not None:
+            return order_price
+    position = trade.get("position", {})
+    if not isinstance(position, dict):
+        raise RuntimeError("trade position snapshot is invalid")
+    raw_price = position.get("take_profit_price") if close_reason == "TAKE_PROFIT" else position.get("stop_price")
+    if not isinstance(raw_price, (int, float)):
+        raise RuntimeError("protective exit trigger price is invalid")
+    return float(raw_price)
+
+
+def reconcile_protective_exit_execution(
+    *,
+    execution: ExecutionPort,
+    logger: LoggerPort,
+    persistence: PersistencePort,
+    trade: TradeRecord,
+    close_reason: CloseReason,
+) -> ProtectiveExitReconciliationResult:
+    order_id, _, cached_order_status = _resolve_protective_exit_order_snapshot(trade, close_reason)
+    if order_id is None:
+        return ProtectiveExitReconciliationResult(status="UNAVAILABLE")
+
+    confirmation = execution.confirm_order(order_id, PROTECTIVE_EXIT_RECONCILE_TIMEOUT_MS)
+    if confirmation.confirmed and confirmation.result is not None:
+        close_result = apply_confirmed_exit_result(
+            logger=logger,
+            persistence=persistence,
+            trade=trade,
+            execution_result=confirmation.result,
+            order_id=order_id,
+            close_reason=close_reason,
+            close_price=_resolve_protective_exit_close_price(trade, close_reason),
+        )
+        return ProtectiveExitReconciliationResult(
+            status=close_result.status,
+            close_result=close_result,
+            order_id=order_id,
+            order_status="EXECUTED",
+        )
+
+    order = execution.get_order(order_id)
+    order_status = cached_order_status
+    if isinstance(order, dict):
+        raw_status = order.get("status") or order.get("orderStatus")
+        if isinstance(raw_status, str) and raw_status.strip():
+            order_status = raw_status.upper()
+    if order_status in {"SUBMITTED", "ORDERED", "WAITING", "INACTIVE"}:
+        return ProtectiveExitReconciliationResult(
+            status="PENDING",
+            order_id=order_id,
+            order_status=order_status,
+        )
+    return ProtectiveExitReconciliationResult(
+        status="UNAVAILABLE",
+        order_id=order_id,
+        order_status=order_status,
+    )
 
 
 def apply_confirmed_exit_result(
@@ -368,6 +464,26 @@ def close_position(dependencies: ClosePositionDependencies, input_data: ClosePos
         )
     except Exception as error:
         message = to_error_message(error)
+        if input_data.close_reason in ("TAKE_PROFIT", "STOP_LOSS"):
+            reconciled = reconcile_protective_exit_execution(
+                execution=execution,
+                logger=logger,
+                persistence=persistence,
+                trade=trade,
+                close_reason=input_data.close_reason,
+            )
+            if reconciled.close_result is not None:
+                logger.warn(
+                    "gmo close_position reconciled protective exit after manual close failure",
+                    {
+                        "trade_id": trade["trade_id"],
+                        "close_reason": input_data.close_reason,
+                        "error": message,
+                        "protective_order_id": reconciled.order_id,
+                        "protective_order_status": reconciled.order_status,
+                    },
+                )
+                return reconciled.close_result
         logger.error("gmo close_position failed", {"trade_id": trade["trade_id"], "error": message})
         trade["execution"]["exit_submission_state"] = "FAILED"
         trade["execution"]["exit_error"] = message

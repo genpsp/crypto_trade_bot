@@ -17,7 +17,12 @@ from apps.gmo_bot.app.ports.lock_port import LockPort
 from apps.gmo_bot.app.ports.logger_port import LoggerPort
 from apps.gmo_bot.app.ports.market_data_port import MarketDataPort
 from apps.gmo_bot.app.ports.persistence_port import PersistencePort
-from apps.gmo_bot.app.usecases.close_position import ClosePositionDependencies, ClosePositionInput, close_position
+from apps.gmo_bot.app.usecases.close_position import (
+    ClosePositionDependencies,
+    ClosePositionInput,
+    close_position,
+    reconcile_protective_exit_execution,
+)
 from apps.gmo_bot.app.usecases.open_position import OpenPositionDependencies, OpenPositionInput, open_position
 from apps.gmo_bot.app.usecases.protective_exit_orders import (
     ArmProtectiveExitOrdersDependencies,
@@ -236,6 +241,26 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                 },
             )
             if trigger_reason in ("TAKE_PROFIT", "STOP_LOSS"):
+                if trigger_reason == "STOP_LOSS" and has_active_stop_loss_order(open_trade):
+                    reconciled = reconcile_protective_exit_execution(
+                        execution=execution,
+                        logger=logger,
+                        persistence=persistence,
+                        trade=open_trade,
+                        close_reason="STOP_LOSS",
+                    )
+                    if reconciled.close_result is not None:
+                        run["result"] = (
+                            reconciled.close_result.status
+                            if reconciled.close_result.status in ("CLOSED", "PARTIALLY_CLOSED")
+                            else "FAILED"
+                        )
+                        run["summary"] = reconciled.close_result.summary
+                        return run
+                    if reconciled.status == "PENDING":
+                        run["result"] = "HOLD"
+                        run["summary"] = "HOLD: protective stop order triggered and exchange execution is pending"
+                        return run
                 closed = close_position(
                     ClosePositionDependencies(execution=execution, lock=lock, logger=logger, persistence=persistence),
                     ClosePositionInput(

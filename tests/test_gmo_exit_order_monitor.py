@@ -118,8 +118,10 @@ def _build_trade() -> dict:
         "state": "CONFIRMED",
         "execution": {
             "take_profit_order_id": 456,
+            "take_profit_order": {"order_id": 456, "price": "14500"},
             "take_profit_order_status": "ORDERED",
             "stop_loss_order_id": 789,
+            "stop_loss_order": {"order_id": 789, "price": "13900"},
             "stop_loss_order_status": "WAITING",
         },
         "position": {
