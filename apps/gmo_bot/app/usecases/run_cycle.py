@@ -31,7 +31,7 @@ from apps.gmo_bot.app.usecases.protective_exit_orders import (
     has_active_protective_exit_orders,
     has_active_stop_loss_order,
 )
-from apps.gmo_bot.app.usecases.usecase_utils import to_error_message
+from apps.gmo_bot.app.usecases.usecase_utils import strip_none, to_error_message
 from apps.gmo_bot.domain.model.types import BotConfig, Direction, ModelDirection, RunRecord, TradeRecord
 from apps.gmo_bot.domain.strategy.registry import evaluate_strategy_for_model
 from shared.utils.math import round_to
@@ -54,6 +54,11 @@ _MARKET_DATA_MAINTENANCE_MARKERS = (
     "err-5201",
     "maintenance",
 )
+_MARK_PRICE_RATE_LIMIT_MARKERS = (
+    "err-5003",
+    "requests are too many",
+)
+TAKE_PROFIT_LATCH_MAX_PULLBACK_R = 0.15
 
 
 @dataclass
@@ -137,6 +142,11 @@ def _is_market_data_maintenance_skip_summary(summary: str) -> bool:
     return normalized.startswith("skipped: market data unavailable")
 
 
+def _is_mark_price_rate_limit_error_message(message: str) -> bool:
+    normalized = message.strip().lower()
+    return all(marker in normalized for marker in _MARK_PRICE_RATE_LIMIT_MARKERS)
+
+
 def _should_persist_run_record(run: RunRecord) -> bool:
     result = str(run.get("result") or "")
     if result in ("OPENED", "CLOSED", "PARTIALLY_CLOSED", "FAILED"):
@@ -195,6 +205,10 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
         open_trade = dependencies.prefetched_open_trade if dependencies.use_prefetched_open_trade else persistence.find_open_trade(runtime_config["pair"])
         if open_trade:
             run["trade_id"] = open_trade["trade_id"]
+            execution_snapshot = open_trade.get("execution", {})
+            if not isinstance(execution_snapshot, dict):
+                execution_snapshot = {}
+                open_trade["execution"] = execution_snapshot
             if has_active_protective_exit_orders(open_trade):
                 run["result"] = "HOLD"
                 run["summary"] = "HOLD: protective exit orders are armed and managed by exchange"
@@ -214,11 +228,26 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                     run["summary"] = "HOLD: protective exit orders armed for existing open position"
                     return run
 
-            mark_price = execution.get_mark_price(runtime_config["pair"])
+            try:
+                mark_price = execution.get_mark_price(runtime_config["pair"])
+            except Exception as error:
+                error_message = to_error_message(error)
+                if _is_mark_price_rate_limit_error_message(error_message):
+                    run["result"] = "HOLD"
+                    run["summary"] = "HOLD: market price temporarily unavailable (rate limit)"
+                    run["reason"] = error_message
+                    logger.warn("mark price temporarily unavailable due to GMO rate limit", {"model_id": model_id, "error": error_message})
+                    return run
+                raise
             trigger_reason = "NONE"
             trade_direction = open_trade.get("direction", runtime_config["direction"])
             stop_price = open_trade["position"]["stop_price"]
             take_profit_price = open_trade["position"]["take_profit_price"]
+            entry_price = open_trade["position"].get("entry_price")
+            take_profit_latched = isinstance(execution_snapshot.get("take_profit_triggered_at_iso"), str) and bool(
+                str(execution_snapshot.get("take_profit_triggered_at_iso")).strip()
+            )
+            take_profit_trigger_price = execution_snapshot.get("take_profit_trigger_price")
             if trade_direction == "LONG":
                 if mark_price >= take_profit_price:
                     trigger_reason = "TAKE_PROFIT"
@@ -229,6 +258,62 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                     trigger_reason = "TAKE_PROFIT"
                 elif mark_price >= stop_price:
                     trigger_reason = "STOP_LOSS"
+            if trigger_reason == "TAKE_PROFIT" and not take_profit_latched:
+                execution_snapshot["take_profit_triggered_at_iso"] = run_at_iso
+                execution_snapshot["take_profit_trigger_price"] = round_to(mark_price, 6)
+                persistence.update_trade(
+                    open_trade["trade_id"],
+                    strip_none({"execution": execution_snapshot, "updated_at": run_at_iso}),
+                )
+                logger.info(
+                    "take profit trigger latched",
+                    {
+                        "model_id": model_id,
+                        "trade_id": open_trade["trade_id"],
+                        "trigger_price": round_to(mark_price, 6),
+                    },
+                )
+                take_profit_latched = True
+            elif trigger_reason == "NONE" and take_profit_latched:
+                risk_distance = None
+                if isinstance(entry_price, (int, float)):
+                    risk_distance = abs(float(entry_price) - float(stop_price))
+                elif runtime_config["exit"]["take_profit_r_multiple"] > 0:
+                    risk_distance = abs(float(take_profit_price) - float(stop_price)) / (
+                        float(runtime_config["exit"]["take_profit_r_multiple"]) + 1.0
+                    )
+                trigger_price_value = float(take_profit_trigger_price) if isinstance(take_profit_trigger_price, (int, float)) else None
+                max_pullback = (
+                    risk_distance * TAKE_PROFIT_LATCH_MAX_PULLBACK_R
+                    if risk_distance is not None and risk_distance > 0
+                    else None
+                )
+                latch_exceeded = False
+                if trigger_price_value is not None and max_pullback is not None:
+                    if trade_direction == "LONG":
+                        latch_exceeded = mark_price < (trigger_price_value - max_pullback)
+                    else:
+                        latch_exceeded = mark_price > (trigger_price_value + max_pullback)
+                if latch_exceeded:
+                    execution_snapshot.pop("take_profit_triggered_at_iso", None)
+                    execution_snapshot.pop("take_profit_trigger_price", None)
+                    persistence.update_trade(
+                        open_trade["trade_id"],
+                        strip_none({"execution": execution_snapshot, "updated_at": run_at_iso}),
+                    )
+                    logger.info(
+                        "take profit trigger latch cleared",
+                        {
+                            "model_id": model_id,
+                            "trade_id": open_trade["trade_id"],
+                            "mark_price": round_to(mark_price, 6),
+                            "trigger_price": round_to(trigger_price_value, 6),
+                            "max_pullback": round_to(max_pullback, 6),
+                        },
+                    )
+                    take_profit_latched = False
+                else:
+                    trigger_reason = "TAKE_PROFIT"
             logger.info(
                 "exit check",
                 {
@@ -238,6 +323,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                     "stop": round_to(stop_price, 6),
                     "tp": round_to(take_profit_price, 6),
                     "triggerReason": trigger_reason,
+                    "takeProfitLatched": take_profit_latched,
                 },
             )
             if trigger_reason in ("TAKE_PROFIT", "STOP_LOSS"):

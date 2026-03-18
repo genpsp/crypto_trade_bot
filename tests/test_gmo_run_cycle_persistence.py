@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 import unittest
 from types import SimpleNamespace
@@ -12,6 +13,14 @@ from apps.gmo_bot.app.usecases.run_cycle import (
     run_cycle,
 )
 from apps.gmo_bot.domain.model.types import BotConfig, Pair, RunRecord, TradeRecord
+
+
+def _merge(dst: dict, src: dict) -> None:
+    for key, value in src.items():
+        if isinstance(value, dict) and isinstance(dst.get(key), dict):
+            _merge(dst[key], value)
+            continue
+        dst[key] = deepcopy(value)
 
 
 def _build_config() -> BotConfig:
@@ -168,6 +177,26 @@ class _OpenTradePersistence(_DummyPersistence):
     def find_open_trade(self, pair: Pair) -> TradeRecord | None:
         _ = pair
         return self.trade
+
+    def update_trade(self, trade_id: str, updates: dict) -> None:
+        if trade_id != self.trade["trade_id"]:
+            raise KeyError(trade_id)
+        _merge(self.trade, updates)
+
+
+class _StaticPriceExecution(_DummyExecution):
+    def __init__(self, mark_price: float) -> None:
+        self.mark_price = mark_price
+
+    def get_mark_price(self, pair: str) -> float:
+        _ = pair
+        return self.mark_price
+
+
+class _RateLimitPriceExecution(_DummyExecution):
+    def get_mark_price(self, pair: str) -> float:
+        _ = pair
+        raise RuntimeError("GMO API error status=4: ERR-5003: Requests are too many.")
 
 
 class GmoRunCyclePersistenceTest(unittest.TestCase):
@@ -442,6 +471,189 @@ class GmoRunCyclePersistenceTest(unittest.TestCase):
 
         self.assertEqual("HOLD", run["result"])
         self.assertEqual("PENDING: protective exit execution pending settlement details", run["summary"])
+
+    def test_take_profit_trigger_is_latched_and_retried_after_price_falls_back(self) -> None:
+        config = _build_config()
+        trade: TradeRecord = {
+            "trade_id": "trade_tp_latched",
+            "pair": "SOL/JPY",
+            "direction": "LONG",
+            "state": "CONFIRMED",
+            "execution": {
+                "take_profit_order_status": "CLIENT_MANAGED",
+                "stop_loss_order_id": 123,
+                "stop_loss_order_status": "WAITING",
+            },
+            "position": {
+                "status": "OPEN",
+                "entry_price": 10050.0,
+                "stop_price": 10010.0,
+                "take_profit_price": 10100.0,
+            },
+        }
+        persistence = _OpenTradePersistence(config, trade)
+
+        first_deps = RunCycleDependencies(
+            execution=_StaticPriceExecution(10110.0),
+            lock=_DummyLock(),
+            logger=_DummyLogger(),
+            market_data=_DummyMarketData([]),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 17, 3, 40, tzinfo=UTC),
+        )
+        with patch(
+            "apps.gmo_bot.app.usecases.run_cycle.close_position",
+            return_value=SimpleNamespace(status="FAILED", summary="FAILED: tp close failed"),
+        ):
+            first_run = run_cycle(first_deps)
+
+        self.assertEqual("FAILED", first_run["result"])
+        self.assertEqual("2026-03-17T03:40:00Z", trade["execution"]["take_profit_triggered_at_iso"])
+        self.assertEqual(10110.0, trade["execution"]["take_profit_trigger_price"])
+
+        second_deps = RunCycleDependencies(
+            execution=_StaticPriceExecution(10105.0),
+            lock=_DummyLock(),
+            logger=_DummyLogger(),
+            market_data=_DummyMarketData([]),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 17, 3, 40, 5, tzinfo=UTC),
+        )
+        with patch(
+            "apps.gmo_bot.app.usecases.run_cycle.close_position",
+            return_value=SimpleNamespace(status="FAILED", summary="FAILED: tp retry failed"),
+        ) as close_position_mock:
+            second_run = run_cycle(second_deps)
+
+        close_position_mock.assert_called_once()
+        close_input = close_position_mock.call_args.args[1]
+        self.assertEqual("TAKE_PROFIT", close_input.close_reason)
+        self.assertEqual(10105.0, close_input.close_price)
+        self.assertEqual("FAILED", second_run["result"])
+        self.assertEqual("FAILED: tp retry failed", second_run["summary"])
+
+    def test_stop_loss_takes_precedence_over_latched_take_profit(self) -> None:
+        config = _build_config()
+        trade: TradeRecord = {
+            "trade_id": "trade_tp_latched_stop",
+            "pair": "SOL/JPY",
+            "direction": "LONG",
+            "state": "CONFIRMED",
+            "execution": {
+                "take_profit_order_status": "CLIENT_MANAGED",
+                "take_profit_triggered_at_iso": "2026-03-17T03:40:00Z",
+                "take_profit_trigger_price": 10110.0,
+                "stop_loss_order_id": 123,
+                "stop_loss_order_status": "WAITING",
+            },
+            "position": {
+                "status": "OPEN",
+                "entry_price": 10050.0,
+                "stop_price": 10010.0,
+                "take_profit_price": 10100.0,
+            },
+        }
+        persistence = _OpenTradePersistence(config, trade)
+        deps = RunCycleDependencies(
+            execution=_StaticPriceExecution(10000.0),
+            lock=_DummyLock(),
+            logger=_DummyLogger(),
+            market_data=_DummyMarketData([]),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 17, 3, 40, 10, tzinfo=UTC),
+        )
+
+        with patch(
+            "apps.gmo_bot.app.usecases.run_cycle.reconcile_protective_exit_execution",
+            return_value=SimpleNamespace(status="PENDING", close_result=None),
+        ) as reconcile_mock, patch(
+            "apps.gmo_bot.app.usecases.run_cycle.close_position"
+        ) as close_position_mock:
+            run = run_cycle(deps)
+
+        reconcile_mock.assert_called_once()
+        close_position_mock.assert_not_called()
+        self.assertEqual("HOLD", run["result"])
+        self.assertEqual("HOLD: protective stop order triggered and exchange execution is pending", run["summary"])
+
+    def test_take_profit_latch_is_cleared_after_excessive_pullback(self) -> None:
+        config = _build_config()
+        trade: TradeRecord = {
+            "trade_id": "trade_tp_latch_clear",
+            "pair": "SOL/JPY",
+            "direction": "LONG",
+            "state": "CONFIRMED",
+            "execution": {
+                "take_profit_order_status": "CLIENT_MANAGED",
+                "take_profit_triggered_at_iso": "2026-03-17T03:40:00Z",
+                "take_profit_trigger_price": 10110.0,
+                "stop_loss_order_id": 123,
+                "stop_loss_order_status": "WAITING",
+            },
+            "position": {
+                "status": "OPEN",
+                "entry_price": 10050.0,
+                "stop_price": 10010.0,
+                "take_profit_price": 10100.0,
+            },
+        }
+        persistence = _OpenTradePersistence(config, trade)
+        deps = RunCycleDependencies(
+            execution=_StaticPriceExecution(10090.0),
+            lock=_DummyLock(),
+            logger=_DummyLogger(),
+            market_data=_DummyMarketData([]),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 17, 3, 40, 10, tzinfo=UTC),
+        )
+
+        with patch("apps.gmo_bot.app.usecases.run_cycle.close_position") as close_position_mock:
+            run = run_cycle(deps)
+
+        close_position_mock.assert_not_called()
+        self.assertEqual("HOLD", run["result"])
+        self.assertEqual("HOLD: open position exists and no exit trigger fired on this bar", run["summary"])
+        self.assertNotIn("take_profit_triggered_at_iso", trade["execution"])
+        self.assertNotIn("take_profit_trigger_price", trade["execution"])
+
+    def test_mark_price_rate_limit_is_mapped_to_hold_for_open_trade(self) -> None:
+        config = _build_config()
+        trade: TradeRecord = {
+            "trade_id": "trade_rate_limit",
+            "pair": "SOL/JPY",
+            "direction": "LONG",
+            "state": "CONFIRMED",
+            "execution": {
+                "take_profit_order_status": "CLIENT_MANAGED",
+                "stop_loss_order_id": 123,
+                "stop_loss_order_status": "WAITING",
+            },
+            "position": {
+                "status": "OPEN",
+                "stop_price": 10010.0,
+                "take_profit_price": 10100.0,
+            },
+        }
+        persistence = _OpenTradePersistence(config, trade)
+        deps = RunCycleDependencies(
+            execution=_RateLimitPriceExecution(),
+            lock=_DummyLock(),
+            logger=_DummyLogger(),
+            market_data=_DummyMarketData([]),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 17, 3, 40, tzinfo=UTC),
+        )
+
+        run = run_cycle(deps)
+
+        self.assertEqual("HOLD", run["result"])
+        self.assertEqual("HOLD: market price temporarily unavailable (rate limit)", run["summary"])
+        self.assertIn("ERR-5003", str(run.get("reason")))
 
     def test_should_persist_run_record_matches_runtime_policy(self) -> None:
         self.assertTrue(_should_persist_run_record({"result": "OPENED"}))

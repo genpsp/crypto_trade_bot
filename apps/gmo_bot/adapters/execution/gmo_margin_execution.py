@@ -23,6 +23,8 @@ from apps.gmo_bot.app.ports.logger_port import LoggerPort
 PAIR_SYMBOL_MAP = {"SOL/JPY": "SOL_JPY"}
 POLL_INTERVAL_SECONDS = 0.4
 SYMBOL_RULE_CACHE_TTL_SECONDS = 300
+MARK_PRICE_CACHE_TTL_SECONDS = 2.0
+MARK_PRICE_RATE_LIMIT_RETRY_DELAYS_SECONDS = (0.2, 0.4)
 CLOSE_ORDER_ACTIVE_STATUSES = {"ORDERED", "WAITING", "MODIFYING", "CANCELLING"}
 
 
@@ -31,6 +33,7 @@ class GmoMarginExecutionAdapter(ExecutionPort):
         self.client = client
         self.logger = logger
         self._symbol_rule_cache: dict[str, tuple[float, SymbolRule]] = {}
+        self._mark_price_cache: dict[str, tuple[float, float]] = {}
         self.protective_exit_enabled = True
 
     def set_protective_exit_enabled(self, enabled: bool) -> None:
@@ -144,11 +147,33 @@ class GmoMarginExecutionAdapter(ExecutionPort):
 
     def get_mark_price(self, pair: str) -> float:
         symbol = PAIR_SYMBOL_MAP[pair]
-        ticker = self.client.get_ticker(symbol)
-        last = ticker.get("last")
-        if not isinstance(last, str):
-            raise RuntimeError(f"GMO ticker last is invalid for {symbol}")
-        return float(last)
+        now = time.time()
+        cached = self._mark_price_cache.get(symbol)
+        if cached is not None and now - cached[0] < MARK_PRICE_CACHE_TTL_SECONDS:
+            return cached[1]
+
+        delays = (0.0,) + MARK_PRICE_RATE_LIMIT_RETRY_DELAYS_SECONDS
+        last_error: Exception | None = None
+        for index, delay in enumerate(delays):
+            if delay > 0:
+                time.sleep(delay)
+            try:
+                ticker = self.client.get_ticker(symbol)
+            except Exception as error:
+                last_error = error
+                if _is_gmo_rate_limit_error(str(error)) and index < len(delays) - 1:
+                    continue
+                raise
+            last = ticker.get("last")
+            if not isinstance(last, str):
+                raise RuntimeError(f"GMO ticker last is invalid for {symbol}")
+            mark_price = float(last)
+            self._mark_price_cache[symbol] = (time.time(), mark_price)
+            return mark_price
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(f"GMO ticker last is invalid for {symbol}")
 
     def get_available_margin_jpy(self) -> float:
         payload = self.client.get_margin()
@@ -325,3 +350,8 @@ def _round_price_to_step(value: float, step: float, *, rounding: str) -> float:
 def _decimal_str(value: float) -> str:
     text = f"{value:.10f}".rstrip("0").rstrip(".")
     return text if text else "0"
+
+
+def _is_gmo_rate_limit_error(message: str) -> bool:
+    normalized = message.strip().lower()
+    return "err-5003" in normalized or "requests are too many" in normalized

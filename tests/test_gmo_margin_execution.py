@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from apps.gmo_bot.adapters.execution.gmo_margin_execution import GmoMarginExecutionAdapter
 from apps.gmo_bot.app.ports.execution_port import SubmitProtectiveExitOrdersRequest, SymbolRule
@@ -274,6 +274,23 @@ class GmoMarginExecutionAdapterTest(unittest.TestCase):
         self.assertEqual([777, 778], client.canceled_order_ids)
         self.assertEqual(1001, submission.stop_loss_order.order_id)
         self.assertEqual(1, len(client.close_order_calls))
+
+    def test_get_mark_price_retries_on_rate_limit_and_caches_result(self) -> None:
+        client = Mock()
+        client.get_ticker.side_effect = [
+            RuntimeError("GMO API error status=4: ERR-5003: Requests are too many."),
+            {"last": "15055"},
+        ]
+        adapter = GmoMarginExecutionAdapter(client=client, logger=_FakeLogger())
+
+        with patch("apps.gmo_bot.adapters.execution.gmo_margin_execution.time.sleep") as sleep_mock:
+            first = adapter.get_mark_price("SOL/JPY")
+            second = adapter.get_mark_price("SOL/JPY")
+
+        self.assertEqual(15055.0, first)
+        self.assertEqual(15055.0, second)
+        self.assertEqual(2, client.get_ticker.call_count)
+        sleep_mock.assert_called_once_with(0.2)
 
 
 if __name__ == "__main__":

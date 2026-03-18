@@ -95,6 +95,8 @@ class TradeExecutionSnapshot(TypedDict, total=False):
     exit_reference_price: float
     take_profit_order_status: str
     stop_loss_order_status: str
+    take_profit_triggered_at_iso: str
+    take_profit_trigger_price: float
     entry_submission_state: Literal["SUBMITTED", "CONFIRMED", "FAILED"]
     exit_submission_state: Literal["SUBMITTED", "CONFIRMED", "FAILED"]
     entry_fee_jpy: float
