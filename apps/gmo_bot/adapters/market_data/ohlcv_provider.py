@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 import json
 from typing import Any, Callable
 
@@ -18,6 +18,7 @@ TIMEFRAME_TO_GMO_INTERVAL: dict[SignalTimeframe, str] = {
     "4h": "4hour",
 }
 DEFAULT_OHLCV_CACHE_TTL_SECONDS = 30
+JST = timezone(timedelta(hours=9))
 
 
 class OhlcvProvider(MarketDataPort):
@@ -103,7 +104,7 @@ class OhlcvProvider(MarketDataPort):
     def _date_token(self, cursor: datetime, interval: str) -> str:
         if interval == "4hour":
             return cursor.astimezone(UTC).strftime("%Y")
-        return cursor.astimezone(UTC).strftime("%Y%m%d")
+        return (cursor.astimezone(JST) - timedelta(hours=6)).strftime("%Y%m%d")
 
     def _step_cursor(self, cursor: datetime, interval: str) -> datetime:
         if interval == "4hour":

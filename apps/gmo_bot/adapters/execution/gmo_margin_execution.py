@@ -23,7 +23,7 @@ from apps.gmo_bot.app.ports.logger_port import LoggerPort
 PAIR_SYMBOL_MAP = {"SOL/JPY": "SOL_JPY"}
 POLL_INTERVAL_SECONDS = 0.4
 SYMBOL_RULE_CACHE_TTL_SECONDS = 300
-CLOSE_ORDER_ACTIVE_STATUSES = {"ORDERED", "WAITING"}
+CLOSE_ORDER_ACTIVE_STATUSES = {"ORDERED", "WAITING", "MODIFYING", "CANCELLING"}
 
 
 class GmoMarginExecutionAdapter(ExecutionPort):
@@ -59,12 +59,20 @@ class GmoMarginExecutionAdapter(ExecutionPort):
             settle_positions.append({"positionId": lot["position_id"], "size": _decimal_str(normalized_size)})
         if not settle_positions:
             raise RuntimeError("no closeable position lots")
-        order_id = self.client.create_close_order(
-            symbol=symbol,
-            side=request.side,
-            execution_type="MARKET",
-            settle_positions=settle_positions,
-        )
+        if len(settle_positions) == 1:
+            order_id = self.client.create_close_order(
+                symbol=symbol,
+                side=request.side,
+                execution_type="MARKET",
+                settle_position=settle_positions[0],
+            )
+        else:
+            order_id = self.client.create_close_bulk_order(
+                symbol=symbol,
+                side=request.side,
+                execution_type="MARKET",
+                size=sum(_to_float(position["size"]) or 0.0 for position in settle_positions),
+            )
         return OrderSubmission(order_id=order_id, order={"order_id": order_id})
 
     def submit_protective_exit_orders(self, request: SubmitProtectiveExitOrdersRequest) -> ProtectiveExitOrdersSubmission:
@@ -84,14 +92,24 @@ class GmoMarginExecutionAdapter(ExecutionPort):
         )
         if normalized_stop_price <= 0:
             raise RuntimeError("protective exit price rounded to 0")
-        stop_loss_order_id = self.client.create_close_order(
-            symbol=symbol,
-            side=request.side,
-            execution_type="STOP",
-            settle_positions=settle_positions,
-            price=normalized_stop_price,
-            time_in_force="FAK",
-        )
+        if len(settle_positions) == 1:
+            stop_loss_order_id = self.client.create_close_order(
+                symbol=symbol,
+                side=request.side,
+                execution_type="STOP",
+                settle_position=settle_positions[0],
+                price=normalized_stop_price,
+                time_in_force="FAK",
+            )
+        else:
+            stop_loss_order_id = self.client.create_close_bulk_order(
+                symbol=symbol,
+                side=request.side,
+                execution_type="STOP",
+                size=sum(_to_float(position["size"]) or 0.0 for position in settle_positions),
+                price=normalized_stop_price,
+                time_in_force="FAK",
+            )
         return ProtectiveExitOrdersSubmission(
             stop_loss_order=OrderSubmission(
                 order_id=stop_loss_order_id,

@@ -113,6 +113,28 @@ class GmoOhlcvProviderTest(unittest.TestCase):
         self.assertEqual(datetime(2026, 1, 1, 0, 0, tzinfo=UTC), bars[0].open_time)
         self.assertEqual(datetime(2026, 2, 14, 23, 45, tzinfo=UTC), bars[-1].open_time)
 
+    def test_fetch_bars_uses_jst_6am_boundary_for_intraday_date_token(self) -> None:
+        now = datetime(2026, 3, 10, 22, 30, tzinfo=UTC)
+        rows = [
+            {
+                "openTime": str(int(datetime(2026, 3, 10, 21, 45, tzinfo=UTC).timestamp() * 1000)),
+                "open": "100",
+                "high": "101",
+                "low": "99",
+                "close": "100.5",
+                "volume": "10",
+            }
+        ]
+        provider = OhlcvProvider(
+            _FakeGmoClient({("SOL_JPY", "15min", "20260311"): rows}),
+            now_provider=lambda: now,
+        )
+
+        bars = provider.fetch_bars("SOL/JPY", "15m", 1)
+
+        self.assertEqual(1, len(bars))
+        self.assertEqual(datetime(2026, 3, 10, 21, 45, tzinfo=UTC), bars[0].open_time)
+
 
 if __name__ == "__main__":
     unittest.main()

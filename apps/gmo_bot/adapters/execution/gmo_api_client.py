@@ -124,7 +124,7 @@ class GmoApiClient:
         symbol: str,
         side: str,
         execution_type: str,
-        settle_positions: list[dict[str, Any]],
+        settle_position: dict[str, Any],
         price: float | None = None,
         time_in_force: str | None = None,
     ) -> int:
@@ -132,7 +132,7 @@ class GmoApiClient:
             "symbol": symbol,
             "side": side,
             "executionType": execution_type,
-            "settlePosition": settle_positions,
+            "settlePosition": settle_position,
         }
         if price is not None:
             body["price"] = _decimal_str(price)
@@ -140,6 +140,29 @@ class GmoApiClient:
             body["timeInForce"] = time_in_force
         payload = self.private_post("/v1/closeOrder", body)
         return _extract_order_id(payload, path="/v1/closeOrder")
+
+    def create_close_bulk_order(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        execution_type: str,
+        size: float,
+        price: float | None = None,
+        time_in_force: str | None = None,
+    ) -> int:
+        body: dict[str, Any] = {
+            "symbol": symbol,
+            "side": side,
+            "executionType": execution_type,
+            "size": _decimal_str(size),
+        }
+        if price is not None:
+            body["price"] = _decimal_str(price)
+        if time_in_force is not None:
+            body["timeInForce"] = time_in_force
+        payload = self.private_post("/v1/closeBulkOrder", body)
+        return _extract_order_id(payload, path="/v1/closeBulkOrder")
 
     def get_order(self, order_id: int) -> dict[str, Any] | None:
         payload = self.private_get("/v1/orders", {"orderId": order_id})
@@ -149,6 +172,13 @@ class GmoApiClient:
                 if isinstance(item, dict) and int(item.get("orderId", 0)) == order_id:
                     return item
             return None
+        if isinstance(data, dict):
+            nested_list = data.get("list")
+            if isinstance(nested_list, list):
+                for item in nested_list:
+                    if isinstance(item, dict) and int(item.get("orderId", 0)) == order_id:
+                        return item
+                return None
         raise RuntimeError(f"GMO orders payload invalid for order_id={order_id}")
 
     def get_executions(self, order_id: int) -> list[dict[str, Any]]:
@@ -163,26 +193,46 @@ class GmoApiClient:
         raise RuntimeError(f"GMO executions payload invalid for order_id={order_id}")
 
     def get_open_positions(self, symbol: str) -> list[dict[str, Any]]:
-        payload = self.private_get("/v1/openPositions", {"symbol": symbol})
-        data = payload.get("data")
-        if isinstance(data, list):
-            return [item for item in data if isinstance(item, dict)]
-        if isinstance(data, dict):
+        positions: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            payload = self.private_get("/v1/openPositions", {"symbol": symbol, "page": page, "count": 100})
+            data = payload.get("data")
+            if isinstance(data, list):
+                if page > 1:
+                    raise RuntimeError(f"GMO openPositions payload invalid for symbol={symbol}")
+                return [item for item in data if isinstance(item, dict)]
+            if not isinstance(data, dict):
+                raise RuntimeError(f"GMO openPositions payload invalid for symbol={symbol}")
             nested_list = data.get("list")
-            if isinstance(nested_list, list):
-                return [item for item in nested_list if isinstance(item, dict)]
-        raise RuntimeError(f"GMO openPositions payload invalid for symbol={symbol}")
+            if not isinstance(nested_list, list):
+                raise RuntimeError(f"GMO openPositions payload invalid for symbol={symbol}")
+            page_items = [item for item in nested_list if isinstance(item, dict)]
+            positions.extend(page_items)
+            if len(nested_list) < 100:
+                return positions
+            page += 1
 
     def get_active_orders(self, symbol: str) -> list[dict[str, Any]]:
-        payload = self.private_get("/v1/activeOrders", {"symbol": symbol})
-        data = payload.get("data")
-        if isinstance(data, list):
-            return [item for item in data if isinstance(item, dict)]
-        if isinstance(data, dict):
+        orders: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            payload = self.private_get("/v1/activeOrders", {"symbol": symbol, "page": page, "count": 100})
+            data = payload.get("data")
+            if isinstance(data, list):
+                if page > 1:
+                    raise RuntimeError(f"GMO activeOrders payload invalid for symbol={symbol}")
+                return [item for item in data if isinstance(item, dict)]
+            if not isinstance(data, dict):
+                raise RuntimeError(f"GMO activeOrders payload invalid for symbol={symbol}")
             nested_list = data.get("list")
-            if isinstance(nested_list, list):
-                return [item for item in nested_list if isinstance(item, dict)]
-        raise RuntimeError(f"GMO activeOrders payload invalid for symbol={symbol}")
+            if not isinstance(nested_list, list):
+                raise RuntimeError(f"GMO activeOrders payload invalid for symbol={symbol}")
+            page_items = [item for item in nested_list if isinstance(item, dict)]
+            orders.extend(page_items)
+            if len(nested_list) < 100:
+                return orders
+            page += 1
 
     def cancel_order(self, order_id: int) -> None:
         self.private_post("/v1/cancelOrder", {"orderId": order_id})

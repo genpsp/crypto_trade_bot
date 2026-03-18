@@ -24,10 +24,22 @@ class GmoApiClientOrderIdParsingTest(unittest.TestCase):
                 symbol="SOL_JPY",
                 side="SELL",
                 execution_type="MARKET",
-                settle_positions=[{"positionId": 1, "size": "0.1"}],
+                settle_position={"positionId": 1, "size": "0.1"},
             )
 
         self.assertEqual(8216882125, order_id)
+
+    def test_create_close_bulk_order_accepts_string_order_id_payload(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        with patch.object(client, "private_post", return_value={"status": 0, "data": "8216882126"}):
+            order_id = client.create_close_bulk_order(
+                symbol="SOL_JPY",
+                side="SELL",
+                execution_type="MARKET",
+                size=0.3,
+            )
+
+        self.assertEqual(8216882126, order_id)
 
     def test_get_executions_accepts_bare_list_payload(self) -> None:
         client = GmoApiClient(api_key="key", api_secret="secret")
@@ -44,6 +56,17 @@ class GmoApiClientOrderIdParsingTest(unittest.TestCase):
             executions = client.get_executions(8216882515)
 
         self.assertEqual([{"executionId": 1530581068, "side": "SELL"}], executions)
+
+    def test_get_order_accepts_nested_list_payload(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        payload = {
+            "status": 0,
+            "data": {"pagination": {"currentPage": 1, "count": 1}, "list": [{"orderId": 123, "status": "ORDERED"}]},
+        }
+        with patch.object(client, "private_get", return_value=payload):
+            order = client.get_order(123)
+
+        self.assertEqual({"orderId": 123, "status": "ORDERED"}, order)
 
     def test_create_ws_access_token_accepts_string_payload(self) -> None:
         client = GmoApiClient(api_key="key", api_secret="secret")
@@ -109,6 +132,23 @@ class GmoApiClientOrderIdParsingTest(unittest.TestCase):
 
         self.assertEqual([{"positionId": 10, "size": "0.5"}], positions)
 
+    def test_get_open_positions_paginates_until_short_page(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        page1 = {
+            "status": 0,
+            "data": {"pagination": {"currentPage": 1, "count": 100}, "list": [{"positionId": index} for index in range(100)]},
+        }
+        page2 = {
+            "status": 0,
+            "data": {"pagination": {"currentPage": 2, "count": 1}, "list": [{"positionId": 100}]},
+        }
+        with patch.object(client, "private_get", side_effect=[page1, page2]) as get_mock:
+            positions = client.get_open_positions("SOL_JPY")
+
+        self.assertEqual(101, len(positions))
+        self.assertEqual({"symbol": "SOL_JPY", "page": 1, "count": 100}, get_mock.call_args_list[0].args[1])
+        self.assertEqual({"symbol": "SOL_JPY", "page": 2, "count": 100}, get_mock.call_args_list[1].args[1])
+
     def test_get_active_orders_accepts_list_payload(self) -> None:
         client = GmoApiClient(api_key="key", api_secret="secret")
         payload = {"status": 0, "data": [{"orderId": 123, "settleType": "CLOSE"}]}
@@ -127,6 +167,23 @@ class GmoApiClientOrderIdParsingTest(unittest.TestCase):
             orders = client.get_active_orders("SOL_JPY")
 
         self.assertEqual([{"orderId": 123, "settleType": "CLOSE"}], orders)
+
+    def test_get_active_orders_paginates_until_short_page(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        page1 = {
+            "status": 0,
+            "data": {"pagination": {"currentPage": 1, "count": 100}, "list": [{"orderId": index} for index in range(100)]},
+        }
+        page2 = {
+            "status": 0,
+            "data": {"pagination": {"currentPage": 2, "count": 1}, "list": [{"orderId": 100}]},
+        }
+        with patch.object(client, "private_get", side_effect=[page1, page2]) as get_mock:
+            orders = client.get_active_orders("SOL_JPY")
+
+        self.assertEqual(101, len(orders))
+        self.assertEqual({"symbol": "SOL_JPY", "page": 1, "count": 100}, get_mock.call_args_list[0].args[1])
+        self.assertEqual({"symbol": "SOL_JPY", "page": 2, "count": 100}, get_mock.call_args_list[1].args[1])
 
 
 if __name__ == "__main__":
