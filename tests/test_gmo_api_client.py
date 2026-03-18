@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from apps.gmo_bot.adapters.execution.gmo_api_client import GmoApiClient
 
@@ -55,6 +58,30 @@ class GmoApiClientOrderIdParsingTest(unittest.TestCase):
             client.extend_ws_access_token("token_123")
 
         put_mock.assert_called_once_with("/v1/ws-auth", {"token": "token_123"})
+
+    def test_private_put_ws_auth_signs_without_body(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"status": 0, "data": None}
+
+        with patch("apps.gmo_bot.adapters.execution.gmo_api_client.time.time", return_value=1234.567):
+            with patch.object(client.session, "request", return_value=response) as request_mock:
+                client.private_put("/v1/ws-auth", {"token": "token_123"})
+
+        headers = request_mock.call_args.kwargs["headers"]
+        payload = request_mock.call_args.kwargs["data"]
+        expected_timestamp = "1234567"
+        expected_sign_text = expected_timestamp + "PUT" + "/v1/ws-auth"
+        expected_sign = hmac.new(
+            b"secret",
+            expected_sign_text.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+        self.assertEqual(json.dumps({"token": "token_123"}, separators=(",", ":")), payload)
+        self.assertEqual(expected_timestamp, headers["API-TIMESTAMP"])
+        self.assertEqual(expected_sign, headers["API-SIGN"])
 
     def test_cancel_order_posts_order_id(self) -> None:
         client = GmoApiClient(api_key="key", api_secret="secret")

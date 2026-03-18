@@ -205,7 +205,7 @@ class GmoApiClient:
         if private:
             timestamp = str(int(time.time() * 1000))
             text = timestamp + method.upper() + path
-            if payload is not None:
+            if payload is not None and _should_sign_private_body(method.upper(), path):
                 text += payload
             sign = hmac.new(self.api_secret, text.encode("utf-8"), hashlib.sha256).hexdigest()
             headers.update(
@@ -254,6 +254,11 @@ def _build_gmo_error_message(payload: dict[str, Any]) -> str:
         if parts:
             return f"GMO API error status={payload.get('status')}: {' | '.join(parts)}"
     return f"GMO API error status={payload.get('status')}: {payload}"
+
+
+def _should_sign_private_body(method: str, path: str) -> bool:
+    # GMO's ws-auth PUT/DELETE examples sign only timestamp + method + path.
+    return not (path == "/v1/ws-auth" and method in {"PUT", "DELETE"})
 
 
 def _extract_order_id(payload: dict[str, Any], *, path: str) -> int:
