@@ -132,7 +132,7 @@ class GmoApiClient:
             "symbol": symbol,
             "side": side,
             "executionType": execution_type,
-            "settlePosition": settle_position,
+            "settlePosition": [settle_position],
         }
         if price is not None:
             body["price"] = _decimal_str(price)
@@ -252,6 +252,7 @@ class GmoApiClient:
         payload: str | None = None
         if body is not None:
             payload = json.dumps(body, separators=(",", ":"))
+            headers["Content-Type"] = "application/json"
         if private:
             timestamp = str(int(time.time() * 1000))
             text = timestamp + method.upper() + path

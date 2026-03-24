@@ -10,12 +10,61 @@ from apps.gmo_bot.adapters.execution.gmo_api_client import GmoApiClient
 
 
 class GmoApiClientOrderIdParsingTest(unittest.TestCase):
+    def test_create_order_posts_expected_body_shape(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        with patch.object(client, "private_post", return_value={"status": 0, "data": "8216832940"}) as post_mock:
+            client.create_order(
+                symbol="SOL_JPY",
+                side="BUY",
+                execution_type="LIMIT",
+                size=0.1,
+                price=15000.0,
+                time_in_force="FAK",
+            )
+
+        post_mock.assert_called_once_with(
+            "/v1/order",
+            {
+                "symbol": "SOL_JPY",
+                "side": "BUY",
+                "executionType": "LIMIT",
+                "size": "0.1",
+                "price": "15000",
+                "timeInForce": "FAK",
+            },
+        )
+
     def test_create_order_accepts_string_order_id_payload(self) -> None:
         client = GmoApiClient(api_key="key", api_secret="secret")
         with patch.object(client, "private_post", return_value={"status": 0, "data": "8216832940"}):
             order_id = client.create_order(symbol="SOL_JPY", side="BUY", execution_type="MARKET", size=0.1)
 
         self.assertEqual(8216832940, order_id)
+
+    def test_create_close_order_posts_settle_position_as_single_item_array(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        settle_position = {"positionId": 1, "size": "0.1"}
+        with patch.object(client, "private_post", return_value={"status": 0, "data": "8216882125"}) as post_mock:
+            client.create_close_order(
+                symbol="SOL_JPY",
+                side="SELL",
+                execution_type="STOP",
+                settle_position=settle_position,
+                price=14900.0,
+                time_in_force="FAK",
+            )
+
+        post_mock.assert_called_once_with(
+            "/v1/closeOrder",
+            {
+                "symbol": "SOL_JPY",
+                "side": "SELL",
+                "executionType": "STOP",
+                "settlePosition": [settle_position],
+                "price": "14900",
+                "timeInForce": "FAK",
+            },
+        )
 
     def test_create_close_order_accepts_string_order_id_payload(self) -> None:
         client = GmoApiClient(api_key="key", api_secret="secret")
@@ -28,6 +77,30 @@ class GmoApiClientOrderIdParsingTest(unittest.TestCase):
             )
 
         self.assertEqual(8216882125, order_id)
+
+    def test_create_close_bulk_order_posts_expected_body_shape(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        with patch.object(client, "private_post", return_value={"status": 0, "data": "8216882126"}) as post_mock:
+            client.create_close_bulk_order(
+                symbol="SOL_JPY",
+                side="SELL",
+                execution_type="STOP",
+                size=0.3,
+                price=14900.0,
+                time_in_force="FAK",
+            )
+
+        post_mock.assert_called_once_with(
+            "/v1/closeBulkOrder",
+            {
+                "symbol": "SOL_JPY",
+                "side": "SELL",
+                "executionType": "STOP",
+                "size": "0.3",
+                "price": "14900",
+                "timeInForce": "FAK",
+            },
+        )
 
     def test_create_close_bulk_order_accepts_string_order_id_payload(self) -> None:
         client = GmoApiClient(api_key="key", api_secret="secret")
@@ -105,6 +178,19 @@ class GmoApiClientOrderIdParsingTest(unittest.TestCase):
         self.assertEqual(json.dumps({"token": "token_123"}, separators=(",", ":")), payload)
         self.assertEqual(expected_timestamp, headers["API-TIMESTAMP"])
         self.assertEqual(expected_sign, headers["API-SIGN"])
+        self.assertEqual("application/json", headers["Content-Type"])
+
+    def test_private_post_sets_json_content_type_header(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"status": 0, "data": "8216832940"}
+
+        with patch.object(client.session, "request", return_value=response) as request_mock:
+            client.private_post("/v1/order", {"symbol": "SOL_JPY"})
+
+        headers = request_mock.call_args.kwargs["headers"]
+        self.assertEqual("application/json", headers["Content-Type"])
 
     def test_cancel_order_posts_order_id(self) -> None:
         client = GmoApiClient(api_key="key", api_secret="secret")
