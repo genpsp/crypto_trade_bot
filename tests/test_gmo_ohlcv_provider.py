@@ -3,14 +3,24 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import unittest
 
+import requests
+
 from apps.gmo_bot.adapters.market_data.ohlcv_provider import OhlcvProvider
 
 
 class _FakeGmoClient:
-    def __init__(self, rows_by_key: dict[tuple[str, str, str], list[dict]]):
+    def __init__(
+        self,
+        rows_by_key: dict[tuple[str, str, str], list[dict]],
+        errors_by_key: dict[tuple[str, str, str], Exception] | None = None,
+    ):
         self.rows_by_key = rows_by_key
+        self.errors_by_key = errors_by_key or {}
 
     def get_klines(self, symbol: str, interval: str, date: str) -> list[dict]:
+        error = self.errors_by_key.get((symbol, interval, date))
+        if error is not None:
+            raise error
         return list(self.rows_by_key.get((symbol, interval, date), []))
 
 
@@ -134,6 +144,37 @@ class GmoOhlcvProviderTest(unittest.TestCase):
 
         self.assertEqual(1, len(bars))
         self.assertEqual(datetime(2026, 3, 10, 21, 45, tzinfo=UTC), bars[0].open_time)
+
+    def test_fetch_bars_falls_back_to_previous_date_when_new_jst_bucket_404s(self) -> None:
+        now = datetime(2026, 3, 24, 21, 0, tzinfo=UTC)
+        previous_bucket_rows = [
+            {
+                "openTime": str(int(datetime(2026, 3, 24, 20, 45, tzinfo=UTC).timestamp() * 1000)),
+                "open": "100",
+                "high": "101",
+                "low": "99",
+                "close": "100.5",
+                "volume": "10",
+            }
+        ]
+        response = requests.Response()
+        response.status_code = 404
+        boundary_error = requests.HTTPError(
+            "404 Client Error: Not Found for url: https://api.coin.z.com/public/v1/klines",
+            response=response,
+        )
+        provider = OhlcvProvider(
+            _FakeGmoClient(
+                {("SOL_JPY", "15min", "20260324"): previous_bucket_rows},
+                errors_by_key={("SOL_JPY", "15min", "20260325"): boundary_error},
+            ),
+            now_provider=lambda: now,
+        )
+
+        bars = provider.fetch_bars("SOL/JPY", "15m", 1)
+
+        self.assertEqual(1, len(bars))
+        self.assertEqual(datetime(2026, 3, 24, 20, 45, tzinfo=UTC), bars[0].open_time)
 
 
 if __name__ == "__main__":

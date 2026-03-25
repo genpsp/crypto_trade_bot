@@ -5,6 +5,7 @@ import json
 from typing import Any, Callable
 
 from redis import Redis
+import requests
 
 from apps.dex_bot.domain.model.types import OhlcvBar
 from apps.gmo_bot.adapters.execution.gmo_api_client import GmoApiClient
@@ -64,7 +65,14 @@ class OhlcvProvider(MarketDataPort):
             cache_key = f"cache:gmo:ohlcv:{symbol}:{interval}:{date_token}"
             rows = self._get_cached_rows(cache_key)
             if rows is None:
-                rows = self.client.get_klines(symbol=symbol, interval=interval, date=date_token)
+                try:
+                    rows = self.client.get_klines(symbol=symbol, interval=interval, date=date_token)
+                except requests.HTTPError as error:
+                    if self._should_fallback_previous_date_token(error, cursor, fetched_at, interval):
+                        cursor = self._step_cursor(cursor, interval)
+                        attempts += 1
+                        continue
+                    raise
                 self._set_cached_rows(cache_key, rows)
             for row in rows:
                 bar = self._row_to_bar(row, interval)
@@ -124,6 +132,23 @@ class OhlcvProvider(MarketDataPort):
         if limit <= 1_000:
             return max(40, ((limit - 1) // bars_per_token) + 10)
         return max(400, ((limit - 1) // bars_per_token) + 10)
+
+    def _should_fallback_previous_date_token(
+        self,
+        error: requests.HTTPError,
+        cursor: datetime,
+        fetched_at: datetime,
+        interval: str,
+    ) -> bool:
+        if interval == "4hour":
+            return False
+        response = getattr(error, "response", None)
+        if response is None or response.status_code != 404:
+            return False
+        # GMO's intraday klines switch at JST 06:00, but the new day's bucket
+        # can briefly lag right after the boundary. In that case the previous
+        # date token still contains the latest confirmed bar.
+        return self._date_token(cursor, interval) == self._date_token(fetched_at, interval)
 
     def _now(self) -> datetime:
         current = self.now_provider() if self.now_provider else datetime.now(tz=UTC)
