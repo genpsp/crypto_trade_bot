@@ -294,8 +294,13 @@ def bootstrap() -> AppRuntime:
     def _compute_gmo_close_metrics(trade: TradeRecord) -> tuple[float | None, float, float | None]:
         position = _as_dict(trade.get("position"))
         execution = _as_dict(trade.get("execution"))
-        realized_pnl = _to_float(execution.get("realized_pnl_jpy"))
         exit_result = _as_dict(execution.get("exit_result"))
+
+        # Close notifications should describe the just-confirmed exit leg, not the
+        # cumulative trade PnL. Partial closes can leave cumulative PnL negative
+        # even when the final exit is TAKE_PROFIT, which is confusing in Slack.
+        realized_pnl = _to_float(exit_result.get("realized_pnl_jpy"))
+        event_fee = _to_float(exit_result.get("fee_jpy"))
 
         entry_quote = _to_float(position.get("quote_amount_jpy"))
         exit_quote = _to_float(exit_result.get("filled_quote_jpy"))
@@ -321,7 +326,12 @@ def bootstrap() -> AppRuntime:
         if gross_pnl is None and entry_quote is not None and exit_quote is not None:
             gross_pnl = entry_quote - exit_quote if direction == "SHORT" else exit_quote - entry_quote
 
-        fee = (_to_float(execution.get("entry_fee_jpy")) or 0.0) + (_to_float(execution.get("exit_fee_jpy")) or 0.0)
+        fee = event_fee
+        if fee is None:
+            fee = _to_float(execution.get("exit_fee_jpy"))
+        if fee is None and gross_pnl is None:
+            fee = (_to_float(execution.get("entry_fee_jpy")) or 0.0) + (_to_float(execution.get("exit_fee_jpy")) or 0.0)
+        fee = fee or 0.0
         net_pnl = gross_pnl - fee if gross_pnl is not None else None
         return gross_pnl, fee, net_pnl
 

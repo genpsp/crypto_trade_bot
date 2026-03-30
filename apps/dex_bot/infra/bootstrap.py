@@ -23,6 +23,8 @@ from apps.dex_bot.domain.model.types import TradeRecord
 from apps.dex_bot.infra.alerting import SlackAlertConfig, SlackNotifier, is_execution_error_result
 from apps.dex_bot.infra.alerting.daily_trade_summary import (
     JST,
+    _compute_trade_realized_pnl_usdc,
+    _estimate_trade_fees_usdc,
     build_daily_summary_report,
     build_daily_summary_window,
     iter_utc_day_ids,
@@ -52,6 +54,13 @@ DAILY_SUMMARY_JST_END_MINUTE_EXCLUSIVE = 15
 DAILY_SUMMARY_LOCK_TTL_SECONDS = 60 * 60 * 48
 DAILY_SUMMARY_LOCK_KEY_PREFIX = "alert:daily_summary:jst"
 RUNTIME_REFRESH_FALLBACK_INTERVAL_SECONDS = 900
+
+
+def _compute_dex_close_metrics(trade: TradeRecord) -> tuple[float | None, float | None, float | None]:
+    gross_pnl = _compute_trade_realized_pnl_usdc(trade)
+    fee = _estimate_trade_fees_usdc(trade)
+    net_pnl = gross_pnl - fee if gross_pnl is not None else None
+    return gross_pnl, fee, net_pnl
 
 
 @dataclass
@@ -315,37 +324,6 @@ def bootstrap() -> AppRuntime:
         if isinstance(value, dict):
             return value
         return {}
-
-    def _compute_dex_close_metrics(trade: TradeRecord) -> tuple[float | None, float | None, float | None]:
-        position = _as_dict(trade.get("position"))
-        execution = _as_dict(trade.get("execution"))
-        exit_result = _as_dict(execution.get("exit_result"))
-
-        entry_quote = _to_float(position.get("quote_amount_usdc"))
-        exit_quote = _to_float(exit_result.get("spent_quote_usdc"))
-        if exit_quote is None:
-            quantity = _to_float(position.get("quantity_sol"))
-            exit_price = _to_float(position.get("exit_price"))
-            if quantity is not None and exit_price is not None:
-                exit_quote = quantity * exit_price
-
-        gross_pnl: float | None = None
-        direction = str(trade.get("direction") or "LONG")
-        if entry_quote is not None and exit_quote is not None:
-            gross_pnl = entry_quote - exit_quote if direction == "SHORT" else exit_quote - entry_quote
-
-        entry_fee = _to_float(execution.get("entry_fee_lamports")) or 0.0
-        exit_fee = _to_float(execution.get("exit_fee_lamports")) or 0.0
-        total_lamports = entry_fee + exit_fee
-        fee_usdc = 0.0
-        if total_lamports > 0:
-            price_ref = _to_float(position.get("exit_price")) or _to_float(position.get("entry_price"))
-            if price_ref is not None and price_ref > 0:
-                fee_usdc = (total_lamports / 1_000_000_000) * price_ref
-        fee = fee_usdc if total_lamports > 0 else 0.0
-
-        net_pnl = gross_pnl - fee if gross_pnl is not None else None
-        return gross_pnl, fee, net_pnl
 
     def _maybe_notify_trade_closed(context: ModelRuntimeContext, result: dict[str, str | None]) -> None:
         if result.get("result") != "CLOSED":

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from apps.dex_bot.infra.bootstrap import _should_execute_cycle
+from apps.dex_bot.infra.bootstrap import _compute_dex_close_metrics, _should_execute_cycle
 
 
 class BootstrapPauseGateTest(unittest.TestCase):
@@ -45,6 +45,29 @@ class BootstrapPauseGateTest(unittest.TestCase):
             pause_all=False,
         )
         self.assertFalse(should_run)
+
+    def test_compute_dex_close_metrics_uses_short_base_delta_profit(self) -> None:
+        gross_pnl, fee, net_pnl = _compute_dex_close_metrics(
+            {
+                "direction": "SHORT",
+                "position": {
+                    "quote_amount_usdc": 100.0,
+                    "quantity_sol": 1.0,
+                    "entry_price": 100.0,
+                    "exit_price": 80.0,
+                },
+                "execution": {
+                    "exit_result": {
+                        "spent_quote_usdc": 100.0,
+                        "filled_base_sol": 1.25,
+                    }
+                },
+            }
+        )
+
+        self.assertAlmostEqual(20.0, gross_pnl)
+        self.assertAlmostEqual(0.0, fee)
+        self.assertAlmostEqual(20.0, net_pnl)
 
 
 if __name__ == "__main__":

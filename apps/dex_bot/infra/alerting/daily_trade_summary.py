@@ -256,20 +256,28 @@ def _compute_trade_realized_pnl_usdc(trade: dict[str, Any]) -> float | None:
     exit_result = _as_dict(execution.get("exit_result"))
 
     entry_quote = _to_float(position.get("quote_amount_usdc"))
-    if entry_quote is None:
-        return None
+    quantity = _to_float(position.get("quantity_sol"))
+    exit_price = _to_float(position.get("exit_price"))
+    direction = str(trade.get("direction") or "LONG")
 
     exit_quote = _to_float(exit_result.get("spent_quote_usdc"))
     if exit_quote is None:
-        quantity = _to_float(position.get("quantity_sol"))
-        exit_price = _to_float(position.get("exit_price"))
         if quantity is None or exit_price is None:
             return None
         exit_quote = quantity * exit_price
 
-    direction = str(trade.get("direction") or "LONG")
     if direction == "SHORT":
+        exit_base = _to_float(exit_result.get("filled_base_sol"))
+        if quantity is not None and exit_price is not None:
+            if exit_base is not None:
+                return (exit_base - quantity) * exit_price
+            if entry_quote is not None:
+                return entry_quote - (quantity * exit_price)
+        if entry_quote is None:
+            return None
         return entry_quote - exit_quote
+    if entry_quote is None:
+        return None
     return exit_quote - entry_quote
 
 
