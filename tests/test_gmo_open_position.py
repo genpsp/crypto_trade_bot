@@ -23,7 +23,16 @@ class _FakeExecution:
     def submit_protective_exit_orders(self, request):
         self.protective_request = request
         return ProtectiveExitOrdersSubmission(
-            stop_loss_order=OrderSubmission(order_id=789, order={"order_id": 789, "price": request.stop_price}),
+            stop_loss_order=OrderSubmission(
+                order_id=789,
+                order={"order_id": 789, "price": request.stop_price, "position_id": 999, "size_sol": 5.0},
+            ),
+            stop_loss_orders=[
+                OrderSubmission(
+                    order_id=789,
+                    order={"order_id": 789, "price": request.stop_price, "position_id": 999, "size_sol": 5.0},
+                )
+            ],
         )
 
     def confirm_order(self, order_id: int, timeout_ms: int):

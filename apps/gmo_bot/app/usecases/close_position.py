@@ -498,8 +498,15 @@ def apply_confirmed_exit_result(
         realized_increment_jpy = (
             closed_entry_quote_jpy - filled_quote_jpy if direction == "SHORT" else filled_quote_jpy - closed_entry_quote_jpy
         )
-    existing_realized_pnl_jpy = _to_float(trade["execution"].get("realized_pnl_jpy")) or 0.0
-    trade["execution"]["realized_pnl_jpy"] = round_to(existing_realized_pnl_jpy + realized_increment_jpy, 6)
+    trade["execution"]["exit_leg_realized_pnl_jpy"] = round_to(realized_increment_jpy, 6)
+    existing_realized_pnl_jpy = (
+        _to_float(trade["execution"].get("total_realized_pnl_jpy"))
+        or _to_float(trade["execution"].get("realized_pnl_jpy"))
+        or 0.0
+    )
+    total_realized_pnl_jpy = round_to(existing_realized_pnl_jpy + realized_increment_jpy, 6)
+    trade["execution"]["total_realized_pnl_jpy"] = total_realized_pnl_jpy
+    trade["execution"]["realized_pnl_jpy"] = total_realized_pnl_jpy
 
     remaining_quantity_sol = max(open_quantity_sol - filled_size_sol, 0.0)
     remaining_quote_amount_jpy = max(open_quote_amount_jpy - closed_entry_quote_jpy, 0.0)

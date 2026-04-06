@@ -437,6 +437,7 @@ class GmoBootstrapNotificationsTest(unittest.TestCase):
                 "entry_fee_jpy": 3.0,
                 "exit_fee_jpy": 4.0,
                 "realized_pnl_jpy": -56.0,
+                "exit_leg_realized_pnl_jpy": 29.0,
                 "exit_result": {
                     "fee_jpy": 1.0,
                     "realized_pnl_jpy": 29.0,

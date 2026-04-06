@@ -356,11 +356,17 @@ class GmoRunCyclePersistenceTest(unittest.TestCase):
                 "take_profit_order_status": "CLIENT_MANAGED",
                 "stop_loss_order_id": 123,
                 "stop_loss_order_status": "WAITING",
+                "stop_loss_orders": [
+                    {"order_id": 123, "status": "WAITING", "position_id": 10, "size_sol": 0.5},
+                ],
             },
             "position": {
                 "status": "OPEN",
+                "quantity_sol": 0.5,
+                "quote_amount_jpy": 5000.0,
                 "stop_price": 10010.0,
                 "take_profit_price": 10100.0,
+                "lots": [{"position_id": 10, "size_sol": 0.5}],
             },
         }
         persistence = _OpenTradePersistence(config, trade)
@@ -398,11 +404,17 @@ class GmoRunCyclePersistenceTest(unittest.TestCase):
                 "take_profit_order_status": "CLIENT_MANAGED",
                 "stop_loss_order_id": 123,
                 "stop_loss_order_status": "WAITING",
+                "stop_loss_orders": [
+                    {"order_id": 123, "status": "WAITING", "position_id": 10, "size_sol": 0.5},
+                ],
             },
             "position": {
                 "status": "OPEN",
+                "quantity_sol": 0.5,
+                "quote_amount_jpy": 5000.0,
                 "stop_price": 10010.0,
                 "take_profit_price": 10100.0,
+                "lots": [{"position_id": 10, "size_sol": 0.5}],
             },
         }
         persistence = _OpenTradePersistence(config, trade)
@@ -471,6 +483,55 @@ class GmoRunCyclePersistenceTest(unittest.TestCase):
 
         self.assertEqual("HOLD", run["result"])
         self.assertEqual("PENDING: protective exit execution pending settlement details", run["summary"])
+
+    def test_incomplete_stop_loss_coverage_triggers_rearm_attempt(self) -> None:
+        config = _build_config()
+        trade: TradeRecord = {
+            "trade_id": "trade_incomplete_stop_coverage",
+            "pair": "SOL/JPY",
+            "direction": "LONG",
+            "state": "CONFIRMED",
+            "execution": {
+                "take_profit_order_status": "CLIENT_MANAGED",
+                "stop_loss_order_id": 123,
+                "stop_loss_order_status": "WAITING",
+                "stop_loss_orders": [
+                    {"order_id": 123, "status": "WAITING", "position_id": 10, "size_sol": 0.2},
+                ],
+            },
+            "position": {
+                "status": "OPEN",
+                "entry_price": 10050.0,
+                "stop_price": 10010.0,
+                "take_profit_price": 10100.0,
+                "quantity_sol": 0.5,
+                "quote_amount_jpy": 5025.0,
+                "lots": [
+                    {"position_id": 10, "size_sol": 0.2},
+                    {"position_id": 11, "size_sol": 0.3},
+                ],
+            },
+        }
+        persistence = _OpenTradePersistence(config, trade)
+        deps = RunCycleDependencies(
+            execution=_StaticPriceExecution(10050.0),
+            lock=_DummyLock(),
+            logger=_DummyLogger(),
+            market_data=_DummyMarketData([]),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 17, 3, 40, tzinfo=UTC),
+        )
+
+        with patch(
+            "apps.gmo_bot.app.usecases.run_cycle.arm_protective_exit_orders",
+            return_value=SimpleNamespace(status="FAILED", summary="FAILED: protective stop coverage does not match tracked lots"),
+        ) as arm_mock:
+            run = run_cycle(deps)
+
+        arm_mock.assert_called_once()
+        self.assertEqual("HOLD", run["result"])
+        self.assertEqual("HOLD: open position exists and no exit trigger fired on this bar", run["summary"])
 
     def test_take_profit_trigger_is_latched_and_retried_after_price_falls_back(self) -> None:
         config = _build_config()
@@ -547,12 +608,18 @@ class GmoRunCyclePersistenceTest(unittest.TestCase):
                 "take_profit_trigger_price": 10110.0,
                 "stop_loss_order_id": 123,
                 "stop_loss_order_status": "WAITING",
+                "stop_loss_orders": [
+                    {"order_id": 123, "status": "WAITING", "position_id": 10, "size_sol": 0.5},
+                ],
             },
             "position": {
                 "status": "OPEN",
                 "entry_price": 10050.0,
                 "stop_price": 10010.0,
                 "take_profit_price": 10100.0,
+                "quantity_sol": 0.5,
+                "quote_amount_jpy": 5025.0,
+                "lots": [{"position_id": 10, "size_sol": 0.5}],
             },
         }
         persistence = _OpenTradePersistence(config, trade)

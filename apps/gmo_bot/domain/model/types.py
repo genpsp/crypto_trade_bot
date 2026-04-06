@@ -104,6 +104,8 @@ class TradeExecutionSnapshot(TypedDict, total=False):
     exit_submission_state: Literal["SUBMITTED", "CONFIRMED", "FAILED"]
     entry_fee_jpy: float
     exit_fee_jpy: float
+    total_realized_pnl_jpy: float
+    exit_leg_realized_pnl_jpy: float
     realized_pnl_jpy: float
     entry_error: str
     exit_error: str

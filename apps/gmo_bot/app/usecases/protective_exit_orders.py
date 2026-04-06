@@ -14,6 +14,61 @@ from shared.utils.math import round_to
 
 ACTIVE_EXIT_ORDER_STATUSES = {"SUBMITTED", "ORDERED", "WAITING"}
 INACTIVE_EXIT_ORDER_STATUSES = {"CANCELED", "EXECUTED", "EXPIRED", "FAILED", "INACTIVE"}
+POSITION_SIZE_EPSILON = 1e-9
+
+
+def _to_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _tracked_lot_sizes(trade: TradeRecord) -> dict[int, float]:
+    position = trade.get("position", {})
+    if not isinstance(position, dict):
+        return {}
+    raw_lots = position.get("lots")
+    if not isinstance(raw_lots, list):
+        return {}
+    tracked_lots: dict[int, float] = {}
+    for item in raw_lots:
+        if not isinstance(item, dict):
+            continue
+        position_id = item.get("position_id")
+        size_sol = _to_float(item.get("size_sol"))
+        if not isinstance(position_id, int) or size_sol is None or size_sol <= 0:
+            continue
+        tracked_lots[position_id] = size_sol
+    return tracked_lots
+
+
+def _has_full_active_stop_loss_coverage(trade: TradeRecord) -> bool:
+    tracked_lots = _tracked_lot_sizes(trade)
+    if not tracked_lots:
+        return False
+    active_orders = [item for item in get_stop_loss_order_snapshots(trade) if item.get("status") in ACTIVE_EXIT_ORDER_STATUSES]
+    if len(active_orders) != len(tracked_lots):
+        return False
+    covered_lots: dict[int, float] = {}
+    for order in active_orders:
+        position_id = order.get("position_id")
+        size_sol = _to_float(order.get("size_sol"))
+        if not isinstance(position_id, int) or size_sol is None or size_sol <= 0:
+            return False
+        covered_lots[position_id] = size_sol
+    if covered_lots.keys() != tracked_lots.keys():
+        return False
+    for position_id, tracked_size in tracked_lots.items():
+        if abs(covered_lots[position_id] - tracked_size) > POSITION_SIZE_EPSILON:
+            return False
+    return True
 
 
 def get_stop_loss_order_snapshots(trade: TradeRecord) -> list[dict]:
@@ -100,7 +155,7 @@ def has_active_protective_exit_orders(trade: TradeRecord) -> bool:
 
 
 def has_active_stop_loss_order(trade: TradeRecord) -> bool:
-    return any(item.get("status") in ACTIVE_EXIT_ORDER_STATUSES for item in get_stop_loss_order_snapshots(trade))
+    return _has_full_active_stop_loss_coverage(trade)
 
 
 def mark_protective_exit_orders_inactive(
@@ -231,6 +286,33 @@ def arm_protective_exit_orders(
             if isinstance(raw_stop_order_price, (int, float)):
                 stop_order_price = float(raw_stop_order_price)
     sync_stop_loss_order_snapshot_fields(trade)
+    if not has_active_stop_loss_order(trade):
+        for item in stop_loss_orders:
+            try:
+                dependencies.execution.cancel_order(item.order_id)
+            except Exception as rollback_error:
+                dependencies.logger.warn(
+                    "failed to cancel partially armed protective stop order",
+                    {
+                        "trade_id": trade.get("trade_id"),
+                        "order_id": item.order_id,
+                        "error": to_error_message(rollback_error),
+                    },
+                )
+        mark_protective_exit_orders_inactive(
+            trade,
+            take_profit_status="FAILED",
+            stop_loss_status="FAILED",
+            error_message="protective stop coverage does not match tracked lots",
+        )
+        dependencies.persistence.update_trade(
+            trade["trade_id"],
+            strip_none({"execution": execution_snapshot, "updated_at": now_iso()}),
+        )
+        return ArmProtectiveExitOrdersResult(
+            status="FAILED",
+            summary="FAILED: protective stop coverage does not match tracked lots",
+        )
 
     dependencies.persistence.update_trade(
         trade["trade_id"],

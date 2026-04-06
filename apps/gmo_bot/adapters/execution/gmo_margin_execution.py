@@ -26,6 +26,7 @@ SYMBOL_RULE_CACHE_TTL_SECONDS = 300
 MARK_PRICE_CACHE_TTL_SECONDS = 2.0
 MARK_PRICE_RATE_LIMIT_RETRY_DELAYS_SECONDS = (0.2, 0.4)
 CLOSE_ORDER_ACTIVE_STATUSES = {"ORDERED", "WAITING", "MODIFYING", "CANCELLING"}
+POSITION_SIZE_EPSILON = 1e-9
 
 
 class GmoMarginExecutionAdapter(ExecutionPort):
@@ -78,6 +79,8 @@ class GmoMarginExecutionAdapter(ExecutionPort):
                 settle_positions = self._build_settle_positions(symbol, request.lots)
         if not settle_positions:
             raise RuntimeError("no settable position lots for protective stop order")
+        if not self._has_full_settle_coverage(symbol, request.lots, settle_positions):
+            raise RuntimeError("not all tracked lots are settable for protective stop order")
         normalized_stop_price = _round_stop_price(
             request.stop_price,
             rule.tick_size,
@@ -86,26 +89,37 @@ class GmoMarginExecutionAdapter(ExecutionPort):
         if normalized_stop_price <= 0:
             raise RuntimeError("protective exit price rounded to 0")
         stop_loss_orders: list[OrderSubmission] = []
-        for settle_position in settle_positions:
-            stop_loss_order_id = self.client.create_close_order(
-                symbol=symbol,
-                side=request.side,
-                execution_type="STOP",
-                settle_position=settle_position,
-                price=normalized_stop_price,
-                time_in_force="FAK",
-            )
-            stop_loss_orders.append(
-                OrderSubmission(
-                    order_id=stop_loss_order_id,
-                    order={
-                        "order_id": stop_loss_order_id,
-                        "price": normalized_stop_price,
-                        "position_id": settle_position["positionId"],
-                        "size_sol": _to_float(settle_position["size"]),
-                    },
+        try:
+            for settle_position in settle_positions:
+                stop_loss_order_id = self.client.create_close_order(
+                    symbol=symbol,
+                    side=request.side,
+                    execution_type="STOP",
+                    settle_position=settle_position,
+                    price=normalized_stop_price,
+                    time_in_force="FAK",
                 )
-            )
+                stop_loss_orders.append(
+                    OrderSubmission(
+                        order_id=stop_loss_order_id,
+                        order={
+                            "order_id": stop_loss_order_id,
+                            "price": normalized_stop_price,
+                            "position_id": settle_position["positionId"],
+                            "size_sol": _to_float(settle_position["size"]),
+                        },
+                    )
+                )
+        except Exception:
+            for created_order in stop_loss_orders:
+                try:
+                    self.client.cancel_order(created_order.order_id)
+                except Exception:
+                    self.logger.warn(
+                        "failed to roll back partially created protective stop order",
+                        {"symbol": symbol, "side": request.side, "order_id": created_order.order_id},
+                    )
+            raise
         return ProtectiveExitOrdersSubmission(
             stop_loss_order=stop_loss_orders[0],
             stop_loss_orders=stop_loss_orders,
@@ -251,6 +265,30 @@ class GmoMarginExecutionAdapter(ExecutionPort):
                 continue
             settle_positions.append({"positionId": position_id, "size": _decimal_str(normalized_requested_size)})
         return settle_positions
+
+    def _has_full_settle_coverage(
+        self,
+        symbol: str,
+        lots: list[dict[str, Any]],
+        settle_positions: list[dict[str, Any]],
+    ) -> bool:
+        requested_positions = self._build_requested_settle_positions(symbol, lots)
+        if len(requested_positions) != len(settle_positions):
+            return False
+
+        requested_by_position_id = {
+            int(item["positionId"]): _to_float(item.get("size")) or 0.0 for item in requested_positions
+        }
+        settle_by_position_id = {
+            int(item["positionId"]): _to_float(item.get("size")) or 0.0 for item in settle_positions
+        }
+        if requested_by_position_id.keys() != settle_by_position_id.keys():
+            return False
+        for position_id, requested_size in requested_by_position_id.items():
+            settle_size = settle_by_position_id[position_id]
+            if abs(settle_size - requested_size) > POSITION_SIZE_EPSILON:
+                return False
+        return True
 
     def _cancel_conflicting_close_orders(self, *, symbol: str, side: str) -> int:
         canceled = 0

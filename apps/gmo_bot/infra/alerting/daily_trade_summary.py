@@ -253,6 +253,9 @@ def _resolve_run_executed_at(run: dict[str, Any]) -> datetime | None:
 def _compute_trade_realized_pnl_jpy(trade: dict[str, Any]) -> float | None:
     position = _as_dict(trade.get("position"))
     execution = _as_dict(trade.get("execution"))
+    total_realized_pnl_jpy = _to_float(execution.get("total_realized_pnl_jpy"))
+    if total_realized_pnl_jpy is not None:
+        return total_realized_pnl_jpy
     realized_pnl_jpy = _to_float(execution.get("realized_pnl_jpy"))
     if realized_pnl_jpy is not None:
         return realized_pnl_jpy

@@ -63,20 +63,31 @@ class PaperExecutionAdapter(ExecutionPort):
         return OrderSubmission(order_id=order_id, order={"order_id": order_id}, result=result)
 
     def submit_protective_exit_orders(self, request: SubmitProtectiveExitOrdersRequest) -> ProtectiveExitOrdersSubmission:
-        sl_order_id = self._next_order_id()
+        stop_loss_orders: list[OrderSubmission] = []
+        for lot in request.lots:
+            sl_order_id = self._next_order_id()
+            stop_loss_orders.append(
+                OrderSubmission(
+                    order_id=sl_order_id,
+                    order={
+                        "order_id": sl_order_id,
+                        "price": request.stop_price,
+                        "position_id": lot["position_id"],
+                        "size_sol": lot["size_sol"],
+                    },
+                )
+            )
         self.logger.info(
             "paper gmo protective stop simulated",
             {
-                "sl_order_id": sl_order_id,
+                "sl_order_ids": [item.order_id for item in stop_loss_orders],
                 "side": request.side,
                 "stop_price": request.stop_price,
             },
         )
         return ProtectiveExitOrdersSubmission(
-            stop_loss_order=OrderSubmission(order_id=sl_order_id, order={"order_id": sl_order_id, "price": request.stop_price}),
-            stop_loss_orders=[
-                OrderSubmission(order_id=sl_order_id, order={"order_id": sl_order_id, "price": request.stop_price})
-            ],
+            stop_loss_order=stop_loss_orders[0] if stop_loss_orders else None,
+            stop_loss_orders=stop_loss_orders,
         )
 
     def confirm_order(self, order_id: int, timeout_ms: int) -> OrderConfirmation:

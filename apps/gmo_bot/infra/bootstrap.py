@@ -299,7 +299,9 @@ def bootstrap() -> AppRuntime:
         # Close notifications should describe the just-confirmed exit leg, not the
         # cumulative trade PnL. Partial closes can leave cumulative PnL negative
         # even when the final exit is TAKE_PROFIT, which is confusing in Slack.
-        realized_pnl = _to_float(exit_result.get("realized_pnl_jpy"))
+        realized_pnl = _to_float(execution.get("exit_leg_realized_pnl_jpy"))
+        if realized_pnl is None:
+            realized_pnl = _to_float(exit_result.get("realized_pnl_jpy"))
         event_fee = _to_float(exit_result.get("fee_jpy"))
 
         entry_quote = _to_float(position.get("quote_amount_jpy"))

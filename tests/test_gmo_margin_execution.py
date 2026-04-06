@@ -215,6 +215,30 @@ class GmoMarginExecutionAdapterTest(unittest.TestCase):
         self.assertEqual(10, submission.stop_loss_orders[0].order["position_id"])
         self.assertEqual(11, submission.stop_loss_orders[1].order["position_id"])
 
+    def test_submit_protective_exit_orders_rejects_partial_lot_coverage(self) -> None:
+        client = _FakeClient()
+        client.open_positions = [
+            {"positionId": 10, "size": "0.2", "orderdSize": "0"},
+        ]
+        adapter = GmoMarginExecutionAdapter(client=client, logger=_FakeLogger())
+        with patch.object(
+            adapter,
+            "get_symbol_rule",
+            return_value=SymbolRule(symbol="SOL_JPY", tick_size=1.0, size_step=0.01, min_order_size=0.01),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "not all tracked lots are settable"):
+                adapter.submit_protective_exit_orders(
+                    SubmitProtectiveExitOrdersRequest(
+                        side="SELL",
+                        lots=[{"position_id": 10, "size_sol": 0.2}, {"position_id": 11, "size_sol": 0.3}],
+                        take_profit_price=14500.0,
+                        stop_price=13900.0,
+                    )
+                )
+
+        self.assertEqual([], client.close_order_calls)
+        self.assertEqual([], client.close_bulk_order_calls)
+
     def test_submit_protective_exit_orders_cancels_conflicting_close_order_and_retries(self) -> None:
         client = _FakeClient()
         client.open_positions = [{"positionId": 10, "size": "0.5", "orderdSize": "0.5"}]

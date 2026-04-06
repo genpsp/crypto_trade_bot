@@ -202,6 +202,39 @@ class GmoExitOrderMonitorTest(unittest.TestCase):
 
         close_position_mock.assert_called_once()
 
+    def test_stop_order_expired_does_not_trigger_emergency_close_when_current_lots_still_fully_protected(self) -> None:
+        trade = _build_trade()
+        trade["position"]["quantity_sol"] = 0.2
+        trade["position"]["quote_amount_jpy"] = 2800.0
+        trade["position"]["lots"] = [{"position_id": 11, "size_sol": 0.2}]
+        trade["execution"]["stop_loss_order_id"] = 790
+        trade["execution"]["stop_loss_order_status"] = "WAITING"
+        trade["execution"]["stop_loss_order"] = {"order_id": 790, "price": "13900", "position_id": 11, "size_sol": 0.2}
+        trade["execution"]["stop_loss_orders"] = [
+            {"order_id": 789, "price": 13900.0, "status": "EXPIRED", "position_id": 10, "size_sol": 0.3},
+            {"order_id": 790, "price": 13900.0, "status": "WAITING", "position_id": 11, "size_sol": 0.2},
+        ]
+        execution = _FakeExecution()
+        persistence = _FakePersistence(trade)
+        monitor = GmoExitOrderMonitor(
+            api_client=object(),
+            logger=_FakeLogger(),
+            context_provider=lambda: [
+                ExitMonitorContext(
+                    model_id="gmo_ema_pullback_15m_both_v0",
+                    pair="SOL/JPY",
+                    execution=execution,
+                    persistence=persistence,
+                    lock=object(),
+                )
+            ],
+        )
+
+        with patch("apps.gmo_bot.infra.execution.exit_order_monitor.close_position") as close_position_mock:
+            monitor._handle_event({"channel": "orderEvents", "orderId": "789", "orderStatus": "EXPIRED"})
+
+        close_position_mock.assert_not_called()
+
     def test_duplicate_partial_execution_event_is_not_double_counted(self) -> None:
         trade = _build_trade()
         trade["execution"]["take_profit_order_status"] = "CLIENT_MANAGED"

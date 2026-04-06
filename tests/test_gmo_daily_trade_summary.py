@@ -177,6 +177,47 @@ class GmoDailyTradeSummaryTest(unittest.TestCase):
         self.assertAlmostEqual(13.0, summary.estimated_fees_jpy)
         self.assertEqual(2, summary.slippage_samples)
 
+    def test_build_daily_trade_summary_report_prefers_explicit_total_realized_pnl_jpy(self) -> None:
+        report = build_daily_trade_summary_report(
+            target_date_jst="2026-03-30",
+            generated_at_utc=datetime(2026, 3, 30, 15, 5, tzinfo=UTC),
+            model_payloads=[
+                (
+                    "gmo_ema_pullback_15m_both_v0",
+                    [
+                        {
+                            "trade_id": "partial_short_total",
+                            "direction": "SHORT",
+                            "state": "CLOSED",
+                            "created_at": "2026-03-29T15:10:00Z",
+                            "position": {
+                                "quote_amount_jpy": 1319.4,
+                                "quantity_sol": 0.1,
+                                "entry_price": 13194.0,
+                                "exit_price": 12904.0,
+                                "exit_time_iso": "2026-03-29T22:42:58Z",
+                            },
+                            "execution": {
+                                "total_realized_pnl_jpy": -56.0,
+                                "realized_pnl_jpy": 29.0,
+                                "entry_fee_jpy": 3.0,
+                                "exit_fee_jpy": 1.0,
+                                "exit_result": {
+                                    "realized_pnl_jpy": 29.0,
+                                    "filled_quote_jpy": 1290.4,
+                                    "filled_base_sol": 0.1,
+                                },
+                            },
+                        }
+                    ],
+                    [],
+                )
+            ],
+        )
+
+        summary = report.model_summaries[0]
+        self.assertAlmostEqual(-56.0, summary.realized_pnl_jpy)
+
     def test_build_daily_trade_summary_report_ignores_legacy_trigger_based_slippage_values(self) -> None:
         report = build_daily_trade_summary_report(
             target_date_jst="2026-03-11",

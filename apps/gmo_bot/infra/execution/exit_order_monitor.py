@@ -16,7 +16,7 @@ from apps.gmo_bot.app.usecases.close_position import (
 )
 from apps.gmo_bot.app.usecases.protective_exit_orders import (
     get_stop_loss_order_snapshots,
-    has_active_protective_exit_orders,
+    has_active_stop_loss_order,
     set_stop_loss_order_status,
 )
 
@@ -134,7 +134,7 @@ class GmoExitOrderMonitor:
             refreshed_trade = context.persistence.find_open_trade(context.pair)
             if not isinstance(refreshed_trade, dict):
                 return
-            if has_active_protective_exit_orders(refreshed_trade):
+            if has_active_stop_loss_order(refreshed_trade):
                 return
             mark_price = context.execution.get_mark_price(context.pair)
             stop_price = float(refreshed_trade["position"]["stop_price"])
