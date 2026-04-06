@@ -74,6 +74,9 @@ class PaperExecutionAdapter(ExecutionPort):
         )
         return ProtectiveExitOrdersSubmission(
             stop_loss_order=OrderSubmission(order_id=sl_order_id, order={"order_id": sl_order_id, "price": request.stop_price}),
+            stop_loss_orders=[
+                OrderSubmission(order_id=sl_order_id, order={"order_id": sl_order_id, "price": request.stop_price})
+            ],
         )
 
     def confirm_order(self, order_id: int, timeout_ms: int) -> OrderConfirmation:

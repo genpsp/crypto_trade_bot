@@ -12,8 +12,13 @@ from apps.gmo_bot.app.usecases.close_position import (
     apply_confirmed_exit_result,
     close_position,
     collect_unprocessed_exit_executions,
+    filter_tracked_exit_executions,
 )
-from apps.gmo_bot.app.usecases.protective_exit_orders import has_active_protective_exit_orders
+from apps.gmo_bot.app.usecases.protective_exit_orders import (
+    get_stop_loss_order_snapshots,
+    has_active_protective_exit_orders,
+    set_stop_loss_order_status,
+)
 
 
 @dataclass
@@ -61,6 +66,12 @@ class GmoExitOrderMonitor:
         context, trade, exit_kind = resolved
         sibling_order_id, sibling_status_key = self._sibling_order_state(trade, filled_kind=exit_kind)
         executions = context.execution.get_executions(order_id)
+        executions = filter_tracked_exit_executions(
+            logger=self.logger,
+            trade=trade,
+            executions=executions,
+            order_id=order_id,
+        )
         new_executions = collect_unprocessed_exit_executions(trade, executions)
         if not new_executions:
             return
@@ -110,7 +121,10 @@ class GmoExitOrderMonitor:
         if not isinstance(execution_snapshot, dict):
             return
         status_key = "take_profit_order_status" if exit_kind == "take_profit" else "stop_loss_order_status"
-        execution_snapshot[status_key] = status
+        if exit_kind == "stop_loss":
+            set_stop_loss_order_status(trade, order_id=order_id, status=status)
+        else:
+            execution_snapshot[status_key] = status
         context.persistence.update_trade(
             trade["trade_id"],
             {"execution": execution_snapshot},
@@ -203,6 +217,9 @@ class GmoExitOrderMonitor:
                 return context, trade, "take_profit"
             if execution_snapshot.get("stop_loss_order_id") == order_id:
                 return context, trade, "stop_loss"
+            for item in get_stop_loss_order_snapshots(trade):
+                if item.get("order_id") == order_id:
+                    return context, trade, "stop_loss"
         return None
 
 

@@ -43,6 +43,7 @@ class OrderSubmission:
 class ProtectiveExitOrdersSubmission:
     take_profit_order: OrderSubmission | None = None
     stop_loss_order: OrderSubmission | None = None
+    stop_loss_orders: list[OrderSubmission] | None = None
 
 
 @dataclass

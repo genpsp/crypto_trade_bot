@@ -16,6 +16,73 @@ ACTIVE_EXIT_ORDER_STATUSES = {"SUBMITTED", "ORDERED", "WAITING"}
 INACTIVE_EXIT_ORDER_STATUSES = {"CANCELED", "EXECUTED", "EXPIRED", "FAILED", "INACTIVE"}
 
 
+def get_stop_loss_order_snapshots(trade: TradeRecord) -> list[dict]:
+    execution = trade.get("execution", {})
+    if not isinstance(execution, dict):
+        return []
+    raw_orders = execution.get("stop_loss_orders")
+    orders: list[dict] = []
+    if isinstance(raw_orders, list):
+        for item in raw_orders:
+            if isinstance(item, dict) and isinstance(item.get("order_id"), int):
+                orders.append(item)
+        if orders:
+            return orders
+    order_id = execution.get("stop_loss_order_id")
+    order_status = execution.get("stop_loss_order_status")
+    order_snapshot = execution.get("stop_loss_order")
+    if not isinstance(order_id, int):
+        return []
+    order_record: dict = {"order_id": order_id}
+    if isinstance(order_snapshot, dict):
+        order_record.update(order_snapshot)
+    if isinstance(order_status, str):
+        order_record["status"] = order_status
+    return [order_record]
+
+
+def sync_stop_loss_order_snapshot_fields(trade: TradeRecord) -> None:
+    execution = trade.setdefault("execution", {})
+    if not isinstance(execution, dict):
+        return
+    orders = get_stop_loss_order_snapshots(trade)
+    if not orders:
+        execution.pop("stop_loss_orders", None)
+        return
+    active_order = next((item for item in orders if item.get("status") in ACTIVE_EXIT_ORDER_STATUSES), None)
+    primary_order = active_order or orders[0]
+    execution["stop_loss_orders"] = orders
+    execution["stop_loss_order_id"] = primary_order["order_id"]
+    execution["stop_loss_order"] = {
+        key: value
+        for key, value in primary_order.items()
+        if key in {"order_id", "price", "position_id", "size_sol"}
+    }
+    status = next((str(item.get("status")) for item in orders if item.get("status") in ACTIVE_EXIT_ORDER_STATUSES), None)
+    if status is None:
+        status = str(primary_order.get("status") or "INACTIVE")
+    execution["stop_loss_order_status"] = status
+
+
+def set_stop_loss_order_status(trade: TradeRecord, *, order_id: int, status: str) -> bool:
+    execution = trade.setdefault("execution", {})
+    if not isinstance(execution, dict):
+        return False
+    updated = False
+    raw_orders = execution.get("stop_loss_orders")
+    if isinstance(raw_orders, list):
+        for item in raw_orders:
+            if isinstance(item, dict) and item.get("order_id") == order_id:
+                item["status"] = status
+                updated = True
+    if execution.get("stop_loss_order_id") == order_id:
+        execution["stop_loss_order_status"] = status
+        updated = True
+    if updated:
+        sync_stop_loss_order_snapshot_fields(trade)
+    return updated
+
+
 def has_active_protective_exit_orders(trade: TradeRecord) -> bool:
     execution = trade.get("execution", {})
     if not isinstance(execution, dict):
@@ -33,12 +100,7 @@ def has_active_protective_exit_orders(trade: TradeRecord) -> bool:
 
 
 def has_active_stop_loss_order(trade: TradeRecord) -> bool:
-    execution = trade.get("execution", {})
-    if not isinstance(execution, dict):
-        return False
-    stop_loss_order_id = execution.get("stop_loss_order_id")
-    stop_loss_status = execution.get("stop_loss_order_status")
-    return isinstance(stop_loss_order_id, int) and stop_loss_status in ACTIVE_EXIT_ORDER_STATUSES
+    return any(item.get("status") in ACTIVE_EXIT_ORDER_STATUSES for item in get_stop_loss_order_snapshots(trade))
 
 
 def mark_protective_exit_orders_inactive(
@@ -55,8 +117,14 @@ def mark_protective_exit_orders_inactive(
         execution["take_profit_order_status"] = take_profit_status
     if "stop_loss_order_id" in execution or "stop_loss_order_status" in execution:
         execution["stop_loss_order_status"] = stop_loss_status
+    raw_orders = execution.get("stop_loss_orders")
+    if isinstance(raw_orders, list):
+        for item in raw_orders:
+            if isinstance(item, dict):
+                item["status"] = stop_loss_status
     if error_message is not None:
         execution["protective_exit_error"] = error_message
+    sync_stop_loss_order_snapshot_fields(trade)
 
 
 @dataclass
@@ -139,22 +207,30 @@ def arm_protective_exit_orders(
             summary=f"FAILED: protective exits not armed: {message}",
         )
 
-    if submission.stop_loss_order is None:
+    stop_loss_orders = [
+        item
+        for item in ((submission.stop_loss_orders or []) or ([submission.stop_loss_order] if submission.stop_loss_order else []))
+        if item is not None
+    ]
+    if not stop_loss_orders:
         return ArmProtectiveExitOrdersResult(status="FAILED", summary="FAILED: protective stop order was not created")
 
     execution_snapshot.pop("take_profit_order_id", None)
     execution_snapshot.pop("take_profit_order", None)
     execution_snapshot["take_profit_order_status"] = "CLIENT_MANAGED"
-    execution_snapshot["stop_loss_order_id"] = submission.stop_loss_order.order_id
-    execution_snapshot["stop_loss_order_status"] = "WAITING"
+    execution_snapshot["stop_loss_orders"] = []
     execution_snapshot.pop("protective_exit_error", None)
-    if submission.stop_loss_order.order:
-        execution_snapshot["stop_loss_order"] = submission.stop_loss_order.order
     stop_order_price = None
-    if submission.stop_loss_order.order:
-        raw_stop_order_price = submission.stop_loss_order.order.get("price")
-        if isinstance(raw_stop_order_price, (int, float)):
-            stop_order_price = float(raw_stop_order_price)
+    for order_submission in stop_loss_orders:
+        order_record = {"order_id": order_submission.order_id, "status": "WAITING"}
+        if order_submission.order:
+            order_record.update(order_submission.order)
+        execution_snapshot["stop_loss_orders"].append(order_record)
+        if stop_order_price is None:
+            raw_stop_order_price = order_record.get("price")
+            if isinstance(raw_stop_order_price, (int, float)):
+                stop_order_price = float(raw_stop_order_price)
+    sync_stop_loss_order_snapshot_fields(trade)
 
     dependencies.persistence.update_trade(
         trade["trade_id"],
@@ -165,7 +241,7 @@ def arm_protective_exit_orders(
         {
             "trade_id": trade.get("trade_id"),
             "take_profit_order_id": None,
-            "stop_loss_order_id": submission.stop_loss_order.order_id,
+            "stop_loss_order_ids": [item.order_id for item in stop_loss_orders],
             "take_profit_price": round_to(take_profit_price, 6),
             "stop_price": round_to(stop_price, 6),
             "stop_order_price": round_to(stop_order_price, 6) if stop_order_price is not None else None,
@@ -175,6 +251,6 @@ def arm_protective_exit_orders(
         status="ARMED_STOP_ONLY",
         summary=(
             "ARMED_STOP_ONLY: protective stop order placed "
-            f"(sl_order_id={submission.stop_loss_order.order_id}); take profit remains client-managed"
+            f"(sl_order_ids={[item.order_id for item in stop_loss_orders]}); take profit remains client-managed"
         ),
     )

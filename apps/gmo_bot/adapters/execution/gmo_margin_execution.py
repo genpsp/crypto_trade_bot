@@ -54,28 +54,18 @@ class GmoMarginExecutionAdapter(ExecutionPort):
 
     def submit_close_order(self, request: SubmitCloseOrderRequest) -> OrderSubmission:
         symbol = PAIR_SYMBOL_MAP["SOL/JPY"]
-        settle_positions = []
-        for lot in request.lots:
-            normalized_size = self._normalize_size(symbol, lot["size_sol"])
-            if normalized_size <= 0:
-                continue
-            settle_positions.append({"positionId": lot["position_id"], "size": _decimal_str(normalized_size)})
+        settle_positions = self._build_requested_settle_positions(symbol, request.lots)
         if not settle_positions:
             raise RuntimeError("no closeable position lots")
-        if len(settle_positions) == 1:
-            order_id = self.client.create_close_order(
-                symbol=symbol,
-                side=request.side,
-                execution_type="MARKET",
-                settle_position=settle_positions[0],
-            )
-        else:
-            order_id = self.client.create_close_bulk_order(
-                symbol=symbol,
-                side=request.side,
-                execution_type="MARKET",
-                size=sum(_to_float(position["size"]) or 0.0 for position in settle_positions),
-            )
+        if len(settle_positions) != 1:
+            raise RuntimeError("submit_close_order expects a single tracked lot")
+        settle_position = settle_positions[0]
+        order_id = self.client.create_close_order(
+            symbol=symbol,
+            side=request.side,
+            execution_type="MARKET",
+            settle_position=settle_position,
+        )
         return OrderSubmission(order_id=order_id, order={"order_id": order_id})
 
     def submit_protective_exit_orders(self, request: SubmitProtectiveExitOrdersRequest) -> ProtectiveExitOrdersSubmission:
@@ -95,29 +85,30 @@ class GmoMarginExecutionAdapter(ExecutionPort):
         )
         if normalized_stop_price <= 0:
             raise RuntimeError("protective exit price rounded to 0")
-        if len(settle_positions) == 1:
+        stop_loss_orders: list[OrderSubmission] = []
+        for settle_position in settle_positions:
             stop_loss_order_id = self.client.create_close_order(
                 symbol=symbol,
                 side=request.side,
                 execution_type="STOP",
-                settle_position=settle_positions[0],
+                settle_position=settle_position,
                 price=normalized_stop_price,
                 time_in_force="FAK",
             )
-        else:
-            stop_loss_order_id = self.client.create_close_bulk_order(
-                symbol=symbol,
-                side=request.side,
-                execution_type="STOP",
-                size=sum(_to_float(position["size"]) or 0.0 for position in settle_positions),
-                price=normalized_stop_price,
-                time_in_force="FAK",
+            stop_loss_orders.append(
+                OrderSubmission(
+                    order_id=stop_loss_order_id,
+                    order={
+                        "order_id": stop_loss_order_id,
+                        "price": normalized_stop_price,
+                        "position_id": settle_position["positionId"],
+                        "size_sol": _to_float(settle_position["size"]),
+                    },
+                )
             )
         return ProtectiveExitOrdersSubmission(
-            stop_loss_order=OrderSubmission(
-                order_id=stop_loss_order_id,
-                order={"order_id": stop_loss_order_id, "price": normalized_stop_price},
-            ),
+            stop_loss_order=stop_loss_orders[0],
+            stop_loss_orders=stop_loss_orders,
         )
 
     def confirm_order(self, order_id: int, timeout_ms: int) -> OrderConfirmation:
@@ -246,6 +237,19 @@ class GmoMarginExecutionAdapter(ExecutionPort):
             if final_size <= 0:
                 continue
             settle_positions.append({"positionId": position_id, "size": _decimal_str(final_size)})
+        return settle_positions
+
+    def _build_requested_settle_positions(self, symbol: str, lots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        settle_positions: list[dict[str, Any]] = []
+        for lot in lots:
+            position_id = lot.get("position_id")
+            requested_size = _to_float(lot.get("size_sol"))
+            if not isinstance(position_id, int) or requested_size is None:
+                continue
+            normalized_requested_size = self._normalize_size(symbol, requested_size)
+            if normalized_requested_size <= 0:
+                continue
+            settle_positions.append({"positionId": position_id, "size": _decimal_str(normalized_requested_size)})
         return settle_positions
 
     def _cancel_conflicting_close_orders(self, *, symbol: str, side: str) -> int:

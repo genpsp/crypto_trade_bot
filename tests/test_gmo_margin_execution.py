@@ -106,7 +106,7 @@ class GmoMarginExecutionAdapterTest(unittest.TestCase):
         self.assertEqual("STOP", fake_client.close_order_calls[0]["execution_type"])
         self.assertEqual([], fake_client.close_bulk_order_calls)
 
-    def test_submit_close_order_uses_bulk_endpoint_for_multiple_positions(self) -> None:
+    def test_submit_close_order_rejects_multiple_positions(self) -> None:
         client = _FakeClient()
         client.open_positions = [
             {"positionId": 10, "size": "0.2", "orderdSize": "0"},
@@ -118,14 +118,17 @@ class GmoMarginExecutionAdapterTest(unittest.TestCase):
             "get_symbol_rule",
             return_value=SymbolRule(symbol="SOL_JPY", tick_size=1.0, size_step=0.01, min_order_size=0.01),
         ):
-            submission = adapter.submit_close_order(
-                type("Request", (), {"side": "SELL", "lots": [{"position_id": 10, "size_sol": 0.2}, {"position_id": 11, "size_sol": 0.3}]})()
-            )
+            with self.assertRaisesRegex(RuntimeError, "single tracked lot"):
+                adapter.submit_close_order(
+                    type(
+                        "Request",
+                        (),
+                        {"side": "SELL", "lots": [{"position_id": 10, "size_sol": 0.2}, {"position_id": 11, "size_sol": 0.3}]},
+                    )()
+                )
 
-        self.assertEqual(2001, submission.order_id)
         self.assertEqual([], client.close_order_calls)
-        self.assertEqual(1, len(client.close_bulk_order_calls))
-        self.assertEqual(0.5, client.close_bulk_order_calls[0]["size"])
+        self.assertEqual([], client.close_bulk_order_calls)
 
     def test_submit_protective_exit_orders_rounds_long_exit_prices_with_safe_direction(self) -> None:
         adapter = GmoMarginExecutionAdapter(client=_FakeClient(), logger=_FakeLogger())
@@ -184,7 +187,7 @@ class GmoMarginExecutionAdapterTest(unittest.TestCase):
         fake_client = adapter.client
         self.assertEqual(1.2, fake_client.close_order_calls[0]["price"])
 
-    def test_submit_protective_exit_orders_uses_bulk_endpoint_for_multiple_positions(self) -> None:
+    def test_submit_protective_exit_orders_places_individual_stop_orders_for_multiple_positions(self) -> None:
         client = _FakeClient()
         client.open_positions = [
             {"positionId": 10, "size": "0.2", "orderdSize": "0"},
@@ -205,10 +208,12 @@ class GmoMarginExecutionAdapterTest(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(2001, submission.stop_loss_order.order_id)
-        self.assertEqual([], client.close_order_calls)
-        self.assertEqual(1, len(client.close_bulk_order_calls))
-        self.assertEqual(0.5, client.close_bulk_order_calls[0]["size"])
+        self.assertEqual(1001, submission.stop_loss_order.order_id)
+        self.assertEqual(2, len(submission.stop_loss_orders))
+        self.assertEqual(2, len(client.close_order_calls))
+        self.assertEqual([], client.close_bulk_order_calls)
+        self.assertEqual(10, submission.stop_loss_orders[0].order["position_id"])
+        self.assertEqual(11, submission.stop_loss_orders[1].order["position_id"])
 
     def test_submit_protective_exit_orders_cancels_conflicting_close_order_and_retries(self) -> None:
         client = _FakeClient()

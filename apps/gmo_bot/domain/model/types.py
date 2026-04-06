@@ -73,6 +73,9 @@ class TradePlanSnapshot(TypedDict):
 class TradeOrderSnapshot(TypedDict, total=False):
     order_id: int
     price: float
+    status: str
+    position_id: int
+    size_sol: float
 
 
 class TradeResultSnapshot(TypedDict, total=False):
@@ -111,6 +114,7 @@ class TradeExecutionSnapshot(TypedDict, total=False):
     exit_result: TradeResultSnapshot
     take_profit_order: TradeOrderSnapshot
     stop_loss_order: TradeOrderSnapshot
+    stop_loss_orders: list[TradeOrderSnapshot]
 
 
 class TradePositionSnapshot(TypedDict, total=False):

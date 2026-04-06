@@ -8,7 +8,12 @@ from apps.gmo_bot.app.ports.execution_port import ExecutionPort, SubmitCloseOrde
 from apps.gmo_bot.app.ports.lock_port import LockPort
 from apps.gmo_bot.app.ports.logger_port import LoggerPort
 from apps.gmo_bot.app.ports.persistence_port import PersistencePort
-from apps.gmo_bot.app.usecases.protective_exit_orders import mark_protective_exit_orders_inactive
+from apps.gmo_bot.app.usecases.protective_exit_orders import (
+    get_stop_loss_order_snapshots,
+    mark_protective_exit_orders_inactive,
+    set_stop_loss_order_status,
+    sync_stop_loss_order_snapshot_fields,
+)
 from apps.gmo_bot.app.usecases.usecase_utils import now_iso, strip_none, summarize_error_for_log, to_error_message
 from apps.gmo_bot.domain.model.trade_state import assert_trade_state_transition
 from apps.gmo_bot.domain.model.types import BotConfig, CloseReason, TradeRecord, TradeState
@@ -92,6 +97,50 @@ def collect_unprocessed_exit_executions(trade: TradeRecord, executions: list[dic
         if execution_id is None or execution_id not in processed_ids:
             new_executions.append(execution)
     return new_executions
+
+
+def _tracked_position_ids(trade: TradeRecord) -> set[int]:
+    position = trade.get("position", {})
+    if not isinstance(position, dict):
+        return set()
+    raw_lots = position.get("lots")
+    if not isinstance(raw_lots, list):
+        return set()
+    tracked_ids: set[int] = set()
+    for lot in raw_lots:
+        if isinstance(lot, dict) and isinstance(lot.get("position_id"), int):
+            tracked_ids.add(lot["position_id"])
+    return tracked_ids
+
+
+def filter_tracked_exit_executions(
+    *,
+    logger: LoggerPort,
+    trade: TradeRecord,
+    executions: list[dict[str, Any]],
+    order_id: int,
+) -> list[dict[str, Any]]:
+    tracked_ids = _tracked_position_ids(trade)
+    if not tracked_ids:
+        return executions
+    filtered: list[dict[str, Any]] = []
+    ignored_position_ids: list[int] = []
+    for execution in executions:
+        position_id = execution.get("positionId")
+        if isinstance(position_id, int) and position_id not in tracked_ids:
+            ignored_position_ids.append(position_id)
+            continue
+        filtered.append(execution)
+    if ignored_position_ids:
+        logger.warn(
+            "ignoring GMO exit executions for untracked lots",
+            {
+                "trade_id": trade.get("trade_id"),
+                "order_id": order_id,
+                "ignored_position_ids": sorted(set(ignored_position_ids)),
+            },
+        )
+    return filtered
 
 
 def aggregate_execution_records(executions: list[dict[str, Any]]) -> dict[str, Any]:
@@ -204,9 +253,23 @@ def _cancel_protective_exit_orders_best_effort(
         return
 
     changed = False
+    for stop_order in get_stop_loss_order_snapshots(trade):
+        order_id = stop_order.get("order_id")
+        status = stop_order.get("status")
+        if not isinstance(order_id, int) or status not in {"SUBMITTED", "ORDERED", "WAITING"}:
+            continue
+        try:
+            execution.cancel_order(order_id)
+            set_stop_loss_order_status(trade, order_id=order_id, status="CANCELED")
+            changed = True
+        except Exception as error:
+            logger.warn(
+                "failed to cancel protective exit order before manual close",
+                {"trade_id": trade.get("trade_id"), "order_id": order_id, "error": to_error_message(error)},
+            )
+
     for order_key, status_key in (
         ("take_profit_order_id", "take_profit_order_status"),
-        ("stop_loss_order_id", "stop_loss_order_status"),
     ):
         order_id = execution_snapshot.get(order_key)
         status = execution_snapshot.get(status_key)
@@ -223,6 +286,7 @@ def _cancel_protective_exit_orders_best_effort(
             )
 
     if changed:
+        sync_stop_loss_order_snapshot_fields(trade)
         persistence.update_trade(
             trade["trade_id"],
             strip_none({"execution": execution_snapshot, "updated_at": now_iso()}),
@@ -232,6 +296,8 @@ def _cancel_protective_exit_orders_best_effort(
 def _resolve_protective_exit_order_snapshot(
     trade: TradeRecord,
     close_reason: CloseReason,
+    *,
+    order_id: int | None = None,
 ) -> tuple[int | None, dict[str, Any] | None, str | None]:
     execution_snapshot = trade.get("execution", {})
     if not isinstance(execution_snapshot, dict):
@@ -242,6 +308,11 @@ def _resolve_protective_exit_order_snapshot(
         order_snapshot = execution_snapshot.get("take_profit_order")
         order_status = execution_snapshot.get("take_profit_order_status")
     else:
+        if order_id is not None:
+            for item in get_stop_loss_order_snapshots(trade):
+                if item.get("order_id") == order_id:
+                    resolved_status = item.get("status") if isinstance(item.get("status"), str) else None
+                    return order_id, item, resolved_status
         order_id = execution_snapshot.get("stop_loss_order_id")
         order_snapshot = execution_snapshot.get("stop_loss_order")
         order_status = execution_snapshot.get("stop_loss_order_status")
@@ -252,8 +323,8 @@ def _resolve_protective_exit_order_snapshot(
     return resolved_order_id, resolved_snapshot, resolved_status
 
 
-def _resolve_protective_exit_close_price(trade: TradeRecord, close_reason: CloseReason) -> float:
-    _, order_snapshot, _ = _resolve_protective_exit_order_snapshot(trade, close_reason)
+def _resolve_protective_exit_close_price(trade: TradeRecord, close_reason: CloseReason, *, order_id: int | None = None) -> float:
+    _, order_snapshot, _ = _resolve_protective_exit_order_snapshot(trade, close_reason, order_id=order_id)
     if isinstance(order_snapshot, dict):
         order_price = _to_float(order_snapshot.get("price"))
         if order_price is not None:
@@ -275,46 +346,74 @@ def reconcile_protective_exit_execution(
     trade: TradeRecord,
     close_reason: CloseReason,
 ) -> ProtectiveExitReconciliationResult:
-    order_id, _, cached_order_status = _resolve_protective_exit_order_snapshot(trade, close_reason)
-    if order_id is None:
+    order_candidates: list[tuple[int, str | None]] = []
+    if close_reason == "STOP_LOSS":
+        for item in get_stop_loss_order_snapshots(trade):
+            order_id = item.get("order_id")
+            if isinstance(order_id, int):
+                raw_status = item.get("status")
+                order_candidates.append((order_id, raw_status if isinstance(raw_status, str) else None))
+    else:
+        order_id, _, cached_order_status = _resolve_protective_exit_order_snapshot(trade, close_reason)
+        if order_id is not None:
+            order_candidates.append((order_id, cached_order_status))
+
+    if not order_candidates:
         return ProtectiveExitReconciliationResult(status="UNAVAILABLE")
 
-    executions = execution.get_executions(order_id)
-    new_executions = collect_unprocessed_exit_executions(trade, executions)
-    if new_executions:
-        execution_result = aggregate_execution_records(new_executions)
-        close_result = apply_confirmed_exit_result(
-            logger=logger,
-            persistence=persistence,
-            trade=trade,
-            execution_result=execution_result,
-            order_id=order_id,
-            close_reason=close_reason,
-            close_price=_resolve_protective_exit_close_price(trade, close_reason),
-        )
-        return ProtectiveExitReconciliationResult(
-            status=close_result.status,
-            close_result=close_result,
-            order_id=order_id,
-            order_status="EXECUTED",
-        )
+    pending_statuses = {"SUBMITTED", "ORDERED", "WAITING", "INACTIVE", "EXECUTED"}
+    saw_pending = False
+    last_order_id: int | None = None
+    last_order_status: str | None = None
 
-    order = execution.get_order(order_id)
-    order_status = cached_order_status
-    if isinstance(order, dict):
-        raw_status = order.get("status") or order.get("orderStatus")
-        if isinstance(raw_status, str) and raw_status.strip():
-            order_status = raw_status.upper()
-    if order_status in {"SUBMITTED", "ORDERED", "WAITING", "INACTIVE", "EXECUTED"}:
+    for order_id, cached_order_status in order_candidates:
+        last_order_id = order_id
+        executions = execution.get_executions(order_id)
+        executions = filter_tracked_exit_executions(
+            logger=logger,
+            trade=trade,
+            executions=executions,
+            order_id=order_id,
+        )
+        new_executions = collect_unprocessed_exit_executions(trade, executions)
+        if new_executions:
+            execution_result = aggregate_execution_records(new_executions)
+            close_result = apply_confirmed_exit_result(
+                logger=logger,
+                persistence=persistence,
+                trade=trade,
+                execution_result=execution_result,
+                order_id=order_id,
+                close_reason=close_reason,
+                close_price=_resolve_protective_exit_close_price(trade, close_reason, order_id=order_id),
+            )
+            return ProtectiveExitReconciliationResult(
+                status=close_result.status,
+                close_result=close_result,
+                order_id=order_id,
+                order_status="EXECUTED",
+            )
+
+        order = execution.get_order(order_id)
+        order_status = cached_order_status
+        if isinstance(order, dict):
+            raw_status = order.get("status") or order.get("orderStatus")
+            if isinstance(raw_status, str) and raw_status.strip():
+                order_status = raw_status.upper()
+        last_order_status = order_status
+        if order_status in pending_statuses:
+            saw_pending = True
+
+    if saw_pending:
         return ProtectiveExitReconciliationResult(
             status="PENDING",
-            order_id=order_id,
-            order_status=order_status,
+            order_id=last_order_id,
+            order_status=last_order_status,
         )
     return ProtectiveExitReconciliationResult(
         status="UNAVAILABLE",
-        order_id=order_id,
-        order_status=order_status,
+        order_id=last_order_id,
+        order_status=last_order_status,
     )
 
 
@@ -418,7 +517,7 @@ def apply_confirmed_exit_result(
             f"got {round_to(filled_size_sol, 9)} SOL"
         )
         is_take_profit_order = trade["execution"].get("take_profit_order_id") == order_id
-        is_stop_loss_order = trade["execution"].get("stop_loss_order_id") == order_id
+        is_stop_loss_order = set_stop_loss_order_status(trade, order_id=order_id, status="EXECUTED")
         if not is_take_profit_order and not is_stop_loss_order:
             mark_protective_exit_orders_inactive(
                 trade,
@@ -458,8 +557,9 @@ def apply_confirmed_exit_result(
     trade["execution"].pop("exit_error", None)
     if close_reason == "TAKE_PROFIT" and trade["execution"].get("take_profit_order_id") == order_id:
         mark_protective_exit_orders_inactive(trade, take_profit_status="EXECUTED", stop_loss_status="INACTIVE")
-    elif close_reason == "STOP_LOSS" and trade["execution"].get("stop_loss_order_id") == order_id:
+    elif close_reason == "STOP_LOSS" and set_stop_loss_order_status(trade, order_id=order_id, status="EXECUTED"):
         mark_protective_exit_orders_inactive(trade, take_profit_status="INACTIVE", stop_loss_status="EXECUTED")
+        set_stop_loss_order_status(trade, order_id=order_id, status="EXECUTED")
     else:
         mark_protective_exit_orders_inactive(trade)
     trade["position"]["status"] = "CLOSED"
@@ -519,45 +619,57 @@ def close_position(dependencies: ClosePositionDependencies, input_data: ClosePos
             trade=trade,
         )
         trade["execution"]["exit_reference_price"] = round_to(input_data.close_price, 6)
-        submission = execution.submit_close_order(
-            SubmitCloseOrderRequest(
-                side=close_side,
-                lots=lots,
-                slippage_bps=int(config["execution"]["slippage_bps"]),
-                reference_price=input_data.close_price,
+        remaining_lots = list(lots)
+        while remaining_lots:
+            current_lot = remaining_lots[0]
+            submission = execution.submit_close_order(
+                SubmitCloseOrderRequest(
+                    side=close_side,
+                    lots=[current_lot],
+                    slippage_bps=int(config["execution"]["slippage_bps"]),
+                    reference_price=input_data.close_price,
+                )
             )
-        )
-        trade["execution"]["exit_order_id"] = submission.order_id
-        trade["execution"]["exit_submission_state"] = "SUBMITTED"
-        if submission.order:
-            trade["execution"]["exit_order"] = submission.order
-        persistence.update_trade(
-            trade["trade_id"],
-            strip_none({"execution": trade["execution"], "updated_at": now_iso()}),
-        )
-
-        confirmation = execution.confirm_order(submission.order_id, ORDER_CONFIRM_TIMEOUT_MS)
-        if not confirmation.confirmed or confirmation.result is None:
-            trade["execution"]["exit_submission_state"] = "FAILED"
-            trade["execution"]["exit_error"] = confirmation.error or "exit order not confirmed"
+            trade["execution"]["exit_order_id"] = submission.order_id
+            trade["execution"]["exit_submission_state"] = "SUBMITTED"
+            if submission.order:
+                trade["execution"]["exit_order"] = submission.order
             persistence.update_trade(
                 trade["trade_id"],
                 strip_none({"execution": trade["execution"], "updated_at": now_iso()}),
             )
-            return ClosePositionResult(
-                status="FAILED",
-                trade_id=trade["trade_id"],
-                summary=f"FAILED: {summarize_error_for_log(str(trade['execution']['exit_error']))}",
-            )
 
-        return apply_confirmed_exit_result(
-            logger=logger,
-            persistence=persistence,
-            trade=trade,
-            execution_result=confirmation.result,
-            order_id=submission.order_id,
-            close_reason=input_data.close_reason,
-            close_price=input_data.close_price,
+            confirmation = execution.confirm_order(submission.order_id, ORDER_CONFIRM_TIMEOUT_MS)
+            if not confirmation.confirmed or confirmation.result is None:
+                trade["execution"]["exit_submission_state"] = "FAILED"
+                trade["execution"]["exit_error"] = confirmation.error or "exit order not confirmed"
+                persistence.update_trade(
+                    trade["trade_id"],
+                    strip_none({"execution": trade["execution"], "updated_at": now_iso()}),
+                )
+                return ClosePositionResult(
+                    status="FAILED",
+                    trade_id=trade["trade_id"],
+                    summary=f"FAILED: {summarize_error_for_log(str(trade['execution']['exit_error']))}",
+                )
+
+            close_result = apply_confirmed_exit_result(
+                logger=logger,
+                persistence=persistence,
+                trade=trade,
+                execution_result=confirmation.result,
+                order_id=submission.order_id,
+                close_reason=input_data.close_reason,
+                close_price=input_data.close_price,
+            )
+            if close_result.status != "PARTIALLY_CLOSED":
+                return close_result
+            remaining_lots = list(trade.get("position", {}).get("lots") or [])
+
+        return ClosePositionResult(
+            status="FAILED",
+            trade_id=trade["trade_id"],
+            summary="FAILED: no position lots after sequential close attempts",
         )
     except Exception as error:
         message = to_error_message(error)

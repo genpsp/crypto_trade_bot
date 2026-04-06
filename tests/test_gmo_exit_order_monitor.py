@@ -227,12 +227,12 @@ class GmoExitOrderMonitorTest(unittest.TestCase):
         monitor._handle_event({"channel": "executionEvents", "orderId": "789"})
         self.assertEqual("CONFIRMED", trade["state"])
         self.assertAlmostEqual(0.3, trade["position"]["quantity_sol"])
-        self.assertEqual("WAITING", trade["execution"]["stop_loss_order_status"])
+        self.assertEqual("EXECUTED", trade["execution"]["stop_loss_order_status"])
 
         monitor._handle_event({"channel": "executionEvents", "orderId": "789"})
         self.assertEqual("CONFIRMED", trade["state"])
         self.assertAlmostEqual(0.3, trade["position"]["quantity_sol"])
-        self.assertEqual("WAITING", trade["execution"]["stop_loss_order_status"])
+        self.assertEqual("EXECUTED", trade["execution"]["stop_loss_order_status"])
 
 
 if __name__ == "__main__":
