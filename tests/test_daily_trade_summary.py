@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from apps.dex_bot.infra.alerting.daily_trade_summary import (
     build_daily_summary_report,
     build_daily_summary_window,
+    iter_jst_window_day_doc_ids,
     iter_utc_day_ids,
 )
 
@@ -13,7 +14,9 @@ from apps.dex_bot.infra.alerting.daily_trade_summary import (
 class DailyTradeSummaryTest(unittest.TestCase):
     def test_iter_utc_day_ids_for_jst_day_returns_two_days(self) -> None:
         window = build_daily_summary_window("2026-02-26")
-        self.assertEqual(["2026-02-25", "2026-02-26"], iter_utc_day_ids(window))
+        expected = ["2026-02-25", "2026-02-26"]
+        self.assertEqual(expected, iter_jst_window_day_doc_ids(window))
+        self.assertEqual(expected, iter_utc_day_ids(window))
 
     def test_build_daily_summary_report_aggregates_trade_and_run_metrics(self) -> None:
         trades_model_a = [
@@ -120,20 +123,20 @@ class DailyTradeSummaryTest(unittest.TestCase):
         self.assertEqual(1, model_b.closed_trades)
         self.assertEqual(0, model_b.win_trades)
         self.assertEqual(1, model_b.loss_trades)
-        self.assertAlmostEqual(-1.9, model_b.realized_pnl_usdc)
+        self.assertAlmostEqual(-2.0, model_b.realized_pnl_usdc)
         self.assertEqual(0, model_b.failed_runs)
         self.assertEqual(1, model_b.skipped_runs)
 
         self.assertEqual(2, report.total_closed_trades)
         self.assertEqual(1, report.total_win_trades)
         self.assertEqual(1, report.total_loss_trades)
-        self.assertAlmostEqual(1.1, report.total_realized_pnl_usdc)
+        self.assertAlmostEqual(1.0, report.total_realized_pnl_usdc)
         self.assertEqual(1, report.total_failed_runs)
         self.assertEqual(2, report.total_skipped_runs)
         self.assertEqual(1, report.total_failed_trades)
         self.assertEqual(1, report.total_canceled_trades)
 
-    def test_build_daily_summary_report_computes_short_profit_from_returned_base(self) -> None:
+    def test_build_daily_summary_report_computes_short_profit_from_spent_quote(self) -> None:
         report = build_daily_summary_report(
             target_date_jst="2026-02-26",
             generated_at_utc=datetime(2026, 2, 26, 15, 5, tzinfo=UTC),
@@ -147,16 +150,16 @@ class DailyTradeSummaryTest(unittest.TestCase):
                             "state": "CLOSED",
                             "created_at": "2026-02-25T15:20:00Z",
                             "position": {
-                                "quote_amount_usdc": 100.0,
-                                "quantity_sol": 1.0,
-                                "entry_price": 100.0,
-                                "exit_price": 80.0,
+                                "quote_amount_usdc": 2000.0,
+                                "quantity_sol": 10.0,
+                                "entry_price": 200.0,
+                                "exit_price": 190.0,
                                 "exit_time_iso": "2026-02-25T22:00:00Z",
                             },
                             "execution": {
                                 "exit_result": {
-                                    "spent_quote_usdc": 100.0,
-                                    "filled_base_sol": 1.25,
+                                    "spent_quote_usdc": 1900.0,
+                                    "filled_base_sol": 10.0,
                                 },
                             },
                         }
@@ -170,8 +173,31 @@ class DailyTradeSummaryTest(unittest.TestCase):
         self.assertEqual(1, summary.closed_trades)
         self.assertEqual(1, summary.win_trades)
         self.assertEqual(0, summary.loss_trades)
-        self.assertAlmostEqual(20.0, summary.realized_pnl_usdc)
-        self.assertAlmostEqual(20.0, report.total_realized_pnl_usdc)
+        self.assertAlmostEqual(100.0, summary.realized_pnl_usdc)
+        self.assertAlmostEqual(100.0, report.total_realized_pnl_usdc)
+
+    def test_build_daily_summary_report_counts_skip_occurrence_count(self) -> None:
+        report = build_daily_summary_report(
+            target_date_jst="2026-02-26",
+            generated_at_utc=datetime(2026, 2, 26, 15, 5, tzinfo=UTC),
+            model_payloads=[
+                (
+                    "ema_pullback_15m_both_v0",
+                    [],
+                    [
+                        {
+                            "result": "SKIPPED",
+                            "occurrence_count": 100,
+                            "last_executed_at_iso": "2026-02-25T18:00:00Z",
+                        }
+                    ],
+                )
+            ],
+        )
+
+        summary = report.model_summaries[0]
+        self.assertEqual(100, summary.skipped_runs)
+        self.assertEqual(100, report.total_skipped_runs)
 
 
 if __name__ == "__main__":

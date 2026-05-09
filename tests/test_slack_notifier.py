@@ -10,6 +10,8 @@ from apps.gmo_bot.infra.alerting.daily_trade_summary import (
     build_daily_trade_summary_report as build_gmo_daily_trade_summary_report,
 )
 from apps.gmo_bot.infra.alerting.slack_notifier import (
+    SlackAlertConfig as GmoSlackAlertConfig,
+    SlackNotifier as GmoSlackNotifier,
     is_execution_error_result as is_gmo_execution_error_result,
     is_market_data_maintenance_result,
 )
@@ -125,6 +127,43 @@ class SlackNotifierTest(unittest.TestCase):
         self.assertIn("gross_pnl_usdc=2.5000", payload)
         self.assertIn("fee_usdc=0.0230", payload)
         self.assertIn("net_pnl_usdc=2.4770", payload)
+
+
+    def test_gmo_notify_trade_closed_formats_jpy_prices_and_cumulative_pnl(self) -> None:
+        logger = _FakeLogger()
+        notifier = GmoSlackNotifier(
+            config=GmoSlackAlertConfig(
+                webhook_url="https://hooks.slack.com/services/test/test/test",
+                duplicate_suppression_seconds=300,
+            ),
+            logger=logger,
+        )
+
+        response = Mock()
+        response.raise_for_status.return_value = None
+        with patch("apps.gmo_bot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
+            notifier.notify_trade_closed(
+                model_id="gmo_ema_pullback_15m_both_v0",
+                trade_id="trade_jpy",
+                pair="SOL/JPY",
+                direction="LONG",
+                close_reason="TAKE_PROFIT",
+                entry_price=23456.0,
+                exit_price=23500.0,
+                gross_pnl=44.0,
+                fee=3.0,
+                net_pnl=41.0,
+                quote_ccy="JPY",
+                cumulative_gross_pnl=100.0,
+                cumulative_net_pnl=94.0,
+            )
+
+        self.assertEqual(1, mocked_post.call_count)
+        payload = mocked_post.call_args.kwargs["json"]["text"]  # type: ignore[index]
+        self.assertIn("entry_price=23456.00", payload)
+        self.assertIn("exit_price=23500.00", payload)
+        self.assertIn("cumulative_gross_pnl_jpy=100.00", payload)
+        self.assertIn("cumulative_net_pnl_jpy=94.00", payload)
 
     def test_gmo_maintenance_is_not_classified_as_execution_error(self) -> None:
         reason = "GMO API error status=5: ERR-5201: MAINTENANCE. Please wait for a while"

@@ -27,7 +27,7 @@ from apps.dex_bot.infra.alerting.daily_trade_summary import (
     _estimate_trade_fees_usdc,
     build_daily_summary_report,
     build_daily_summary_window,
-    iter_utc_day_ids,
+    iter_jst_window_day_doc_ids,
 )
 from apps.dex_bot.infra.config.env import load_env
 from apps.dex_bot.infra.config.firestore_config_repo import (
@@ -457,7 +457,7 @@ def bootstrap() -> AppRuntime:
                 return
 
             window = build_daily_summary_window(target_date_jst)
-            day_doc_ids = iter_utc_day_ids(window)
+            day_doc_ids = iter_jst_window_day_doc_ids(window)
             dex_sources: list[DailySummaryModelSource] = []
             for context in contexts:
                 spec = runtime_specs.get(context.model_id)

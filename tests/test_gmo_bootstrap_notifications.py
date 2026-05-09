@@ -173,6 +173,8 @@ class _StrictFakeNotifier:
         fee: float | None,
         net_pnl: float | None,
         quote_ccy: str,
+        cumulative_gross_pnl: float | None = None,
+        cumulative_net_pnl: float | None = None,
     ) -> None:
         self.trade_closed.append(
             {
@@ -187,6 +189,8 @@ class _StrictFakeNotifier:
                 "fee": fee,
                 "net_pnl": net_pnl,
                 "quote_ccy": quote_ccy,
+                "cumulative_gross_pnl": cumulative_gross_pnl,
+                "cumulative_net_pnl": cumulative_net_pnl,
             }
         )
 
@@ -484,6 +488,8 @@ class GmoBootstrapNotificationsTest(unittest.TestCase):
         self.assertAlmostEqual(29.0, notifier.trade_closed[0]["gross_pnl"])
         self.assertAlmostEqual(1.0, notifier.trade_closed[0]["fee"])
         self.assertAlmostEqual(28.0, notifier.trade_closed[0]["net_pnl"])
+        self.assertAlmostEqual(-56.0, notifier.trade_closed[0]["cumulative_gross_pnl"])
+        self.assertAlmostEqual(-63.0, notifier.trade_closed[0]["cumulative_net_pnl"])
 
     def test_failed_cycle_uses_current_notifier_signatures(self) -> None:
         _StrictFakeNotifier.instances.clear()

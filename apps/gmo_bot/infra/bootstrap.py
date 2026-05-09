@@ -337,6 +337,18 @@ def bootstrap() -> AppRuntime:
         net_pnl = gross_pnl - fee if gross_pnl is not None else None
         return gross_pnl, fee, net_pnl
 
+    def _compute_gmo_cumulative_close_metrics(trade: TradeRecord) -> tuple[float | None, float | None]:
+        execution = _as_dict(trade.get("execution"))
+        cumulative_gross_pnl = _to_float(execution.get("total_realized_pnl_jpy"))
+        if cumulative_gross_pnl is None:
+            cumulative_gross_pnl = _to_float(execution.get("realized_pnl_jpy"))
+        if cumulative_gross_pnl is None:
+            return None, None
+        cumulative_fee = (_to_float(execution.get("entry_fee_jpy")) or 0.0) + (
+            _to_float(execution.get("exit_fee_jpy")) or 0.0
+        )
+        return cumulative_gross_pnl, cumulative_gross_pnl - cumulative_fee
+
     def _maybe_notify_trade_closed(context: ModelRuntimeContext, result: dict[str, str | None]) -> None:
         if result.get("result") != "CLOSED":
             return
@@ -355,6 +367,7 @@ def bootstrap() -> AppRuntime:
 
         position = _as_dict(trade.get("position"))
         gross_pnl, fee, net_pnl = _compute_gmo_close_metrics(trade)
+        cumulative_gross_pnl, cumulative_net_pnl = _compute_gmo_cumulative_close_metrics(trade)
         notifier.notify_trade_closed(
             model_id=context.model_id,
             trade_id=trade_id,
@@ -367,6 +380,8 @@ def bootstrap() -> AppRuntime:
             fee=fee,
             net_pnl=net_pnl,
             quote_ccy="JPY",
+            cumulative_gross_pnl=cumulative_gross_pnl,
+            cumulative_net_pnl=cumulative_net_pnl,
         )
 
     def _refresh_runtime_specs() -> None:

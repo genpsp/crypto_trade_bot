@@ -135,6 +135,8 @@ class SlackNotifier:
         fee: float | None,
         net_pnl: float | None,
         quote_ccy: str,
+        cumulative_gross_pnl: float | None = None,
+        cumulative_net_pnl: float | None = None,
     ) -> None:
         if not self.enabled:
             return

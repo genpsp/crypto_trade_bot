@@ -256,6 +256,29 @@ class GmoDailyTradeSummaryTest(unittest.TestCase):
         self.assertEqual(0, summary.slippage_samples)
         self.assertAlmostEqual(0.0, summary.avg_slippage_bps)
 
+    def test_build_daily_trade_summary_report_counts_skip_occurrence_count(self) -> None:
+        report = build_daily_trade_summary_report(
+            target_date_jst="2026-02-26",
+            generated_at_utc=datetime(2026, 2, 26, 15, 5, tzinfo=UTC),
+            model_payloads=[
+                (
+                    "gmo_ema_pullback_15m_both_v0",
+                    [],
+                    [
+                        {
+                            "result": "SKIPPED_ENTRY",
+                            "occurrence_count": 100,
+                            "last_executed_at_iso": "2026-02-25T18:00:00Z",
+                        }
+                    ],
+                )
+            ],
+        )
+
+        summary = report.model_summaries[0]
+        self.assertEqual(100, summary.skipped_runs)
+        self.assertEqual(100, report.total_skipped_runs)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -46,28 +46,28 @@ class BootstrapPauseGateTest(unittest.TestCase):
         )
         self.assertFalse(should_run)
 
-    def test_compute_dex_close_metrics_uses_short_base_delta_profit(self) -> None:
+    def test_compute_dex_close_metrics_uses_short_spent_quote_profit(self) -> None:
         gross_pnl, fee, net_pnl = _compute_dex_close_metrics(
             {
                 "direction": "SHORT",
                 "position": {
-                    "quote_amount_usdc": 100.0,
-                    "quantity_sol": 1.0,
-                    "entry_price": 100.0,
-                    "exit_price": 80.0,
+                    "quote_amount_usdc": 2000.0,
+                    "quantity_sol": 10.0,
+                    "entry_price": 200.0,
+                    "exit_price": 190.0,
                 },
                 "execution": {
                     "exit_result": {
-                        "spent_quote_usdc": 100.0,
-                        "filled_base_sol": 1.25,
+                        "spent_quote_usdc": 1900.0,
+                        "filled_base_sol": 10.0,
                     }
                 },
             }
         )
 
-        self.assertAlmostEqual(20.0, gross_pnl)
+        self.assertAlmostEqual(100.0, gross_pnl)
         self.assertAlmostEqual(0.0, fee)
-        self.assertAlmostEqual(20.0, net_pnl)
+        self.assertAlmostEqual(100.0, net_pnl)
 
 
 if __name__ == "__main__":

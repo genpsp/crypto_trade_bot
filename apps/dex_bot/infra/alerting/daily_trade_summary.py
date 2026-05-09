@@ -71,7 +71,14 @@ def build_daily_summary_window(target_date_jst: str) -> DailySummaryWindow:
     )
 
 
-def iter_utc_day_ids(window: DailySummaryWindow) -> list[str]:
+def iter_jst_window_day_doc_ids(window: DailySummaryWindow) -> list[str]:
+    """Return Firestore day document IDs that may overlap the JST summary window.
+
+    Trade/run day documents are keyed by JST dates.  A JST day spans two UTC
+    dates, so callers scan the UTC date range that overlaps the JST window and
+    then filter records by timestamp.
+    """
+
     day_ids: list[str] = []
     start_day = window.start_utc.date()
     end_day = (window.end_utc - timedelta(microseconds=1)).date()
@@ -80,6 +87,12 @@ def iter_utc_day_ids(window: DailySummaryWindow) -> list[str]:
         day_ids.append(cursor.isoformat())
         cursor += timedelta(days=1)
     return day_ids
+
+
+def iter_utc_day_ids(window: DailySummaryWindow) -> list[str]:
+    """Backward-compatible alias for ``iter_jst_window_day_doc_ids``."""
+
+    return iter_jst_window_day_doc_ids(window)
 
 
 def build_daily_summary_report(
@@ -210,7 +223,7 @@ def build_model_daily_trade_summary(
         if result == "FAILED":
             failed_runs += 1
         elif result in ("SKIPPED", "SKIPPED_ENTRY"):
-            skipped_runs += 1
+            skipped_runs += _resolve_run_occurrence_count(run)
 
     avg_slippage_bps = sum(slippage_samples) / len(slippage_samples) if slippage_samples else 0.0
     return ModelDailyTradeSummary(
@@ -227,6 +240,17 @@ def build_model_daily_trade_summary(
         failed_trades=failed_trades,
         canceled_trades=canceled_trades,
     )
+
+
+def _resolve_run_occurrence_count(run: dict[str, Any]) -> int:
+    raw_count = run.get("occurrence_count")
+    if isinstance(raw_count, bool):
+        return 1
+    if isinstance(raw_count, int):
+        return max(raw_count, 1)
+    if isinstance(raw_count, float) and raw_count.is_integer():
+        return max(int(raw_count), 1)
+    return 1
 
 
 def _resolve_trade_created_at(trade: dict[str, Any]) -> datetime | None:
@@ -260,28 +284,28 @@ def _compute_trade_realized_pnl_usdc(trade: dict[str, Any]) -> float | None:
     exit_price = _to_float(position.get("exit_price"))
     direction = str(trade.get("direction") or "LONG")
 
-    exit_quote = _to_float(exit_result.get("spent_quote_usdc"))
+    exit_quote = _to_float(exit_result.get("exit_quote_usdc"))
+    if exit_quote is None:
+        exit_quote = _to_float(exit_result.get("spent_quote_usdc"))
     if exit_quote is None:
         if quantity is None or exit_price is None:
             return None
         exit_quote = quantity * exit_price
 
-    if direction == "SHORT":
-        exit_base = _to_float(exit_result.get("filled_base_sol"))
-        if quantity is not None and exit_price is not None:
-            if exit_base is not None:
-                return (exit_base - quantity) * exit_price
-            if entry_quote is not None:
-                return entry_quote - (quantity * exit_price)
-        if entry_quote is None:
-            return None
-        return entry_quote - exit_quote
     if entry_quote is None:
         return None
+    if direction == "SHORT":
+        return entry_quote - exit_quote
     return exit_quote - entry_quote
 
 
 def _estimate_trade_fees_usdc(trade: dict[str, Any]) -> float:
+    """Estimate Solana transaction fees in USDC for SOL/USDC trades.
+
+    Transaction fees are paid in SOL.  The conversion below uses the trade
+    base/quote price, so it is valid only while this bot trades SOL/USDC.
+    Non-SOL base assets need an independent SOL/USDC price source.
+    """
     execution = _as_dict(trade.get("execution"))
     position = _as_dict(trade.get("position"))
     entry_fee = _to_float(execution.get("entry_fee_lamports")) or 0.0

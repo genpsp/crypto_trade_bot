@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 Network = Literal["mainnet-beta"]
 Pair = Literal["SOL/USDC"]
@@ -149,6 +149,9 @@ class TradeResultSnapshot(TypedDict):
     status: Literal["SIMULATED", "ESTIMATED", "CONFIRMED"]
     avg_fill_price: float
     spent_quote_usdc: float
+    # Direction-neutral quote amount for an exit leg.  For compatibility,
+    # spent_quote_usdc is still written/read by older code paths.
+    exit_quote_usdc: NotRequired[float]
     filled_base_sol: float
 
 

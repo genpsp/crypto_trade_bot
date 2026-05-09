@@ -16,6 +16,13 @@ from apps.gmo_bot.infra.config.firestore_config_repo import FirestoreConfigRepos
 
 
 def sanitize_firestore_value(value: Any) -> Any:
+    """Return a Firestore-safe copy with ``None`` values omitted.
+
+    Passing ``None`` to update/create helpers does not delete a field; it simply
+    removes that key from the payload.  Use an explicit Firestore delete sentinel
+    at the call site when a persisted field must be deleted.
+    """
+
     if isinstance(value, list):
         return [sanitize_firestore_value(item) for item in value]
     if isinstance(value, dict):
@@ -548,8 +555,8 @@ class FirestoreRepository(PersistencePort):
         trade = self._load_trade_snapshot(trade_id)
         return deepcopy(trade) if isinstance(trade, dict) else None
 
-    def count_trades_for_utc_day(self, pair: Pair, day_start_iso: str, day_end_iso: str) -> int:
-        trade_date = _extract_day_date(day_start_iso, day_end_iso)
+    def count_trades_for_jst_day(self, pair: Pair, jst_day_start_iso: str, jst_day_end_iso: str) -> int:
+        trade_date = _extract_day_date(jst_day_start_iso, jst_day_end_iso)
         trades_by_id: dict[str, TradeRecord] = {}
 
         day_snapshot = (
@@ -574,6 +581,11 @@ class FirestoreRepository(PersistencePort):
                 continue
             count += 1
         return count
+
+    def count_trades_for_utc_day(self, pair: Pair, day_start_iso: str, day_end_iso: str) -> int:
+        """Backward-compatible alias for ``count_trades_for_jst_day``."""
+
+        return self.count_trades_for_jst_day(pair, day_start_iso, day_end_iso)
 
     def list_recent_closed_trades(self, pair: Pair, limit: int) -> list[TradeRecord]:
         if limit <= 0:

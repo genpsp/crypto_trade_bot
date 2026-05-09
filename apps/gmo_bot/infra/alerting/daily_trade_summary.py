@@ -71,7 +71,14 @@ def build_daily_summary_window(target_date_jst: str) -> DailySummaryWindow:
     )
 
 
-def iter_utc_day_ids(window: DailySummaryWindow) -> list[str]:
+def iter_jst_window_day_doc_ids(window: DailySummaryWindow) -> list[str]:
+    """Return Firestore day document IDs that may overlap the JST summary window.
+
+    Trade/run day documents are keyed by JST dates.  A JST day spans two UTC
+    dates, so callers scan the UTC date range that overlaps the JST window and
+    then filter records by timestamp.
+    """
+
     day_ids: list[str] = []
     start_day = window.start_utc.date()
     end_day = (window.end_utc - timedelta(microseconds=1)).date()
@@ -80,6 +87,12 @@ def iter_utc_day_ids(window: DailySummaryWindow) -> list[str]:
         day_ids.append(cursor.isoformat())
         cursor += timedelta(days=1)
     return day_ids
+
+
+def iter_utc_day_ids(window: DailySummaryWindow) -> list[str]:
+    """Backward-compatible alias for ``iter_jst_window_day_doc_ids``."""
+
+    return iter_jst_window_day_doc_ids(window)
 
 
 def build_daily_summary_report(
@@ -210,7 +223,7 @@ def build_model_daily_trade_summary(
         if result == "FAILED":
             failed_runs += 1
         elif result in ("SKIPPED", "SKIPPED_ENTRY"):
-            skipped_runs += 1
+            skipped_runs += _resolve_run_occurrence_count(run)
 
     avg_slippage_bps = sum(slippage_samples) / len(slippage_samples) if slippage_samples else 0.0
     return ModelDailyTradeSummary(
@@ -227,6 +240,17 @@ def build_model_daily_trade_summary(
         failed_trades=failed_trades,
         canceled_trades=canceled_trades,
     )
+
+
+def _resolve_run_occurrence_count(run: dict[str, Any]) -> int:
+    raw_count = run.get("occurrence_count")
+    if isinstance(raw_count, bool):
+        return 1
+    if isinstance(raw_count, int):
+        return max(raw_count, 1)
+    if isinstance(raw_count, float) and raw_count.is_integer():
+        return max(int(raw_count), 1)
+    return 1
 
 
 def _resolve_trade_created_at(trade: dict[str, Any]) -> datetime | None:

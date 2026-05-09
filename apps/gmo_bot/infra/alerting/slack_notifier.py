@@ -151,6 +151,8 @@ class SlackNotifier:
         fee: float | None,
         net_pnl: float | None,
         quote_ccy: str,
+        cumulative_gross_pnl: float | None = None,
+        cumulative_net_pnl: float | None = None,
     ) -> None:
         if not self.enabled:
             return
@@ -162,9 +164,9 @@ class SlackNotifier:
             f"reason={close_reason}",
         ]
         if entry_price is not None:
-            lines.append(f"entry_price={entry_price:.6f}")
+            lines.append(f"entry_price={self._format_quote_value(entry_price, quote_ccy)}")
         if exit_price is not None:
-            lines.append(f"exit_price={exit_price:.6f}")
+            lines.append(f"exit_price={self._format_quote_value(exit_price, quote_ccy)}")
         if gross_pnl is not None:
             lines.append(
                 f"gross_pnl_{quote_ccy.lower()}={self._format_quote_value(gross_pnl, quote_ccy)}"
@@ -173,6 +175,14 @@ class SlackNotifier:
             lines.append(f"fee_{quote_ccy.lower()}={self._format_quote_value(fee, quote_ccy)}")
         if net_pnl is not None:
             lines.append(f"net_pnl_{quote_ccy.lower()}={self._format_quote_value(net_pnl, quote_ccy)}")
+        if cumulative_gross_pnl is not None:
+            lines.append(
+                f"cumulative_gross_pnl_{quote_ccy.lower()}={self._format_quote_value(cumulative_gross_pnl, quote_ccy)}"
+            )
+        if cumulative_net_pnl is not None:
+            lines.append(
+                f"cumulative_net_pnl_{quote_ccy.lower()}={self._format_quote_value(cumulative_net_pnl, quote_ccy)}"
+            )
         message = self._format_message(self._trade_close_title(close_reason), lines)
         self._send(message=message, dedupe_key=f"trade_closed:{trade_id}:{close_reason}")
 

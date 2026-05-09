@@ -142,6 +142,13 @@ def _build_strategy_execution_bridge(runtime_config: BotConfig, reference_price:
     }
 
 
+def _count_trades_for_jst_day(*, persistence: PersistencePort, pair: str, day_start_iso: str, day_end_iso: str) -> int:
+    counter = getattr(persistence, "count_trades_for_jst_day", None)
+    if callable(counter):
+        return int(counter(pair, day_start_iso, day_end_iso))
+    return persistence.count_trades_for_utc_day(pair, day_start_iso, day_end_iso)
+
+
 def _is_execution_error_skip_summary(summary: str) -> bool:
     normalized = summary.strip().lower()
     if not normalized.startswith("skipped:"):
@@ -446,7 +453,12 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             return run
 
         day_start_iso, day_end_iso = get_jst_day_range(bar_close_time)
-        trades_today = persistence.count_trades_for_utc_day(runtime_config["pair"], day_start_iso, day_end_iso)
+        trades_today = _count_trades_for_jst_day(
+            persistence=persistence,
+            pair=runtime_config["pair"],
+            day_start_iso=day_start_iso,
+            day_end_iso=day_end_iso,
+        )
         recent_closed_trades = _resolve_recent_closed_trades(persistence=persistence, pair=runtime_config["pair"])
         effective_max_trades_per_day, consecutive_loss_streak, dynamic_cap_reason = _resolve_effective_max_trades_per_day(
             runtime_config=runtime_config,

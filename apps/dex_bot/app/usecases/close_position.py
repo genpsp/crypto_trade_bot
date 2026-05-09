@@ -250,6 +250,7 @@ def close_position(
                         "status": "ESTIMATED",
                         "avg_fill_price": estimated_avg_fill_price,
                         "spent_quote_usdc": estimated_output_usdc,
+                        "exit_quote_usdc": estimated_output_usdc,
                         "filled_base_sol": estimated_input_sol,
                     }
                 trade["execution"]["exit_result"] = exit_result
@@ -387,6 +388,7 @@ def close_position(
                     trade["execution"]["exit_result"] = {
                         "status": "CONFIRMED",
                         "spent_quote_usdc": actual_quote_usdc,
+                        "exit_quote_usdc": actual_quote_usdc,
                         "filled_base_sol": actual_base_sol,
                         "avg_fill_price": actual_quote_usdc / actual_base_sol,
                     }

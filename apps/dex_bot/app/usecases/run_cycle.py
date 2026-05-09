@@ -129,6 +129,13 @@ def _resolve_entry_direction(runtime_config: BotConfig, decision: StrategyDecisi
     raise RuntimeError("BOTH model requires diagnostics.entry_direction to be LONG or SHORT on ENTER decision")
 
 
+def _count_trades_for_jst_day(*, persistence: PersistencePort, pair: str, day_start_iso: str, day_end_iso: str) -> int:
+    counter = getattr(persistence, "count_trades_for_jst_day", None)
+    if callable(counter):
+        return int(counter(pair, day_start_iso, day_end_iso))
+    return persistence.count_trades_for_utc_day(pair, day_start_iso, day_end_iso)
+
+
 def _is_execution_error_skip_summary(summary: str) -> bool:
     normalized = summary.strip().lower()
     if not normalized.startswith("skipped:"):
@@ -304,7 +311,12 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             return run
 
         day_start_iso, day_end_iso = get_jst_day_range(bar_close_time)
-        trades_today = persistence.count_trades_for_utc_day(runtime_config["pair"], day_start_iso, day_end_iso)
+        trades_today = _count_trades_for_jst_day(
+            persistence=persistence,
+            pair=runtime_config["pair"],
+            day_start_iso=day_start_iso,
+            day_end_iso=day_end_iso,
+        )
         recent_closed_trades = _resolve_recent_closed_trades(
             persistence=persistence,
             pair=runtime_config["pair"],
