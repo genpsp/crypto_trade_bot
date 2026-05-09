@@ -46,6 +46,20 @@ class BotConfig(TypedDict):
     meta: MetaConfig
 
 
+class DailyBalanceRecord(TypedDict, total=False):
+    snapshot_date_jst: str
+    snapshot_at_iso: str
+    balance_jpy: float
+    balance_usdc: float
+    balance_native_sol: float
+    balance_native_sol_in_usdc: float
+    balance_total_usdc: float
+    cumulative_realized_pnl_jpy: float
+    cumulative_realized_pnl_usdc: float
+    source: Literal["GMO_AVAILABLE_MARGIN", "SOLANA_WALLET"]
+    model_id: str
+
+
 class PositionLotSnapshot(TypedDict):
     position_id: int
     size_sol: float
@@ -188,6 +202,7 @@ class RunRecord(TypedDict, total=False):
 __all__ = [
     "BotConfig",
     "CloseReason",
+    "DailyBalanceRecord",
     "Direction",
     "EntrySignalDecision",
     "ExecutionConfig",

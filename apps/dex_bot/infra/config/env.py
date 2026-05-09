@@ -11,6 +11,10 @@ class Env:
     GOOGLE_APPLICATION_CREDENTIALS: str
     WALLET_KEY_PASSPHRASE: str
     SLACK_WEBHOOK_URL: str | None
+    SLACK_BOT_TOKEN: str | None
+    SLACK_DAILY_SUMMARY_CHANNEL_ID: str | None
+    GMO_API_KEY: str | None
+    GMO_API_SECRET: str | None
 
 
 REQUIRED_ENV_KEYS = (
@@ -44,4 +48,8 @@ def load_env(source: dict[str, str] | None = None) -> Env:
         GOOGLE_APPLICATION_CREDENTIALS=env_source["GOOGLE_APPLICATION_CREDENTIALS"],
         WALLET_KEY_PASSPHRASE=env_source["WALLET_KEY_PASSPHRASE"],
         SLACK_WEBHOOK_URL=_load_optional_str(env_source, "SLACK_WEBHOOK_URL"),
+        SLACK_BOT_TOKEN=_load_optional_str(env_source, "SLACK_BOT_TOKEN"),
+        SLACK_DAILY_SUMMARY_CHANNEL_ID=_load_optional_str(env_source, "SLACK_DAILY_SUMMARY_CHANNEL_ID"),
+        GMO_API_KEY=_load_optional_str(env_source, "GMO_API_KEY"),
+        GMO_API_SECRET=_load_optional_str(env_source, "GMO_API_SECRET"),
     )

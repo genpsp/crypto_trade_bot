@@ -275,6 +275,89 @@ class FirestoreRepositoryOpenTradeStateCacheTest(unittest.TestCase):
         self.assertEqual(1, repo.load_state_calls)
         self.assertEqual(0, repo.scan_calls)
 
+class _DailyBalanceDoc:
+    def __init__(self, doc_id: str, payload: Any | None = None):
+        self.id = doc_id
+        self._payload = payload or {}
+        self.set_calls: list[tuple[dict[str, Any], bool]] = []
+
+    def set(self, payload: dict[str, Any], merge: bool = False) -> None:
+        self._payload.update(payload)
+        self.set_calls.append((payload, merge))
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(self._payload)
+
+
+class _DailyBalanceCollection:
+    def __init__(self):
+        self.docs: dict[str, _DailyBalanceDoc] = {}
+
+    def document(self, doc_id: str) -> _DailyBalanceDoc:
+        doc = self.docs.get(doc_id)
+        if doc is None:
+            doc = _DailyBalanceDoc(doc_id)
+            self.docs[doc_id] = doc
+        return doc
+
+    def stream(self) -> list[_DailyBalanceDoc]:
+        return list(self.docs.values())
+
+
+class _DailyBalanceRepo(FirestoreRepository):
+    def __init__(self) -> None:
+        super().__init__(
+            firestore=None,  # type: ignore[arg-type]
+            config_repo=None,  # type: ignore[arg-type]
+            mode="LIVE",
+            model_id="ema_pullback_15m_both_v0",
+        )
+        self.daily_balance_collection = _DailyBalanceCollection()
+        self.touch_calls = 0
+
+    def _touch_model_metadata(self) -> None:  # type: ignore[override]
+        self.touch_calls += 1
+
+    def _daily_balance_collection(self):  # type: ignore[override]
+        return self.daily_balance_collection
+
+
+class FirestoreRepositoryDailyBalanceTest(unittest.TestCase):
+    def test_save_daily_balance_uses_snapshot_date_doc_id_and_merge(self) -> None:
+        repo = _DailyBalanceRepo()
+
+        repo.save_daily_balance(
+            {
+                "snapshot_date_jst": "2026-05-09",
+                "snapshot_at_iso": "2026-05-09T00:05:00+09:00",
+                "balance_usdc": 1234.56,
+                "source": "SOLANA_WALLET",
+            }
+        )
+
+        doc = repo.daily_balance_collection.docs["2026-05-09"]
+        self.assertEqual(1, repo.touch_calls)
+        self.assertEqual(1, len(doc.set_calls))
+        payload, merge = doc.set_calls[0]
+        self.assertTrue(merge)
+        self.assertEqual("ema_pullback_15m_both_v0", payload["model_id"])
+        self.assertEqual(1234.56, payload["balance_usdc"])
+
+    def test_list_recent_daily_balances_returns_latest_days_in_chronological_order(self) -> None:
+        repo = _DailyBalanceRepo()
+        for index in range(35):
+            day = f"2026-04-{index + 1:02d}" if index < 30 else f"2026-05-{index - 29:02d}"
+            repo.daily_balance_collection.docs[day] = _DailyBalanceDoc(
+                day,
+                {"snapshot_date_jst": day, "balance_usdc": float(index)},
+            )
+
+        records = repo.list_recent_daily_balances(30)
+
+        self.assertEqual(30, len(records))
+        self.assertEqual("2026-04-06", records[0]["snapshot_date_jst"])
+        self.assertEqual("2026-05-05", records[-1]["snapshot_date_jst"])
+
 
 if __name__ == "__main__":
     unittest.main()

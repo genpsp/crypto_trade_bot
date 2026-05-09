@@ -21,6 +21,7 @@ from apps.dex_bot.app.ports.execution_port import ExecutionPort
 from apps.dex_bot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
 from apps.dex_bot.domain.model.types import TradeRecord
 from apps.dex_bot.infra.alerting import SlackAlertConfig, SlackNotifier, is_execution_error_result
+from apps.dex_bot.infra.alerting.balance_chart import BalanceChartSeries, render_balance_chart_png
 from apps.dex_bot.infra.alerting.daily_trade_summary import (
     JST,
     _compute_trade_realized_pnl_usdc,
@@ -38,6 +39,10 @@ from apps.dex_bot.infra.config.firestore_config_repo import (
 )
 from apps.dex_bot.infra.logging.logger import create_logger
 from apps.dex_bot.infra.scheduler.cron_cycle import CronController, create_cron_cycle
+from apps.gmo_bot.adapters.execution.gmo_api_client import GmoApiClient
+from apps.gmo_bot.adapters.execution.gmo_margin_execution import GmoMarginExecutionAdapter
+from apps.gmo_bot.adapters.persistence.firestore_repo import FirestoreRepository as GmoFirestoreRepository
+from apps.gmo_bot.app.ports.execution_port import ExecutionPort as GmoExecutionPort
 from apps.gmo_bot.infra.alerting.daily_trade_summary import (
     build_daily_trade_summary_report as build_gmo_daily_summary_report,
 )
@@ -120,6 +125,11 @@ def bootstrap() -> AppRuntime:
     gmo_config_repo = GmoFirestoreConfigRepository(firestore)
     market_data = OhlcvProvider(redis=redis)
     quote_client = JupiterQuoteClient(redis=redis)
+    gmo_live_execution: GmoExecutionPort | None = None
+    gmo_api_key = getattr(env, "GMO_API_KEY", None)
+    gmo_api_secret = getattr(env, "GMO_API_SECRET", None)
+    if gmo_api_key is not None and gmo_api_secret is not None:
+        gmo_live_execution = GmoMarginExecutionAdapter(GmoApiClient(gmo_api_key, gmo_api_secret), logger)
     paper_execution: ExecutionPort = PaperExecutionAdapter(quote_client, logger)
     live_execution_by_wallet: dict[str, ExecutionPort] = {}
 
@@ -157,6 +167,8 @@ def bootstrap() -> AppRuntime:
     notifier = SlackNotifier(
         config=SlackAlertConfig(
             webhook_url=env.SLACK_WEBHOOK_URL,
+            bot_token=getattr(env, "SLACK_BOT_TOKEN", None),
+            daily_summary_channel_id=getattr(env, "SLACK_DAILY_SUMMARY_CHANNEL_ID", None),
             consecutive_failure_threshold=CONSECUTIVE_FAILURE_ALERT_THRESHOLD,
             stale_minutes=STALE_CYCLE_ALERT_MINUTES,
             duplicate_suppression_seconds=DUPLICATE_ALERT_SUPPRESSION_SECONDS,
@@ -434,6 +446,205 @@ def bootstrap() -> AppRuntime:
         sources.sort(key=lambda source: source.model_id)
         return sources
 
+    def _snapshot_at_iso(now_utc: datetime) -> str:
+        return now_utc.astimezone(JST).isoformat(timespec="seconds")
+
+
+    def _save_dex_daily_balance_snapshots(
+        *,
+        target_date_jst: str,
+        now_utc: datetime,
+        contexts: list[ModelRuntimeContext],
+    ) -> None:
+        snapshot_at_iso = _snapshot_at_iso(now_utc)
+        for context in contexts:
+            spec = runtime_specs.get(context.model_id)
+            if spec is None or spec.mode != "LIVE":
+                continue
+            try:
+                balance_usdc = context.execution.get_available_quote_usdc(context.pair)
+            except Exception as error:
+                logger.warn(
+                    "daily dex balance snapshot skipped because quote balance fetch failed",
+                    {"model_id": context.model_id, "error": str(error)},
+                )
+                continue
+
+            snapshot: dict[str, Any] = {
+                "snapshot_date_jst": target_date_jst,
+                "snapshot_at_iso": snapshot_at_iso,
+                "balance_usdc": float(balance_usdc),
+                "source": "SOLANA_WALLET",
+                "model_id": context.model_id,
+            }
+            balance_native_sol: float | None = None
+            try:
+                balance_native_sol = float(context.execution.get_available_base_sol(context.pair))
+                snapshot["balance_native_sol"] = balance_native_sol
+            except Exception as error:
+                logger.warn(
+                    "daily dex balance snapshot native sol fetch failed",
+                    {"model_id": context.model_id, "error": str(error)},
+                )
+            if balance_native_sol is not None:
+                try:
+                    mark_price = float(context.execution.get_mark_price(context.pair))
+                    snapshot["balance_native_sol_in_usdc"] = balance_native_sol * mark_price
+                    snapshot["balance_total_usdc"] = float(balance_usdc) + (balance_native_sol * mark_price)
+                except Exception as error:
+                    logger.warn(
+                        "daily dex balance snapshot sol/usdc conversion failed",
+                        {"model_id": context.model_id, "error": str(error)},
+                    )
+            try:
+                context.persistence.save_daily_balance(snapshot)
+            except Exception as error:
+                logger.warn(
+                    "daily dex balance snapshot save failed",
+                    {"model_id": context.model_id, "error": str(error)},
+                )
+
+
+    def _save_gmo_daily_balance_snapshots(*, target_date_jst: str, now_utc: datetime) -> None:
+        live_model_ids: list[str] = []
+        for model_id in gmo_config_repo.list_model_ids():
+            try:
+                metadata = gmo_config_repo.get_model_metadata(model_id)
+            except Exception as error:
+                logger.warn(
+                    "daily gmo balance snapshot skipped because metadata load failed",
+                    {"model_id": model_id, "error": str(error)},
+                )
+                continue
+            if not metadata.enabled or metadata.mode != "LIVE":
+                continue
+            live_model_ids.append(model_id)
+
+        if not live_model_ids:
+            return
+        if gmo_live_execution is None:
+            logger.warn(
+                "daily gmo balance snapshots skipped because GMO API credentials are not configured in dex bot env",
+                {"model_count": len(live_model_ids)},
+            )
+            return
+
+        snapshot_at_iso = _snapshot_at_iso(now_utc)
+        for model_id in live_model_ids:
+            try:
+                balance_jpy = gmo_live_execution.get_available_margin_jpy()
+            except Exception as error:
+                logger.warn(
+                    "daily gmo balance snapshot skipped because available margin fetch failed",
+                    {"model_id": model_id, "error": str(error)},
+                )
+                continue
+            try:
+                repo = GmoFirestoreRepository(firestore, gmo_config_repo, mode="LIVE", model_id=model_id)
+                repo.save_daily_balance(
+                    {
+                        "snapshot_date_jst": target_date_jst,
+                        "snapshot_at_iso": snapshot_at_iso,
+                        "balance_jpy": float(balance_jpy),
+                        "source": "GMO_AVAILABLE_MARGIN",
+                        "model_id": model_id,
+                    }
+                )
+            except Exception as error:
+                logger.warn(
+                    "daily gmo balance snapshot save failed",
+                    {"model_id": model_id, "error": str(error)},
+                )
+
+
+    def _save_daily_balance_snapshots(
+        *,
+        target_date_jst: str,
+        now_utc: datetime,
+        contexts: list[ModelRuntimeContext],
+    ) -> None:
+        _save_dex_daily_balance_snapshots(
+            target_date_jst=target_date_jst,
+            now_utc=now_utc,
+            contexts=contexts,
+        )
+        _save_gmo_daily_balance_snapshots(target_date_jst=target_date_jst, now_utc=now_utc)
+
+
+    def _balance_points(records: list[dict[str, Any]], balance_key: str) -> list[tuple[str, float]]:
+        points: list[tuple[str, float]] = []
+        for record in records:
+            snapshot_date_jst = record.get("snapshot_date_jst")
+            value = record.get(balance_key)
+            if not isinstance(snapshot_date_jst, str):
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            points.append((snapshot_date_jst, float(value)))
+        return points
+
+
+    def _render_dex_daily_balance_chart(
+        *,
+        contexts: list[ModelRuntimeContext],
+        target_date_jst: str,
+    ) -> bytes | None:
+        series: list[BalanceChartSeries] = []
+        for context in contexts:
+            spec = runtime_specs.get(context.model_id)
+            if spec is None or spec.mode != "LIVE":
+                continue
+            try:
+                records = context.persistence.list_recent_daily_balances(30)
+            except Exception as error:
+                logger.warn(
+                    "daily dex balance chart skipped model because balance history load failed",
+                    {"model_id": context.model_id, "error": str(error)},
+                )
+                continue
+            points = _balance_points(records, "balance_usdc")
+            if points:
+                series.append(BalanceChartSeries(label=context.model_id, unit="USDC", points=points))
+        try:
+            return render_balance_chart_png(
+                title="Balance trend (last 30 days, JST)",
+                series=series,
+                target_date_jst=target_date_jst,
+            )
+        except Exception as error:
+            logger.warn("daily dex balance chart render failed", {"error": str(error)})
+            return None
+
+
+    def _render_gmo_daily_balance_chart(
+        *,
+        sources: list[DailySummaryModelSource],
+        target_date_jst: str,
+    ) -> bytes | None:
+        series: list[BalanceChartSeries] = []
+        for source in sources:
+            try:
+                repo = GmoFirestoreRepository(firestore, gmo_config_repo, mode="LIVE", model_id=source.model_id)
+                records = repo.list_recent_daily_balances(30)
+            except Exception as error:
+                logger.warn(
+                    "daily gmo balance chart skipped model because balance history load failed",
+                    {"model_id": source.model_id, "error": str(error)},
+                )
+                continue
+            points = _balance_points(records, "balance_jpy")
+            if points:
+                series.append(BalanceChartSeries(label=source.model_id, unit="JPY", points=points))
+        try:
+            return render_balance_chart_png(
+                title="Balance trend (last 30 days, JST)",
+                series=series,
+                target_date_jst=target_date_jst,
+            )
+        except Exception as error:
+            logger.warn("daily gmo balance chart render failed", {"error": str(error)})
+            return None
+
     def _maybe_send_daily_trade_summary(now_utc: datetime, contexts: list[ModelRuntimeContext]) -> None:
         if not notifier.enabled:
             return
@@ -455,6 +666,12 @@ def bootstrap() -> AppRuntime:
             )
             if not lock_acquired:
                 return
+
+            _save_daily_balance_snapshots(
+                target_date_jst=target_date_jst,
+                now_utc=now_utc,
+                contexts=contexts,
+            )
 
             window = build_daily_summary_window(target_date_jst)
             day_doc_ids = iter_jst_window_day_doc_ids(window)
@@ -482,9 +699,19 @@ def bootstrap() -> AppRuntime:
                 generated_at_utc=now_utc,
                 model_payloads=_load_daily_summary_payloads(gmo_sources, day_doc_ids),
             )
-            notifier.notify_combined_daily_trade_summary_jst(
+            dex_chart_png = _render_dex_daily_balance_chart(
+                contexts=contexts,
+                target_date_jst=target_date_jst,
+            )
+            gmo_chart_png = _render_gmo_daily_balance_chart(
+                sources=gmo_sources,
+                target_date_jst=target_date_jst,
+            )
+            notifier.notify_combined_daily_trade_summary_with_charts_jst(
                 dex_report=dex_report,
                 gmo_report=gmo_report,
+                dex_chart_png=dex_chart_png,
+                gmo_chart_png=gmo_chart_png,
             )
             logger.info(
                 "daily trade summary sent",
@@ -494,6 +721,8 @@ def bootstrap() -> AppRuntime:
                     "gmo_model_count": len(gmo_report.model_summaries),
                     "dex_models": [summary.model_id for summary in dex_report.model_summaries],
                     "gmo_models": [summary.model_id for summary in gmo_report.model_summaries],
+                    "dex_chart_attached": dex_chart_png is not None,
+                    "gmo_chart_attached": gmo_chart_png is not None,
                 },
             )
         except Exception as error:

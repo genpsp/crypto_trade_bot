@@ -413,6 +413,127 @@ class SlackNotifierTest(unittest.TestCase):
         self.assertIn("gmo_ema_pullback_15m_both_v0", payload)
         self.assertIn("```", payload)
 
+    def test_notify_combined_daily_trade_summary_with_charts_uses_bot_token_upload_flow(self) -> None:
+        logger = _FakeLogger()
+        notifier = SlackNotifier(
+            config=SlackAlertConfig(
+                webhook_url="https://hooks.slack.com/services/test/test/test",
+                bot_token="xoxb-test",
+                daily_summary_channel_id="C0123ABCDE",
+            ),
+            logger=logger,
+        )
+        dex_report = build_daily_summary_report(
+            target_date_jst="2026-02-26",
+            generated_at_utc=datetime(2026, 2, 26, 15, 5, tzinfo=UTC),
+            model_payloads=[],
+        )
+        gmo_report = build_gmo_daily_trade_summary_report(
+            target_date_jst="2026-02-26",
+            generated_at_utc=datetime(2026, 2, 26, 15, 5, tzinfo=UTC),
+            model_payloads=[],
+        )
+
+        def _response(payload: dict[str, object] | None = None) -> Mock:
+            response = Mock()
+            response.raise_for_status.return_value = None
+            response.json.return_value = payload or {"ok": True}
+            return response
+
+        side_effect = [
+            _response({"ok": True, "ts": "123.456"}),
+            _response({"ok": True, "upload_url": "https://uploads.slack.test/dex", "file_id": "FDEX"}),
+            _response(),
+            _response({"ok": True}),
+            _response({"ok": True, "upload_url": "https://uploads.slack.test/gmo", "file_id": "FGMO"}),
+            _response(),
+            _response({"ok": True}),
+        ]
+        with patch("apps.dex_bot.infra.alerting.slack_notifier.requests.post", side_effect=side_effect) as mocked_post:
+            notifier.notify_combined_daily_trade_summary_with_charts_jst(
+                dex_report=dex_report,
+                gmo_report=gmo_report,
+                dex_chart_png=b"dex-png",
+                gmo_chart_png=b"gmo-png",
+            )
+
+        self.assertEqual(7, mocked_post.call_count)
+        self.assertEqual("https://slack.com/api/chat.postMessage", mocked_post.call_args_list[0].args[0])
+        self.assertEqual("https://slack.com/api/files.getUploadURLExternal", mocked_post.call_args_list[1].args[0])
+        self.assertEqual("https://uploads.slack.test/dex", mocked_post.call_args_list[2].args[0])
+        self.assertEqual("https://slack.com/api/files.completeUploadExternal", mocked_post.call_args_list[3].args[0])
+        complete_payload = mocked_post.call_args_list[3].kwargs["json"]
+        self.assertEqual("C0123ABCDE", complete_payload["channel_id"])
+        self.assertEqual("123.456", complete_payload["thread_ts"])
+        self.assertEqual(0, len(logger.warnings))
+
+    def test_notify_combined_daily_trade_summary_with_charts_falls_back_to_webhook_without_bot_config(self) -> None:
+        logger = _FakeLogger()
+        notifier = SlackNotifier(
+            config=SlackAlertConfig(webhook_url="https://hooks.slack.com/services/test/test/test"),
+            logger=logger,
+        )
+        dex_report = build_daily_summary_report(
+            target_date_jst="2026-02-26",
+            generated_at_utc=datetime(2026, 2, 26, 15, 5, tzinfo=UTC),
+            model_payloads=[],
+        )
+        gmo_report = build_gmo_daily_trade_summary_report(
+            target_date_jst="2026-02-26",
+            generated_at_utc=datetime(2026, 2, 26, 15, 5, tzinfo=UTC),
+            model_payloads=[],
+        )
+        response = Mock()
+        response.raise_for_status.return_value = None
+        with patch("apps.dex_bot.infra.alerting.slack_notifier.requests.post", return_value=response) as mocked_post:
+            notifier.notify_combined_daily_trade_summary_with_charts_jst(
+                dex_report=dex_report,
+                gmo_report=gmo_report,
+                dex_chart_png=b"dex-png",
+                gmo_chart_png=b"gmo-png",
+            )
+
+        self.assertEqual(1, mocked_post.call_count)
+        self.assertEqual("https://hooks.slack.com/services/test/test/test", mocked_post.call_args.args[0])
+
+    def test_notify_combined_daily_trade_summary_with_charts_falls_back_to_webhook_on_api_error(self) -> None:
+        logger = _FakeLogger()
+        notifier = SlackNotifier(
+            config=SlackAlertConfig(
+                webhook_url="https://hooks.slack.com/services/test/test/test",
+                bot_token="xoxb-test",
+                daily_summary_channel_id="C0123ABCDE",
+            ),
+            logger=logger,
+        )
+        dex_report = build_daily_summary_report(
+            target_date_jst="2026-02-26",
+            generated_at_utc=datetime(2026, 2, 26, 15, 5, tzinfo=UTC),
+            model_payloads=[],
+        )
+        gmo_report = build_gmo_daily_trade_summary_report(
+            target_date_jst="2026-02-26",
+            generated_at_utc=datetime(2026, 2, 26, 15, 5, tzinfo=UTC),
+            model_payloads=[],
+        )
+        api_response = Mock()
+        api_response.raise_for_status.return_value = None
+        api_response.json.return_value = {"ok": False, "error": "invalid_auth"}
+        webhook_response = Mock()
+        webhook_response.raise_for_status.return_value = None
+        with patch("apps.dex_bot.infra.alerting.slack_notifier.requests.post", side_effect=[api_response, webhook_response]) as mocked_post:
+            notifier.notify_combined_daily_trade_summary_with_charts_jst(
+                dex_report=dex_report,
+                gmo_report=gmo_report,
+                dex_chart_png=b"dex-png",
+                gmo_chart_png=b"gmo-png",
+            )
+
+        self.assertEqual(2, mocked_post.call_count)
+        self.assertEqual("https://slack.com/api/chat.postMessage", mocked_post.call_args_list[0].args[0])
+        self.assertEqual("https://hooks.slack.com/services/test/test/test", mocked_post.call_args_list[1].args[0])
+        self.assertEqual(1, len(logger.warnings))
+
 
 if __name__ == "__main__":
     unittest.main()

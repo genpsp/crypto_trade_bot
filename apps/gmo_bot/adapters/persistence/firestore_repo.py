@@ -11,7 +11,7 @@ from google.cloud.firestore_v1 import Increment
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from apps.gmo_bot.app.ports.persistence_port import PersistencePort
-from apps.gmo_bot.domain.model.types import BotConfig, Pair, RunRecord, TradeRecord
+from apps.gmo_bot.domain.model.types import BotConfig, DailyBalanceRecord, Pair, RunRecord, TradeRecord
 from apps.gmo_bot.infra.config.firestore_config_repo import FirestoreConfigRepository, MODELS_COLLECTION_ID
 
 
@@ -43,6 +43,7 @@ OPEN_TRADE_STATE_DOC_ID = "open_trade"
 RECENT_CLOSED_STATE_DOC_ID = "recent_closed_trades"
 RECENT_CLOSED_TRADES_MAX_ITEMS = 32
 TRADE_SNAPSHOT_CACHE_MAX_ITEMS = 256
+DAILY_BALANCE_COLLECTION_NAME = "daily_balance"
 JST = timezone(timedelta(hours=9))
 
 
@@ -208,6 +209,9 @@ class FirestoreRepository(PersistencePort):
                 return normalized_payload_trade_date
 
         return _extract_trade_date_from_trade_id(trade_id) or datetime.now(tz=JST).date().isoformat()
+
+    def _daily_balance_collection(self):
+        return self._model_doc().collection(DAILY_BALANCE_COLLECTION_NAME)
 
     def _runs_collection(self):
         return self._model_doc().collection(self.runs_collection_name)
@@ -615,6 +619,42 @@ class FirestoreRepository(PersistencePort):
                 ]
 
         return deepcopy(filtered[:limit])
+
+    def save_daily_balance(self, snapshot: DailyBalanceRecord) -> None:
+        self._touch_model_metadata()
+        payload: DailyBalanceRecord = dict(snapshot)
+        snapshot_date_jst = payload.get("snapshot_date_jst")
+        if not isinstance(snapshot_date_jst, str) or not _is_day_doc_id(snapshot_date_jst):
+            raise ValueError("daily balance snapshot_date_jst must be YYYY-MM-DD")
+        payload.setdefault("model_id", self.model_id)
+        payload.setdefault(
+            "snapshot_at_iso",
+            datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
+        )
+        self._daily_balance_collection().document(snapshot_date_jst).set(
+            sanitize_firestore_value(payload),
+            merge=True,
+        )
+
+    def list_recent_daily_balances(self, days: int) -> list[DailyBalanceRecord]:
+        if days <= 0:
+            return []
+
+        records: list[DailyBalanceRecord] = []
+        for snapshot in self._daily_balance_collection().stream():
+            payload = snapshot.to_dict()
+            if not isinstance(payload, dict):
+                continue
+            snapshot_date_jst = payload.get("snapshot_date_jst")
+            if not isinstance(snapshot_date_jst, str) or not _is_day_doc_id(snapshot_date_jst):
+                doc_id = getattr(snapshot, "id", "")
+                if not isinstance(doc_id, str) or not _is_day_doc_id(doc_id):
+                    continue
+                payload["snapshot_date_jst"] = doc_id
+            records.append(deepcopy(payload))
+
+        records.sort(key=lambda record: str(record.get("snapshot_date_jst") or ""))
+        return deepcopy(records[-days:])
 
     def save_run(self, run: RunRecord) -> None:
         runs_collection = self._runs_collection()

@@ -39,9 +39,17 @@ class EnvConfigTest(unittest.TestCase):
                 "GOOGLE_APPLICATION_CREDENTIALS": "secrets/firebase-service-account.json",
                 "WALLET_KEY_PASSPHRASE": "test-passphrase",
                 "SLACK_WEBHOOK_URL": "https://hooks.slack.com/services/x/y/z",
+                "SLACK_BOT_TOKEN": "xoxb-test",
+                "SLACK_DAILY_SUMMARY_CHANNEL_ID": "C0123ABCDE",
+                "GMO_API_KEY": "gmo-key",
+                "GMO_API_SECRET": "gmo-secret",
             }
         )
         self.assertEqual("https://hooks.slack.com/services/x/y/z", env.SLACK_WEBHOOK_URL)
+        self.assertEqual("xoxb-test", env.SLACK_BOT_TOKEN)
+        self.assertEqual("C0123ABCDE", env.SLACK_DAILY_SUMMARY_CHANNEL_ID)
+        self.assertEqual("gmo-key", env.GMO_API_KEY)
+        self.assertEqual("gmo-secret", env.GMO_API_SECRET)
 
 
 if __name__ == "__main__":

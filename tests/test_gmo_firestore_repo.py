@@ -135,5 +135,72 @@ class GmoFirestoreRepositoryOpenTradeCacheTest(unittest.TestCase):
         self.assertEqual("WAITING", refreshed["execution"]["stop_loss_order_status"])
         self.assertEqual([{"order_id": 123, "status": "WAITING"}], refreshed["execution"]["stop_loss_orders"])
 
+class _DailyBalanceDoc:
+    def __init__(self, doc_id: str, payload: Any | None = None):
+        self.id = doc_id
+        self._payload = payload or {}
+        self.set_calls: list[tuple[dict[str, Any], bool]] = []
+
+    def set(self, payload: dict[str, Any], merge: bool = False) -> None:
+        self._payload.update(payload)
+        self.set_calls.append((payload, merge))
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(self._payload)
+
+
+class _DailyBalanceCollection:
+    def __init__(self):
+        self.docs: dict[str, _DailyBalanceDoc] = {}
+
+    def document(self, doc_id: str) -> _DailyBalanceDoc:
+        doc = self.docs.get(doc_id)
+        if doc is None:
+            doc = _DailyBalanceDoc(doc_id)
+            self.docs[doc_id] = doc
+        return doc
+
+    def stream(self) -> list[_DailyBalanceDoc]:
+        return list(self.docs.values())
+
+
+class _DailyBalanceRepo(FirestoreRepository):
+    def __init__(self) -> None:
+        super().__init__(
+            firestore=None,  # type: ignore[arg-type]
+            config_repo=None,  # type: ignore[arg-type]
+            mode="LIVE",
+            model_id="gmo_ema_pullback_15m_both_v0",
+        )
+        self.daily_balance_collection = _DailyBalanceCollection()
+        self.touch_calls = 0
+
+    def _touch_model_metadata(self) -> None:  # type: ignore[override]
+        self.touch_calls += 1
+
+    def _daily_balance_collection(self):  # type: ignore[override]
+        return self.daily_balance_collection
+
+
+class GmoFirestoreRepositoryDailyBalanceTest(unittest.TestCase):
+    def test_save_daily_balance_stores_available_margin_snapshot(self) -> None:
+        repo = _DailyBalanceRepo()
+
+        repo.save_daily_balance(
+            {
+                "snapshot_date_jst": "2026-05-09",
+                "snapshot_at_iso": "2026-05-09T00:05:00+09:00",
+                "balance_jpy": 123456.0,
+                "source": "GMO_AVAILABLE_MARGIN",
+            }
+        )
+
+        doc = repo.daily_balance_collection.docs["2026-05-09"]
+        payload, merge = doc.set_calls[0]
+        self.assertTrue(merge)
+        self.assertEqual("gmo_ema_pullback_15m_both_v0", payload["model_id"])
+        self.assertEqual(123456.0, payload["balance_jpy"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from apps.gmo_bot.domain.model.types import BotConfig, Pair, RunRecord, TradeRecord
+from apps.gmo_bot.domain.model.types import BotConfig, DailyBalanceRecord, Pair, RunRecord, TradeRecord
 
 
 class PersistencePort(Protocol):
@@ -21,5 +21,9 @@ class PersistencePort(Protocol):
     def count_trades_for_utc_day(self, pair: Pair, day_start_iso: str, day_end_iso: str) -> int: ...
 
     def list_recent_closed_trades(self, pair: Pair, limit: int) -> list[TradeRecord]: ...
+
+    def save_daily_balance(self, snapshot: DailyBalanceRecord) -> None: ...
+
+    def list_recent_daily_balances(self, days: int) -> list[DailyBalanceRecord]: ...
 
     def save_run(self, run: RunRecord) -> None: ...
