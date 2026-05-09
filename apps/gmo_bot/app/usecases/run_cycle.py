@@ -4,10 +4,17 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Callable
 
-from apps.dex_bot.domain.risk.loss_streak_trade_cap import LOSS_STREAK_LOOKBACK_CLOSED_TRADES
-from apps.dex_bot.domain.risk.loss_streak_trade_cap import resolve_effective_max_trades_per_day_for_strategy
-from apps.dex_bot.domain.risk.short_regime_guard import SHORT_REGIME_GUARD_REASON, resolve_short_regime_guard_state
+from apps.dex_bot.domain.risk.loss_streak_trade_cap import (
+    LOSS_STREAK_LOOKBACK_CLOSED_TRADES,
+    resolve_effective_max_trades_per_day_for_strategy,
+)
+from apps.dex_bot.domain.risk.short_regime_guard import (
+    SHORT_REGIME_GUARD_LOOKBACK_CLOSED_TRADES,
+    SHORT_REGIME_GUARD_REASON,
+    resolve_short_regime_guard_state,
+)
 from apps.dex_bot.domain.risk.short_stop_loss_cooldown import (
+    SHORT_STOP_LOSS_COOLDOWN_LOOKBACK_CLOSED_TRADES,
     SHORT_STOP_LOSS_COOLDOWN_REASON,
     resolve_short_stop_loss_cooldown_state,
 )
@@ -75,12 +82,6 @@ class RunCycleDependencies:
     use_prefetched_open_trade: bool = False
 
 
-def _round_metric(value: Any, digits: int = 6) -> float | None:
-    if isinstance(value, (int, float)):
-        return round_to(float(value), digits)
-    return None
-
-
 def _build_model_run_id(model_id: str, bar_close_time_iso: str, run_at: datetime) -> str:
     return f"{model_id}_{build_run_id(bar_close_time_iso, run_at)}"
 
@@ -101,17 +102,34 @@ def _resolve_effective_max_trades_per_day(*, runtime_config: BotConfig, recent_c
     )
 
 
+def _resolve_recent_closed_trade_limit() -> int:
+    return max(
+        LOSS_STREAK_LOOKBACK_CLOSED_TRADES,
+        SHORT_STOP_LOSS_COOLDOWN_LOOKBACK_CLOSED_TRADES,
+        SHORT_REGIME_GUARD_LOOKBACK_CLOSED_TRADES,
+    )
+
+
 def _resolve_recent_closed_trades(*, persistence: PersistencePort, pair: str) -> list[TradeRecord]:
-    return persistence.list_recent_closed_trades(pair, LOSS_STREAK_LOOKBACK_CLOSED_TRADES)
+    return persistence.list_recent_closed_trades(pair, _resolve_recent_closed_trade_limit())
 
 
 def _resolve_entry_direction(runtime_config: BotConfig, decision: Any) -> Direction | None:
     if decision.type != "ENTER":
         return None
     model_direction: ModelDirection = runtime_config["direction"]
-    if model_direction in ("LONG", "SHORT"):
-        return model_direction
     raw_entry_direction = (decision.diagnostics or {}).get("entry_direction")
+    if model_direction in ("LONG", "SHORT"):
+        if raw_entry_direction not in ("LONG", "SHORT"):
+            raise RuntimeError(
+                f"{model_direction} model requires diagnostics.entry_direction to be LONG or SHORT on ENTER decision"
+            )
+        if raw_entry_direction != model_direction:
+            raise RuntimeError(
+                "strategy diagnostics.entry_direction "
+                f"{raw_entry_direction} does not match runtime direction {model_direction}"
+            )
+        return model_direction
     if raw_entry_direction in ("LONG", "SHORT"):
         return raw_entry_direction
     raise RuntimeError("BOTH model requires diagnostics.entry_direction to be LONG or SHORT on ENTER decision")
@@ -296,32 +314,50 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                     if risk_distance is not None and risk_distance > 0
                     else None
                 )
-                latch_exceeded = False
-                if trigger_price_value is not None and max_pullback is not None:
-                    if trade_direction == "LONG":
-                        latch_exceeded = mark_price < (trigger_price_value - max_pullback)
-                    else:
-                        latch_exceeded = mark_price > (trigger_price_value + max_pullback)
-                if latch_exceeded:
+                if trigger_price_value is None or max_pullback is None:
                     execution_snapshot.pop("take_profit_triggered_at_iso", None)
                     execution_snapshot.pop("take_profit_trigger_price", None)
                     persistence.update_trade(
                         open_trade["trade_id"],
                         strip_none({"execution": execution_snapshot, "updated_at": run_at_iso}),
                     )
-                    logger.info(
-                        "take profit trigger latch cleared",
+                    logger.warn(
+                        "take profit trigger latch cleared because risk distance is unavailable",
                         {
                             "model_id": model_id,
                             "trade_id": open_trade["trade_id"],
-                            "mark_price": round_to(mark_price, 6),
-                            "trigger_price": round_to(trigger_price_value, 6),
-                            "max_pullback": round_to(max_pullback, 6),
+                            "entry_price": entry_price,
+                            "stop_price": stop_price,
+                            "take_profit_price": take_profit_price,
+                            "trigger_price": take_profit_trigger_price,
                         },
                     )
                     take_profit_latched = False
                 else:
-                    trigger_reason = "TAKE_PROFIT"
+                    if trade_direction == "LONG":
+                        latch_exceeded = mark_price < (trigger_price_value - max_pullback)
+                    else:
+                        latch_exceeded = mark_price > (trigger_price_value + max_pullback)
+                    if latch_exceeded:
+                        execution_snapshot.pop("take_profit_triggered_at_iso", None)
+                        execution_snapshot.pop("take_profit_trigger_price", None)
+                        persistence.update_trade(
+                            open_trade["trade_id"],
+                            strip_none({"execution": execution_snapshot, "updated_at": run_at_iso}),
+                        )
+                        logger.info(
+                            "take profit trigger latch cleared",
+                            {
+                                "model_id": model_id,
+                                "trade_id": open_trade["trade_id"],
+                                "mark_price": round_to(mark_price, 6),
+                                "trigger_price": round_to(trigger_price_value, 6),
+                                "max_pullback": round_to(max_pullback, 6),
+                            },
+                        )
+                        take_profit_latched = False
+                    else:
+                        trigger_reason = "TAKE_PROFIT"
             logger.info(
                 "exit check",
                 {

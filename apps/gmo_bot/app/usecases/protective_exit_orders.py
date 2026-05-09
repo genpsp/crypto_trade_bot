@@ -164,19 +164,33 @@ def mark_protective_exit_orders_inactive(
     take_profit_status: str = "INACTIVE",
     stop_loss_status: str = "INACTIVE",
     error_message: str | None = None,
+    target_order_id: int | None = None,
 ) -> None:
+    """Mark cached protective-exit order state as inactive/terminal.
+
+    ``target_order_id`` scopes the stop-loss status update to one GMO stop order.
+    Leaving it unset preserves the explicit bulk-update behavior used when every
+    stop order is obsolete (for example after a take-profit/manual full close).
+    """
+
     execution = trade.setdefault("execution", {})
     if not isinstance(execution, dict):
         return
     if "take_profit_order_id" in execution or "take_profit_order_status" in execution:
         execution["take_profit_order_status"] = take_profit_status
-    if "stop_loss_order_id" in execution or "stop_loss_order_status" in execution:
+    if target_order_id is None:
+        if "stop_loss_order_id" in execution or "stop_loss_order_status" in execution:
+            execution["stop_loss_order_status"] = stop_loss_status
+    elif execution.get("stop_loss_order_id") == target_order_id:
         execution["stop_loss_order_status"] = stop_loss_status
     raw_orders = execution.get("stop_loss_orders")
     if isinstance(raw_orders, list):
         for item in raw_orders:
-            if isinstance(item, dict):
-                item["status"] = stop_loss_status
+            if not isinstance(item, dict):
+                continue
+            if target_order_id is not None and item.get("order_id") != target_order_id:
+                continue
+            item["status"] = stop_loss_status
     if error_message is not None:
         execution["protective_exit_error"] = error_message
     sync_stop_loss_order_snapshot_fields(trade)

@@ -4,6 +4,7 @@ import unittest
 from copy import deepcopy
 from unittest.mock import patch
 
+from apps.gmo_bot.app.ports.execution_port import OrderSubmission, ProtectiveExitOrdersSubmission
 from apps.gmo_bot.infra.execution.exit_order_monitor import ExitMonitorContext, GmoExitOrderMonitor
 
 
@@ -109,6 +110,20 @@ class _FakeExecution:
     def confirm_order(self, order_id: int, timeout_ms: int):
         raise NotImplementedError
 
+    def submit_protective_exit_orders(self, request):
+        return ProtectiveExitOrdersSubmission(
+            stop_loss_order=OrderSubmission(
+                order_id=990,
+                order={"order_id": 990, "price": request.stop_price, "position_id": 10, "size_sol": 0.5},
+            ),
+            stop_loss_orders=[
+                OrderSubmission(
+                    order_id=990,
+                    order={"order_id": 990, "price": request.stop_price, "position_id": 10, "size_sol": 0.5},
+                )
+            ],
+        )
+
 
 class _FakeLock:
     def __init__(self, *, acquire: bool = True) -> None:
@@ -194,7 +209,59 @@ class GmoExitOrderMonitorTest(unittest.TestCase):
         self.assertEqual("CANCELED", trade["execution"]["stop_loss_order_status"])
         self.assertEqual([789], execution.canceled_orders)
 
-    def test_stop_order_expired_triggers_emergency_close(self) -> None:
+    def test_execution_event_uses_matching_non_primary_stop_order_price(self) -> None:
+        trade = _build_trade()
+        trade["position"]["quantity_sol"] = 0.6
+        trade["position"]["quote_amount_jpy"] = 8400.0
+        trade["position"]["lots"] = [
+            {"position_id": 10, "size_sol": 0.3},
+            {"position_id": 11, "size_sol": 0.3},
+        ]
+        trade["execution"]["take_profit_order_status"] = "CLIENT_MANAGED"
+        trade["execution"]["stop_loss_order_id"] = 789
+        trade["execution"]["stop_loss_order"] = {"order_id": 789, "price": 13900.0, "position_id": 10, "size_sol": 0.3}
+        trade["execution"]["stop_loss_orders"] = [
+            {"order_id": 789, "price": 13900.0, "status": "WAITING", "position_id": 10, "size_sol": 0.3},
+            {"order_id": 790, "price": 13875.0, "status": "WAITING", "position_id": 11, "size_sol": 0.3},
+        ]
+
+        class _NonPrimaryStopExecution(_FakeExecution):
+            def get_executions(self, order_id: int):
+                if order_id == 790:
+                    return [
+                        {
+                            "executionId": 3,
+                            "positionId": 11,
+                            "size": "0.3",
+                            "price": "13875",
+                            "fee": "2",
+                            "lossGain": "-30",
+                        }
+                    ]
+                return []
+
+        execution = _NonPrimaryStopExecution()
+        persistence = _FakePersistence(trade)
+        monitor = GmoExitOrderMonitor(
+            api_client=object(),
+            logger=_FakeLogger(),
+            context_provider=lambda: [
+                ExitMonitorContext(
+                    model_id="gmo_ema_pullback_15m_both_v0",
+                    pair="SOL/JPY",
+                    execution=execution,
+                    persistence=persistence,
+                    lock=object(),
+                )
+            ],
+        )
+
+        monitor._handle_event({"channel": "executionEvents", "orderId": "790"})
+
+        self.assertAlmostEqual(13875.0, trade["execution"]["exit_reference_price"])
+        self.assertAlmostEqual(13875.0, trade["position"].get("exit_trigger_price", 13875.0))
+
+    def test_stop_order_expired_rearms_before_emergency_close(self) -> None:
         trade = _build_trade()
         execution = _FakeExecution()
         persistence = _FakePersistence(trade)
@@ -214,6 +281,37 @@ class GmoExitOrderMonitorTest(unittest.TestCase):
         )
 
         with patch("apps.gmo_bot.infra.execution.exit_order_monitor.close_position") as close_position_mock:
+            monitor._handle_event({"channel": "orderEvents", "orderId": "789", "orderStatus": "EXPIRED"})
+
+        close_position_mock.assert_not_called()
+        self.assertEqual(1, lock.acquire_calls)
+        self.assertEqual(1, lock.release_calls)
+        self.assertEqual(990, trade["execution"]["stop_loss_order_id"])
+        self.assertEqual("WAITING", trade["execution"]["stop_loss_order_status"])
+
+    def test_stop_order_expired_triggers_emergency_close(self) -> None:
+        trade = _build_trade()
+        execution = _FakeExecution()
+        persistence = _FakePersistence(trade)
+        lock = _FakeLock()
+        monitor = GmoExitOrderMonitor(
+            api_client=object(),
+            logger=_FakeLogger(),
+            context_provider=lambda: [
+                ExitMonitorContext(
+                    model_id="gmo_ema_pullback_15m_both_v0",
+                    pair="SOL/JPY",
+                    execution=execution,
+                    persistence=persistence,
+                    lock=lock,
+                )
+            ],
+        )
+
+        with patch(
+            "apps.gmo_bot.infra.execution.exit_order_monitor.arm_protective_exit_orders",
+            return_value=type("Result", (), {"status": "FAILED", "summary": "FAILED: rearm"})(),
+        ), patch("apps.gmo_bot.infra.execution.exit_order_monitor.close_position") as close_position_mock:
             monitor._handle_event({"channel": "orderEvents", "orderId": "789", "orderStatus": "EXPIRED"})
 
         close_position_mock.assert_called_once()

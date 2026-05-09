@@ -27,6 +27,7 @@ from apps.dex_bot.domain.strategy.shared.market_context import (
     build_ema_market_context,
     calculate_minimum_bars,
 )
+from apps.gmo_bot.domain.strategy.risk_constants import MIN_STOP_DISTANCE_PCT
 
 # 15mモデルは2hモデルより直近の押し目を重視
 PULLBACK_LOOKBACK_BARS = 6
@@ -34,8 +35,6 @@ PULLBACK_LOOKBACK_BARS = 6
 MAX_DISTANCE_FROM_EMA_FAST_PCT = 0.9
 # ショート時はブレイクダウン確認を厳格化（0-7 bars即損切り対策）
 SHORT_BREAKDOWN_LOOKBACK_BARS = 6
-# 15mでは過小ストップを除外するため下限を設定
-MIN_STOP_DISTANCE_PCT = 0.3
 RSI_PERIOD = 14
 RSI_LONG_LOWER_BOUND = 50
 RSI_LONG_UPPER_BOUND = 68
@@ -538,8 +537,11 @@ def evaluate_ema_trend_pullback_15m_v0(
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
+    strategy_values: dict[str, Any] = dict(strategy)
+    swing_lookback_bars = int(strategy_values.get("swing_lookback_bars", strategy["swing_low_lookback_bars"]))
+
     if entry_direction == "LONG":
-        swing_low_stop = calculate_swing_low(lows, strategy["swing_low_lookback_bars"])
+        swing_low_stop = calculate_swing_low(lows, swing_lookback_bars)
         stop_candidate = tighten_stop_for_long(entry_price, swing_low_stop, risk["max_loss_per_trade_pct"])
         diagnostics["swing_low_stop"] = swing_low_stop
         diagnostics["stop_candidate"] = stop_candidate
@@ -555,7 +557,7 @@ def evaluate_ema_trend_pullback_15m_v0(
                 )
         final_stop = stop_candidate
     else:
-        swing_high_stop = calculate_swing_high(highs, strategy["swing_low_lookback_bars"])
+        swing_high_stop = calculate_swing_high(highs, swing_lookback_bars)
         stop_candidate = tighten_stop_for_short(entry_price, swing_high_stop, risk["max_loss_per_trade_pct"])
         diagnostics["swing_high_stop"] = swing_high_stop
         diagnostics["stop_candidate"] = stop_candidate

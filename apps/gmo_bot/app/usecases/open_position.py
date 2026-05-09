@@ -23,6 +23,7 @@ from apps.gmo_bot.app.usecases.protective_exit_orders import (
 from apps.gmo_bot.app.usecases.usecase_utils import now_iso, strip_none, summarize_error_for_log, to_error_message
 from apps.gmo_bot.domain.model.trade_state import assert_trade_state_transition
 from apps.gmo_bot.domain.model.types import BotConfig, Direction, EntrySignalDecision, TradeRecord, TradeState
+from apps.gmo_bot.domain.strategy.risk_constants import MIN_STOP_DISTANCE_PCT
 from shared.utils.math import round_to
 from apps.gmo_bot.domain.utils.time import build_trade_id
 
@@ -99,6 +100,8 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
     trade_id = build_trade_id(input_data.bar_close_time_iso, model_id, direction)
     now = now_iso()
     volatility_regime, position_size_multiplier = _resolve_regime_and_multiplier(signal)
+    if position_size_multiplier > 1.0:
+        raise RuntimeError("position_size_multiplier must be <= 1.0 for capped GMO notional sizing")
 
     trade: TradeRecord = {
         "trade_id": trade_id,
@@ -261,6 +264,26 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
             )
             if final_stop >= resolved_entry_price:
                 final_stop = pct_stop
+            stop_distance_pct = ((resolved_entry_price - final_stop) / resolved_entry_price) * 100
+            if stop_distance_pct < MIN_STOP_DISTANCE_PCT:
+                pct_stop_distance_pct = ((resolved_entry_price - pct_stop) / resolved_entry_price) * 100
+                if pct_stop_distance_pct < MIN_STOP_DISTANCE_PCT:
+                    raise RuntimeError(
+                        "post-fill stop distance is below minimum and max-loss stop cannot satisfy minimum distance"
+                    )
+                logger.warn(
+                    "post-fill stop distance below minimum; using max-loss stop",
+                    {
+                        "trade_id": trade_id,
+                        "direction": direction,
+                        "resolved_entry_price": resolved_entry_price,
+                        "original_stop": final_stop,
+                        "adjusted_stop": pct_stop,
+                        "stop_distance_pct": stop_distance_pct,
+                        "min_stop_distance_pct": MIN_STOP_DISTANCE_PCT,
+                    },
+                )
+                final_stop = pct_stop
             recalculated_take_profit = calculate_take_profit_price(
                 resolved_entry_price,
                 final_stop,
@@ -277,6 +300,26 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                 config["risk"]["max_loss_per_trade_pct"],
             )
             if final_stop <= resolved_entry_price:
+                final_stop = pct_stop
+            stop_distance_pct = ((final_stop - resolved_entry_price) / resolved_entry_price) * 100
+            if stop_distance_pct < MIN_STOP_DISTANCE_PCT:
+                pct_stop_distance_pct = ((pct_stop - resolved_entry_price) / resolved_entry_price) * 100
+                if pct_stop_distance_pct < MIN_STOP_DISTANCE_PCT:
+                    raise RuntimeError(
+                        "post-fill stop distance is below minimum and max-loss stop cannot satisfy minimum distance"
+                    )
+                logger.warn(
+                    "post-fill stop distance below minimum; using max-loss stop",
+                    {
+                        "trade_id": trade_id,
+                        "direction": direction,
+                        "resolved_entry_price": resolved_entry_price,
+                        "original_stop": final_stop,
+                        "adjusted_stop": pct_stop,
+                        "stop_distance_pct": stop_distance_pct,
+                        "min_stop_distance_pct": MIN_STOP_DISTANCE_PCT,
+                    },
+                )
                 final_stop = pct_stop
             recalculated_take_profit = calculate_take_profit_price_for_short(
                 resolved_entry_price,

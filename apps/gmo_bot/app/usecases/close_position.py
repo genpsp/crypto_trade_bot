@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+import time
 from typing import Any
 
 from apps.gmo_bot.app.ports.execution_port import ExecutionPort, SubmitCloseOrderRequest
@@ -20,8 +21,10 @@ from apps.gmo_bot.domain.model.types import BotConfig, CloseReason, TradeRecord,
 from shared.utils.math import round_to
 
 ORDER_CONFIRM_TIMEOUT_MS = 20_000
-PROTECTIVE_EXIT_RECONCILE_TIMEOUT_MS = 250
+PROTECTIVE_EXIT_CANCEL_CONFIRM_TIMEOUT_MS = 2_000
+PROTECTIVE_EXIT_CANCEL_CONFIRM_POLL_INTERVAL_SECONDS = 0.05
 POSITION_SIZE_EPSILON = 1e-9
+TERMINAL_ORDER_STATUSES = {"CANCELED", "EXECUTED", "EXPIRED", "FAILED"}
 
 
 @dataclass
@@ -75,6 +78,38 @@ def _to_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _extract_order_status(order: dict[str, Any] | None) -> str | None:
+    if not isinstance(order, dict):
+        return None
+    raw_status = order.get("status") or order.get("orderStatus")
+    if not isinstance(raw_status, str):
+        return None
+    stripped = raw_status.strip()
+    return stripped.upper() if stripped else None
+
+
+def _wait_for_order_status(
+    execution: ExecutionPort,
+    order_id: int,
+    *,
+    target_statuses: set[str],
+    timeout_ms: int,
+) -> str | None:
+    deadline = time.monotonic() + max(timeout_ms, 0) / 1000
+    last_status: str | None = None
+    while True:
+        order_status = _extract_order_status(execution.get_order(order_id))
+        if order_status is None:
+            return None
+        last_status = order_status
+        if order_status in target_statuses or order_status in TERMINAL_ORDER_STATUSES:
+            return order_status
+        now = time.monotonic()
+        if now >= deadline:
+            return last_status
+        time.sleep(min(PROTECTIVE_EXIT_CANCEL_CONFIRM_POLL_INTERVAL_SECONDS, deadline - now))
 
 
 def _processed_exit_execution_ids(trade: TradeRecord) -> set[str]:
@@ -260,8 +295,32 @@ def _cancel_protective_exit_orders_best_effort(
             continue
         try:
             execution.cancel_order(order_id)
-            set_stop_loss_order_status(trade, order_id=order_id, status="CANCELED")
-            changed = True
+            confirmed_status = _wait_for_order_status(
+                execution,
+                order_id,
+                target_statuses={"CANCELED"},
+                timeout_ms=PROTECTIVE_EXIT_CANCEL_CONFIRM_TIMEOUT_MS,
+            )
+            if confirmed_status == "EXECUTED":
+                set_stop_loss_order_status(trade, order_id=order_id, status="EXECUTED")
+                changed = True
+                logger.warn(
+                    "protective stop order executed while cancellation was pending",
+                    {"trade_id": trade.get("trade_id"), "order_id": order_id},
+                )
+                continue
+            if confirmed_status in (None, "CANCELED"):
+                set_stop_loss_order_status(trade, order_id=order_id, status="CANCELED")
+                changed = True
+                continue
+            if confirmed_status in TERMINAL_ORDER_STATUSES:
+                set_stop_loss_order_status(trade, order_id=order_id, status=confirmed_status)
+                changed = True
+                continue
+            logger.warn(
+                "protective stop cancellation was not confirmed before manual close",
+                {"trade_id": trade.get("trade_id"), "order_id": order_id, "status": confirmed_status},
+            )
         except Exception as error:
             logger.warn(
                 "failed to cancel protective exit order before manual close",
@@ -277,8 +336,24 @@ def _cancel_protective_exit_orders_best_effort(
             continue
         try:
             execution.cancel_order(order_id)
-            execution_snapshot[status_key] = "CANCELED"
-            changed = True
+            confirmed_status = _wait_for_order_status(
+                execution,
+                order_id,
+                target_statuses={"CANCELED"},
+                timeout_ms=PROTECTIVE_EXIT_CANCEL_CONFIRM_TIMEOUT_MS,
+            )
+            if confirmed_status in (None, "CANCELED"):
+                execution_snapshot[status_key] = "CANCELED"
+                changed = True
+                continue
+            if confirmed_status in TERMINAL_ORDER_STATUSES:
+                execution_snapshot[status_key] = confirmed_status
+                changed = True
+                continue
+            logger.warn(
+                "take-profit order cancellation was not confirmed before manual close",
+                {"trade_id": trade.get("trade_id"), "order_id": order_id, "status": confirmed_status},
+            )
         except Exception as error:
             logger.warn(
                 "failed to cancel protective exit order before manual close",
@@ -566,11 +641,19 @@ def apply_confirmed_exit_result(
         )
 
     trade["execution"].pop("exit_error", None)
-    if close_reason == "TAKE_PROFIT" and trade["execution"].get("take_profit_order_id") == order_id:
+    if close_reason == "TAKE_PROFIT":
         mark_protective_exit_orders_inactive(trade, take_profit_status="EXECUTED", stop_loss_status="INACTIVE")
-    elif close_reason == "STOP_LOSS" and set_stop_loss_order_status(trade, order_id=order_id, status="EXECUTED"):
-        mark_protective_exit_orders_inactive(trade, take_profit_status="INACTIVE", stop_loss_status="EXECUTED")
-        set_stop_loss_order_status(trade, order_id=order_id, status="EXECUTED")
+    elif close_reason == "STOP_LOSS":
+        stop_loss_updated = set_stop_loss_order_status(trade, order_id=order_id, status="EXECUTED")
+        if stop_loss_updated:
+            execution_snapshot = trade.setdefault("execution", {})
+            if isinstance(execution_snapshot, dict) and (
+                "take_profit_order_id" in execution_snapshot or "take_profit_order_status" in execution_snapshot
+            ):
+                execution_snapshot["take_profit_order_status"] = "INACTIVE"
+            sync_stop_loss_order_snapshot_fields(trade)
+        else:
+            mark_protective_exit_orders_inactive(trade)
     else:
         mark_protective_exit_orders_inactive(trade)
     trade["position"]["status"] = "CLOSED"
@@ -629,6 +712,30 @@ def close_position(dependencies: ClosePositionDependencies, input_data: ClosePos
             persistence=persistence,
             trade=trade,
         )
+        if input_data.close_reason != "STOP_LOSS":
+            reconciled_stop = reconcile_protective_exit_execution(
+                execution=execution,
+                logger=logger,
+                persistence=persistence,
+                trade=trade,
+                close_reason="STOP_LOSS",
+            )
+            if reconciled_stop.close_result is not None:
+                logger.warn(
+                    "manual close skipped because protective stop already executed",
+                    {
+                        "trade_id": trade["trade_id"],
+                        "manual_close_reason": input_data.close_reason,
+                        "protective_order_id": reconciled_stop.order_id,
+                    },
+                )
+                return reconciled_stop.close_result
+            if reconciled_stop.status == "PENDING":
+                return ClosePositionResult(
+                    status="PENDING",
+                    trade_id=trade["trade_id"],
+                    summary="PENDING: protective exit execution pending settlement details",
+                )
         trade["execution"]["exit_reference_price"] = round_to(input_data.close_price, 6)
         remaining_lots = list(lots)
         while remaining_lots:

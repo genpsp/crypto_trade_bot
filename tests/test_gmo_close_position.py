@@ -8,9 +8,11 @@ from apps.gmo_bot.app.ports.execution_port import OrderConfirmation, OrderSubmis
 from apps.gmo_bot.app.usecases.close_position import (
     ClosePositionDependencies,
     ClosePositionInput,
+    apply_confirmed_exit_result,
     close_position,
     reconcile_protective_exit_execution,
 )
+from apps.gmo_bot.app.usecases.protective_exit_orders import set_stop_loss_order_status
 from apps.gmo_bot.domain.model.types import BotConfig, TradeRecord
 
 
@@ -627,6 +629,108 @@ class GmoClosePositionTest(unittest.TestCase):
         self.assertEqual([{"position_id": 281135491, "size_sol": 0.2}], trade["position"]["lots"])
         self.assertEqual("WAITING", trade["execution"]["stop_loss_order_status"])
 
+
+    def test_stop_loss_full_close_updates_stop_status_once_without_bulk_overwrite(self) -> None:
+        trade = _build_open_trade()
+        trade["position"]["quantity_sol"] = 0.1
+        trade["position"]["quote_amount_jpy"] = 1356.8
+        trade["position"]["lots"] = [{"position_id": 281135490, "size_sol": 0.1}]
+        trade["execution"]["stop_loss_order_id"] = 8218604892
+        trade["execution"]["stop_loss_orders"] = [
+            {"order_id": 8218604892, "price": 13651.0, "status": "WAITING", "position_id": 281135490, "size_sol": 0.1},
+            {"order_id": 8218604893, "price": 13651.0, "status": "WAITING", "position_id": 281135491, "size_sol": 0.2},
+        ]
+        persistence = _FakePersistence(trade)
+
+        result = apply_confirmed_exit_result(
+            logger=_FakeLogger(),
+            persistence=persistence,
+            trade=trade,
+            execution_result={
+                "status": "CONFIRMED",
+                "avg_fill_price": 13944.0,
+                "filled_base_sol": 0.1,
+                "filled_quote_jpy": 1394.4,
+                "fee_jpy": 1.0,
+                "realized_pnl_jpy": -38.0,
+                "execution_ids": ["1530581068"],
+                "lots": [{"position_id": 281135490, "size_sol": 0.1}],
+            },
+            order_id=8218604892,
+            close_reason="STOP_LOSS",
+            close_price=13651.0,
+        )
+
+        self.assertEqual("CLOSED", result.status)
+        statuses = {item["order_id"]: item["status"] for item in trade["execution"]["stop_loss_orders"]}
+        self.assertEqual("EXECUTED", statuses[8218604892])
+        self.assertEqual("WAITING", statuses[8218604893])
+
+    def test_stop_loss_full_close_calls_stop_status_setter_once(self) -> None:
+        trade = _build_open_trade()
+        trade["position"]["quantity_sol"] = 0.1
+        trade["position"]["quote_amount_jpy"] = 1356.8
+        trade["position"]["lots"] = [{"position_id": 281135490, "size_sol": 0.1}]
+        trade["execution"]["stop_loss_order"] = {"order_id": 8218604892, "price": 13651.0}
+        persistence = _FakePersistence(trade)
+
+        with unittest.mock.patch(
+            "apps.gmo_bot.app.usecases.close_position.set_stop_loss_order_status",
+            wraps=set_stop_loss_order_status,
+        ) as status_mock:
+            result = apply_confirmed_exit_result(
+                logger=_FakeLogger(),
+                persistence=persistence,
+                trade=trade,
+                execution_result={
+                    "status": "CONFIRMED",
+                    "avg_fill_price": 13944.0,
+                    "filled_base_sol": 0.1,
+                    "filled_quote_jpy": 1394.4,
+                    "fee_jpy": 1.0,
+                    "realized_pnl_jpy": -38.0,
+                    "execution_ids": ["1530581068"],
+                    "lots": [{"position_id": 281135490, "size_sol": 0.1}],
+                },
+                order_id=8218604892,
+                close_reason="STOP_LOSS",
+                close_price=13651.0,
+            )
+
+        self.assertEqual("CLOSED", result.status)
+        self.assertEqual(1, status_mock.call_count)
+
+    def test_stop_loss_partial_fill_keeps_remaining_lot_stop_active(self) -> None:
+        trade = _build_open_trade()
+        trade["position"]["quantity_sol"] = 0.6
+        trade["position"]["quote_amount_jpy"] = 8212.6
+        trade["position"]["lots"] = [
+            {"position_id": 281135490, "size_sol": 0.4},
+            {"position_id": 281135491, "size_sol": 0.2},
+        ]
+        trade["execution"]["take_profit_order_status"] = "CLIENT_MANAGED"
+        trade["execution"]["stop_loss_order_id"] = 8218604892
+        trade["execution"]["stop_loss_order"] = {"order_id": 8218604892, "price": 13651.0}
+        trade["execution"]["stop_loss_orders"] = [
+            {"order_id": 8218604892, "price": 13651.0, "status": "WAITING", "position_id": 281135490, "size_sol": 0.4},
+            {"order_id": 8218604893, "price": 13651.0, "status": "WAITING", "position_id": 281135491, "size_sol": 0.2},
+        ]
+        persistence = _FakePersistence(trade)
+        execution = _ProtectiveStopWithUnknownLotExecution()
+
+        reconciled = reconcile_protective_exit_execution(
+            execution=execution,
+            logger=_FakeLogger(),
+            persistence=persistence,
+            trade=trade,
+            close_reason="STOP_LOSS",
+        )
+
+        self.assertEqual("PARTIALLY_CLOSED", reconciled.status)
+        statuses = {item["order_id"]: item["status"] for item in trade["execution"]["stop_loss_orders"]}
+        self.assertEqual("EXECUTED", statuses[8218604892])
+        self.assertEqual("WAITING", statuses[8218604893])
+        self.assertTrue(any(item["status"] == "WAITING" for item in trade["execution"]["stop_loss_orders"]))
 
     def test_exact_zero_total_realized_pnl_is_not_treated_as_missing(self) -> None:
         trade = _build_open_trade()

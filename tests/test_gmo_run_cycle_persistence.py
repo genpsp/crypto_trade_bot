@@ -9,6 +9,8 @@ from unittest.mock import patch
 from apps.dex_bot.domain.model.types import NoSignalDecision, OhlcvBar
 from apps.gmo_bot.app.usecases.run_cycle import (
     RunCycleDependencies,
+    _resolve_entry_direction,
+    _resolve_recent_closed_trade_limit,
     _should_persist_run_record,
     run_cycle,
 )
@@ -686,6 +688,57 @@ class GmoRunCyclePersistenceTest(unittest.TestCase):
         self.assertEqual("HOLD: open position exists and no exit trigger fired on this bar", run["summary"])
         self.assertNotIn("take_profit_triggered_at_iso", trade["execution"])
         self.assertNotIn("take_profit_trigger_price", trade["execution"])
+
+    def test_take_profit_latch_missing_risk_distance_clears_without_close(self) -> None:
+        config = _build_config()
+        config["exit"]["take_profit_r_multiple"] = 0.0
+        trade: TradeRecord = {
+            "trade_id": "trade_tp_latch_missing_risk",
+            "pair": "SOL/JPY",
+            "direction": "LONG",
+            "state": "CONFIRMED",
+            "execution": {
+                "take_profit_order_status": "CLIENT_MANAGED",
+                "take_profit_triggered_at_iso": "2026-03-17T03:40:00Z",
+                "take_profit_trigger_price": 10110.0,
+                "stop_loss_order_id": 123,
+                "stop_loss_order_status": "WAITING",
+            },
+            "position": {
+                "status": "OPEN",
+                "stop_price": 10010.0,
+                "take_profit_price": 10100.0,
+            },
+        }
+        persistence = _OpenTradePersistence(config, trade)
+        deps = RunCycleDependencies(
+            execution=_StaticPriceExecution(10090.0),
+            lock=_DummyLock(),
+            logger=_DummyLogger(),
+            market_data=_DummyMarketData([]),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 17, 3, 40, 5, tzinfo=UTC),
+        )
+
+        with patch("apps.gmo_bot.app.usecases.run_cycle.close_position") as close_position_mock:
+            run = run_cycle(deps)
+
+        close_position_mock.assert_not_called()
+        self.assertEqual("HOLD", run["result"])
+        self.assertNotIn("take_profit_triggered_at_iso", trade["execution"])
+        self.assertNotIn("take_profit_trigger_price", trade["execution"])
+
+    def test_fixed_direction_requires_matching_strategy_diagnostics(self) -> None:
+        config = _build_config()
+        config["direction"] = "LONG"
+        decision = SimpleNamespace(type="ENTER", diagnostics={"entry_direction": "SHORT"})
+
+        with self.assertRaisesRegex(RuntimeError, "does not match runtime direction LONG"):
+            _resolve_entry_direction(config, decision)
+
+    def test_recent_closed_trade_limit_uses_max_risk_module_requirement(self) -> None:
+        self.assertGreaterEqual(_resolve_recent_closed_trade_limit(), 40)
 
     def test_mark_price_rate_limit_is_mapped_to_hold_for_open_trade(self) -> None:
         config = _build_config()

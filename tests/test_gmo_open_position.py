@@ -108,6 +108,9 @@ class _FakeLogger:
     def info(self, *args, **kwargs):
         pass
 
+    def warn(self, *args, **kwargs):
+        pass
+
     def error(self, *args, **kwargs):
         pass
 
@@ -171,6 +174,62 @@ class GmoOpenPositionTest(unittest.TestCase):
         self.assertEqual(20000.0, persistence.trade["execution"]["entry_reference_price"])
         self.assertEqual(789, persistence.trade["execution"]["stop_loss_order_id"])
         self.assertEqual("CLIENT_MANAGED", persistence.trade["execution"]["take_profit_order_status"])
+
+    def test_post_fill_stop_too_tight_is_adjusted_to_max_loss_stop(self) -> None:
+        execution = _FakeExecution()
+        persistence = _FakePersistence()
+        config: BotConfig = {
+            "enabled": True,
+            "broker": "GMO_COIN",
+            "pair": "SOL/JPY",
+            "direction": "LONG",
+            "signal_timeframe": "15m",
+            "strategy": {
+                "name": "ema_trend_pullback_15m_v0",
+                "ema_fast_period": 9,
+                "ema_slow_period": 34,
+                "swing_low_lookback_bars": 8,
+                "entry": "ON_BAR_CLOSE",
+            },
+            "risk": {
+                "max_loss_per_trade_pct": 1.0,
+                "max_trades_per_day": 3,
+                "volatile_atr_pct_threshold": 1.3,
+                "storm_atr_pct_threshold": 1.5,
+                "volatile_size_multiplier": 0.8,
+                "storm_size_multiplier": 0.4,
+            },
+            "execution": {
+                "mode": "PAPER",
+                "broker": "GMO_COIN",
+                "slippage_bps": 3,
+                "min_notional_jpy": 5000.0,
+                "leverage_multiplier": 1.0,
+                "margin_usage_ratio": 1.0,
+            },
+            "exit": {"stop": "SWING_LOW", "take_profit_r_multiple": 2.0},
+            "meta": {"config_version": 1, "note": "test"},
+        }
+        signal = EntrySignalDecision(
+            type="ENTER",
+            summary="ENTER",
+            ema_fast=1.0,
+            ema_slow=1.0,
+            entry_price=20000.0,
+            stop_price=19980.0,
+            take_profit_price=20040.0,
+            diagnostics={"position_size_multiplier": 1.0, "volatility_regime": "NORMAL"},
+        )
+
+        result = open_position(
+            OpenPositionDependencies(execution=execution, lock=_FakeLock(), logger=_FakeLogger(), persistence=persistence),
+            OpenPositionInput(config=config, signal=signal, bar_close_time_iso="2026-03-08T00:15:00Z", model_id="gmo_test"),
+        )
+
+        self.assertEqual("OPENED", result.status)
+        assert persistence.trade is not None
+        self.assertAlmostEqual(19800.0, persistence.trade["position"]["stop_price"])
+        self.assertAlmostEqual(20400.0, persistence.trade["position"]["take_profit_price"])
 
 
 if __name__ == "__main__":

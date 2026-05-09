@@ -15,12 +15,16 @@ from apps.gmo_bot.app.usecases.close_position import (
     filter_tracked_exit_executions,
 )
 from apps.gmo_bot.app.usecases.protective_exit_orders import (
+    ArmProtectiveExitOrdersDependencies,
+    ArmProtectiveExitOrdersInput,
+    arm_protective_exit_orders,
     get_stop_loss_order_snapshots,
     has_active_stop_loss_order,
     set_stop_loss_order_status,
 )
 
 EMERGENCY_CLOSE_RUN_LOCK_TTL_SECONDS = 600
+PROTECTIVE_EXIT_ARMED_STATUSES = {"ARMED", "ARMED_STOP_ONLY"}
 
 
 @dataclass
@@ -79,13 +83,7 @@ class GmoExitOrderMonitor:
             return
         execution_result = aggregate_execution_records(new_executions)
         close_reason = "TAKE_PROFIT" if exit_kind == "take_profit" else "STOP_LOSS"
-        execution_snapshot = trade.get("execution", {})
-        order_snapshot = (
-            execution_snapshot.get("take_profit_order") if exit_kind == "take_profit" else execution_snapshot.get("stop_loss_order")
-        )
-        close_price = _to_float(order_snapshot.get("price")) if isinstance(order_snapshot, dict) else None
-        if close_price is None:
-            close_price = float(trade["position"]["take_profit_price"] if close_reason == "TAKE_PROFIT" else trade["position"]["stop_price"])
+        close_price = _resolve_exit_event_close_price(trade, exit_kind=exit_kind, order_id=order_id)
         result = apply_confirmed_exit_result(
             logger=self.logger,
             persistence=context.persistence,
@@ -141,17 +139,44 @@ class GmoExitOrderMonitor:
             lock_acquired = context.lock.acquire_runner_lock(EMERGENCY_CLOSE_RUN_LOCK_TTL_SECONDS)
             if not lock_acquired:
                 self.logger.info(
-                    "gmo stop order expired emergency close deferred because runner lock is busy",
+                    "gmo stop order expired emergency handling deferred because runner lock is busy",
                     {"trade_id": refreshed_trade.get("trade_id"), "order_id": order_id},
                 )
                 return
             try:
+                current_config = context.persistence.get_current_config()
+                rearm_result = arm_protective_exit_orders(
+                    ArmProtectiveExitOrdersDependencies(
+                        execution=context.execution,
+                        logger=self.logger,
+                        persistence=context.persistence,
+                    ),
+                    ArmProtectiveExitOrdersInput(config=current_config, trade=refreshed_trade),
+                )
+                if rearm_result.status in PROTECTIVE_EXIT_ARMED_STATUSES:
+                    self.logger.warn(
+                        "gmo stop order expired and protective stop was re-armed",
+                        {
+                            "trade_id": refreshed_trade.get("trade_id"),
+                            "expired_order_id": order_id,
+                            "rearm_status": rearm_result.status,
+                        },
+                    )
+                    return
+
+                self.logger.error(
+                    "CRITICAL: gmo stop order expired and protective stop re-arm failed",
+                    {
+                        "trade_id": refreshed_trade.get("trade_id"),
+                        "expired_order_id": order_id,
+                        "rearm_status": rearm_result.status,
+                        "rearm_summary": rearm_result.summary,
+                    },
+                )
                 mark_price = context.execution.get_mark_price(context.pair)
                 stop_price = float(refreshed_trade["position"]["stop_price"])
                 direction = str(refreshed_trade.get("direction") or "LONG")
-                should_force_close = (
-                    direction == "LONG" and mark_price <= stop_price
-                ) or (
+                should_force_close = (direction == "LONG" and mark_price <= stop_price) or (
                     direction == "SHORT" and mark_price >= stop_price
                 )
                 if not should_force_close:
@@ -164,14 +189,14 @@ class GmoExitOrderMonitor:
                         persistence=context.persistence,
                     ),
                     ClosePositionInput(
-                        config=context.persistence.get_current_config(),
+                        config=current_config,
                         trade=refreshed_trade,
                         close_reason="STOP_LOSS",
                         close_price=mark_price,
                     ),
                 )
                 self.logger.warn(
-                    "gmo stop order expired and emergency close executed",
+                    "gmo stop order expired, re-arm failed, and emergency close executed",
                     {
                         "trade_id": refreshed_trade.get("trade_id"),
                         "order_id": order_id,
@@ -233,6 +258,31 @@ class GmoExitOrderMonitor:
                 if item.get("order_id") == order_id:
                     return context, trade, "stop_loss"
         return None
+
+
+def _resolve_exit_event_close_price(trade: dict[str, Any], *, exit_kind: str, order_id: int) -> float:
+    execution_snapshot = trade.get("execution", {})
+    if exit_kind == "stop_loss":
+        for order_snapshot in get_stop_loss_order_snapshots(trade):
+            if order_snapshot.get("order_id") != order_id:
+                continue
+            close_price = _to_float(order_snapshot.get("price"))
+            if close_price is not None:
+                return close_price
+    elif isinstance(execution_snapshot, dict):
+        order_snapshot = execution_snapshot.get("take_profit_order")
+        close_price = _to_float(order_snapshot.get("price")) if isinstance(order_snapshot, dict) else None
+        if close_price is not None:
+            return close_price
+
+    position = trade.get("position", {})
+    if not isinstance(position, dict):
+        raise RuntimeError("trade position snapshot is invalid")
+    fallback_key = "take_profit_price" if exit_kind == "take_profit" else "stop_price"
+    fallback_price = _to_float(position.get(fallback_key))
+    if fallback_price is None:
+        raise RuntimeError("protective exit trigger price is invalid")
+    return fallback_price
 
 
 def _to_int(value: Any) -> int | None:
