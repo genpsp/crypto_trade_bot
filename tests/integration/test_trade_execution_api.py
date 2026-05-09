@@ -276,49 +276,55 @@ class TradeExecutionApiTest(unittest.TestCase):
             _ = body_json
             return 404, {"error": "not used"}
 
-        with MockServer(responder):
-            config = _build_config()
-            config["execution"]["min_notional_usdc"] = 20
-            persistence = InMemoryPersistence(config)
-            lock = InMemoryLock()
-            logger = InMemoryLogger()
-            sender = FakeSolanaSender()
-            execution = JupiterSwapAdapter(JupiterQuoteClient(), sender, logger)
+        with MockServer(responder) as server:
+            quote_url = f"{server.base_url}/swap/v1/quote"
+            swap_url = f"{server.base_url}/swap/v1/swap"
+            with patch("apps.dex_bot.adapters.execution.jupiter_quote_client.QUOTE_API_URL", quote_url), patch(
+                "apps.dex_bot.adapters.execution.jupiter_swap.SWAP_API_URL",
+                swap_url,
+            ):
+                config = _build_config()
+                config["execution"]["min_notional_usdc"] = 20
+                persistence = InMemoryPersistence(config)
+                lock = InMemoryLock()
+                logger = InMemoryLogger()
+                sender = FakeSolanaSender()
+                execution = JupiterSwapAdapter(JupiterQuoteClient(), sender, logger)
 
-            signal = EntrySignalDecision(
-                type="ENTER",
-                summary="test enter",
-                ema_fast=101,
-                ema_slow=100,
-                entry_price=100,
-                stop_price=98,
-                take_profit_price=103,
-                diagnostics={
-                    "volatility_regime": "STORM",
-                    "position_size_multiplier": 0,
-                },
-            )
+                signal = EntrySignalDecision(
+                    type="ENTER",
+                    summary="test enter",
+                    ema_fast=101,
+                    ema_slow=100,
+                    entry_price=100,
+                    stop_price=98,
+                    take_profit_price=103,
+                    diagnostics={
+                        "volatility_regime": "STORM",
+                        "position_size_multiplier": 0,
+                    },
+                )
 
-            opened = open_position(
-                OpenPositionDependencies(
-                    execution=execution,
-                    lock=lock,
-                    logger=logger,
-                    persistence=persistence,
-                ),
-                OpenPositionInput(
-                    config=config,
-                    signal=signal,
-                    bar_close_time_iso="2026-02-21T10:00:00.000Z",
-                    model_id="ema_pullback_2h_long_v0",
-                ),
-            )
+                opened = open_position(
+                    OpenPositionDependencies(
+                        execution=execution,
+                        lock=lock,
+                        logger=logger,
+                        persistence=persistence,
+                    ),
+                    OpenPositionInput(
+                        config=config,
+                        signal=signal,
+                        bar_close_time_iso="2026-02-21T10:00:00.000Z",
+                        model_id="ema_pullback_2h_long_v0",
+                    ),
+                )
 
-            self.assertEqual("CANCELED", opened.status)
-            self.assertEqual(0, len(sender.sent))
-            trade = persistence.trades[opened.trade_id]
-            self.assertEqual("CANCELED", trade["state"])
-            self.assertEqual("CLOSED", trade["position"]["status"])
+                self.assertEqual("CANCELED", opened.status)
+                self.assertEqual(0, len(sender.sent))
+                trade = persistence.trades[opened.trade_id]
+                self.assertEqual("CANCELED", trade["state"])
+                self.assertEqual("CLOSED", trade["position"]["status"])
 
     def test_open_and_close_position_hit_jupiter_quote_and_swap_api(self) -> None:
         def responder(
@@ -1634,6 +1640,45 @@ class SolanaSenderRpcMethodTest(unittest.TestCase):
 
         self.assertIsNone(fee)
 
+
+    def test_confirm_signature_retries_transient_status_rpc_failure(self) -> None:
+        request_count = 0
+
+        def responder(
+            method: str,
+            path: str,
+            query: dict[str, list[str]],
+            body_json: dict[str, Any] | None,
+        ) -> tuple[int, dict[str, Any]]:
+            nonlocal request_count
+            _ = query
+            if method == "POST" and path == "/rpc" and body_json and body_json.get("method") == "getSignatureStatuses":
+                request_count += 1
+                if request_count == 1:
+                    return 503, {"error": "temporary unavailable"}
+                return 200, {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"value": [{"err": None, "confirmationStatus": "confirmed"}]},
+                }
+            return 404, {"error": "not found"}
+
+        with MockServer(responder) as server:
+            fake_secret = bytes(Keypair())
+            with patch(
+                "apps.dex_bot.adapters.execution.solana_sender._decrypt_secret_key",
+                return_value=fake_secret,
+            ), patch("apps.dex_bot.adapters.execution.solana_sender.time.sleep", return_value=None):
+                sender = SolanaSender(
+                    rpc_url=f"{server.base_url}/rpc",
+                    wallet_key_path="unused",
+                    wallet_passphrase="unused",
+                    logger=InMemoryLogger(),
+                )
+                confirmation = sender.confirm_signature("sig-1", timeout_ms=5_000, poll_interval_ms=10)
+
+        self.assertTrue(confirmation.confirmed)
+        self.assertEqual(2, request_count)
 
 if __name__ == "__main__":
     unittest.main()

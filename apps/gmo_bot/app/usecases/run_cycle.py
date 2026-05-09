@@ -59,6 +59,7 @@ _MARK_PRICE_RATE_LIMIT_MARKERS = (
     "requests are too many",
 )
 TAKE_PROFIT_LATCH_MAX_PULLBACK_R = 0.15
+PROTECTIVE_EXIT_ARMED_STATUSES = {"ARMED", "ARMED_STOP_ONLY"}
 
 
 @dataclass
@@ -223,7 +224,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                     ),
                     ArmProtectiveExitOrdersInput(config=runtime_config, trade=open_trade),
                 )
-                if protective_exit_result.status == "ARMED":
+                if protective_exit_result.status in PROTECTIVE_EXIT_ARMED_STATUSES:
                     run["result"] = "HOLD"
                     run["summary"] = "HOLD: protective exit orders armed for existing open position"
                     return run
@@ -240,7 +241,14 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
                     return run
                 raise
             trigger_reason = "NONE"
-            trade_direction = open_trade.get("direction", runtime_config["direction"])
+            raw_trade_direction = open_trade.get("direction")
+            if raw_trade_direction in ("LONG", "SHORT"):
+                trade_direction = raw_trade_direction
+            else:
+                fallback_direction = runtime_config["direction"]
+                if fallback_direction not in ("LONG", "SHORT"):
+                    raise RuntimeError("open trade direction must be LONG or SHORT")
+                trade_direction = fallback_direction
             stop_price = open_trade["position"]["stop_price"]
             take_profit_price = open_trade["position"]["take_profit_price"]
             entry_price = open_trade["position"].get("entry_price")

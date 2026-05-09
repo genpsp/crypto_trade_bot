@@ -275,6 +275,20 @@ class FirestoreRepository(PersistencePort):
         self._open_trade_cache = deepcopy(trade) if isinstance(trade, dict) else None
         self._open_trade_cache_initialized = True
 
+    def _merge_open_trade_cache(self, trade_id: str, payload: dict[str, Any]) -> None:
+        if not self._open_trade_cache_initialized:
+            return
+        cached = self._open_trade_cache
+        if not isinstance(cached, dict) or cached.get("trade_id") != trade_id:
+            return
+        merged = deepcopy(cached)
+        _deep_merge_dict(merged, payload)
+        state = merged.get("state")
+        if state == OPEN_TRADE_STATE:
+            self._set_open_trade_cache(merged)
+        elif state in TERMINAL_TRADE_STATES:
+            self._set_open_trade_cache(None)
+
     def _load_open_trade_from_state(self, pair: Pair) -> TradeRecord | None:
         state_snapshot = self._open_trade_state_doc().get()
         if not state_snapshot.exists:
@@ -497,6 +511,7 @@ class FirestoreRepository(PersistencePort):
         )
         self._cache_trade_day(trade_id, trade_date)
         self._cache_trade_snapshot(trade_id, payload, merge=True)
+        self._merge_open_trade_cache(trade_id, payload)
         self._refresh_state_from_trade_payload(trade_id, trade_date, payload)
 
     def find_open_trade(self, pair: Pair) -> TradeRecord | None:

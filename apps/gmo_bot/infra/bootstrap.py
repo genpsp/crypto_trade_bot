@@ -471,10 +471,11 @@ def bootstrap() -> AppRuntime:
         prefetched_open_trade: TradeRecord | None = None,
         use_prefetched_open_trade: bool = False,
         high_frequency_poll: bool = False,
+        force_five_minute_window: bool = False,
     ) -> None:
         open_trade = prefetched_open_trade if use_prefetched_open_trade else context.persistence.find_open_trade(context.pair)
         now = datetime.now(tz=UTC)
-        is_five_minute_window = now.minute % 5 == 0
+        is_five_minute_window = force_five_minute_window or now.minute % 5 == 0
         if not _should_execute_cycle(
             is_five_minute_window=is_five_minute_window,
             has_open_trade=open_trade is not None,
@@ -508,12 +509,12 @@ def bootstrap() -> AppRuntime:
                 },
             )
 
-    def _run_all_models() -> None:
+    def _run_all_models(*, force_five_minute_window: bool = False) -> None:
         _refresh_runtime_if_needed()
         _refresh_pause_if_needed()
         pause_all = bool(runtime_pause_state)
         for context in _active_model_contexts():
-            _run_model_cycle(context, pause_all)
+            _run_model_cycle(context, pause_all, force_five_minute_window=force_five_minute_window)
         _mark_cycle_completed()
 
     def _open_trade_poll_loop() -> None:
@@ -550,7 +551,7 @@ def bootstrap() -> AppRuntime:
                 live_execution.set_protective_exit_enabled(False)
                 logger.warn("gmo exit websocket monitor disabled; falling back to polling exits", {"error": str(error)})
         logger.info("bot startup: run first cycle immediately")
-        _run_all_models()
+        _run_all_models(force_five_minute_window=True)
         cron_controller = create_cron_cycle(_run_all_models, logger)
         cron_controller.start()
         watchdog_stop_event.clear()

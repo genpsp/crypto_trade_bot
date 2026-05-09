@@ -736,5 +736,76 @@ class GmoRunCyclePersistenceTest(unittest.TestCase):
         self.assertFalse(_should_persist_run_record({"result": "SKIPPED", "summary": "SKIPPED: max_trades_per_day reached"}))
 
 
+    def test_stop_only_arm_status_short_circuits_to_hold(self) -> None:
+        config = _build_config()
+        trade: TradeRecord = {
+            "trade_id": "trade_stop_only_arm",
+            "pair": "SOL/JPY",
+            "direction": "LONG",
+            "state": "CONFIRMED",
+            "execution": {"take_profit_order_status": "CLIENT_MANAGED"},
+            "position": {
+                "status": "OPEN",
+                "stop_price": 10010.0,
+                "take_profit_price": 10100.0,
+            },
+        }
+        persistence = _OpenTradePersistence(config, trade)
+        deps = RunCycleDependencies(
+            execution=_DummyExecution(),
+            lock=_DummyLock(),
+            logger=_DummyLogger(),
+            market_data=_DummyMarketData([]),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 17, 3, 40, tzinfo=UTC),
+        )
+
+        with patch(
+            "apps.gmo_bot.app.usecases.run_cycle.arm_protective_exit_orders",
+            return_value=SimpleNamespace(status="ARMED_STOP_ONLY", summary="ARMED_STOP_ONLY"),
+        ) as arm_mock, patch("apps.gmo_bot.app.usecases.run_cycle.close_position") as close_position_mock:
+            run = run_cycle(deps)
+
+        arm_mock.assert_called_once()
+        close_position_mock.assert_not_called()
+        self.assertEqual("HOLD", run["result"])
+        self.assertEqual("HOLD: protective exit orders armed for existing open position", run["summary"])
+
+    def test_missing_open_trade_direction_with_both_config_fails_explicitly(self) -> None:
+        config = _build_config()
+        trade: TradeRecord = {
+            "trade_id": "trade_missing_direction",
+            "pair": "SOL/JPY",
+            "state": "CONFIRMED",
+            "execution": {"take_profit_order_status": "CLIENT_MANAGED"},
+            "position": {
+                "status": "OPEN",
+                "stop_price": 10010.0,
+                "take_profit_price": 10100.0,
+            },
+        }
+        persistence = _OpenTradePersistence(config, trade)
+        deps = RunCycleDependencies(
+            execution=_StaticPriceExecution(10050.0),
+            lock=_DummyLock(),
+            logger=_DummyLogger(),
+            market_data=_DummyMarketData([]),
+            persistence=persistence,
+            model_id="gmo_ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 3, 17, 3, 40, tzinfo=UTC),
+        )
+
+        with patch(
+            "apps.gmo_bot.app.usecases.run_cycle.arm_protective_exit_orders",
+            return_value=SimpleNamespace(status="FAILED", summary="FAILED"),
+        ), patch("apps.gmo_bot.app.usecases.run_cycle.close_position") as close_position_mock:
+            run = run_cycle(deps)
+
+        close_position_mock.assert_not_called()
+        self.assertEqual("FAILED", run["result"])
+        self.assertEqual("FAILED: unhandled run_cycle error", run["summary"])
+        self.assertIn("open trade direction must be LONG or SHORT", str(run.get("reason")))
+
 if __name__ == "__main__":
     unittest.main()

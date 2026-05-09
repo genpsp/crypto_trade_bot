@@ -73,5 +73,67 @@ class GmoFirestoreRepositoryRunSaveTest(unittest.TestCase):
         self.assertIn("2026-03-17", repo.runs_collection.docs)
 
 
+
+class _UpdateTradeCacheRepo(FirestoreRepository):
+    def __init__(self) -> None:
+        super().__init__(
+            firestore=None,  # type: ignore[arg-type]
+            config_repo=None,  # type: ignore[arg-type]
+            mode="LIVE",
+            model_id="gmo_ema_pullback_15m_both_v0",
+        )
+        self.trade_items = _SetOnlyCollection()
+
+    def _touch_model_metadata(self) -> None:  # type: ignore[override]
+        return None
+
+    def _touch_trade_day(self, trade_date: str, updated_at_iso: str | None = None) -> None:  # type: ignore[override]
+        _ = trade_date
+        _ = updated_at_iso
+        return None
+
+    def _trade_items_collection_for_date(self, trade_date: str):  # type: ignore[override]
+        _ = trade_date
+        return self.trade_items
+
+    def _set_open_trade_state(self, trade_id: str, trade_date: str, pair: str | None = None) -> None:  # type: ignore[override]
+        _ = trade_id
+        _ = trade_date
+        _ = pair
+        return None
+
+
+class GmoFirestoreRepositoryOpenTradeCacheTest(unittest.TestCase):
+    def test_execution_only_update_refreshes_open_trade_cache(self) -> None:
+        repo = _UpdateTradeCacheRepo()
+        trade: dict[str, Any] = {
+            "trade_id": "2026-03-17T03:45:00Z_gmo_ema_pullback_15m_both_v0_LONG",
+            "trade_date": "2026-03-17",
+            "pair": "SOL/JPY",
+            "state": "CONFIRMED",
+            "execution": {"take_profit_order_status": "CLIENT_MANAGED"},
+            "position": {"status": "OPEN"},
+        }
+        repo._cache_trade_day(trade["trade_id"], trade["trade_date"])
+        repo._cache_trade_snapshot(trade["trade_id"], trade, merge=False)
+        repo._set_open_trade_cache(trade)  # type: ignore[arg-type]
+
+        repo.update_trade(
+            trade["trade_id"],
+            {
+                "execution": {
+                    "stop_loss_order_status": "WAITING",
+                    "stop_loss_orders": [{"order_id": 123, "status": "WAITING"}],
+                }
+            },
+        )
+
+        refreshed = repo.find_open_trade("SOL/JPY")
+
+        self.assertIsNotNone(refreshed)
+        assert refreshed is not None
+        self.assertEqual("WAITING", refreshed["execution"]["stop_loss_order_status"])
+        self.assertEqual([{"order_id": 123, "status": "WAITING"}], refreshed["execution"]["stop_loss_orders"])
+
 if __name__ == "__main__":
     unittest.main()

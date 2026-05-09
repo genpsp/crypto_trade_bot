@@ -20,6 +20,7 @@ from apps.dex_bot.app.ports.logger_port import LoggerPort
 RPC_RETRY_ATTEMPTS = 4
 RPC_RETRY_BASE_DELAY_SECONDS = 0.35
 RPC_HTTP_TIMEOUT_SECONDS = 8
+CONFIRM_SIGNATURE_STATUS_RPC_ATTEMPTS = 3
 RETRIABLE_RPC_ERROR_CODES = {-32005, -32004, -32603}
 RETRIABLE_RPC_ERROR_MARKERS = (
     "too many requests",
@@ -247,12 +248,13 @@ class SolanaSender:
                 )
 
             remaining_ms = timeout_ms - elapsed_ms
-            request_timeout_seconds = max(min(remaining_ms / 1000, RPC_HTTP_TIMEOUT_SECONDS), 0.5)
+            per_attempt_budget_seconds = remaining_ms / 1000 / CONFIRM_SIGNATURE_STATUS_RPC_ATTEMPTS
+            request_timeout_seconds = max(min(per_attempt_budget_seconds, RPC_HTTP_TIMEOUT_SECONDS), 0.5)
             try:
                 result = self._rpc(
                     "getSignatureStatuses",
                     [[signature], {"searchTransactionHistory": True}],
-                    attempts=1,
+                    attempts=CONFIRM_SIGNATURE_STATUS_RPC_ATTEMPTS,
                     request_timeout_seconds=request_timeout_seconds,
                 )
             except Exception as error:

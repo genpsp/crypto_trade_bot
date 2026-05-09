@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from uuid import uuid4
 
 from apps.gmo_bot.app.ports.execution_port import (
@@ -22,6 +23,7 @@ class PaperExecutionAdapter(ExecutionPort):
     def __init__(self, logger: LoggerPort):
         self.logger = logger
         self._latest_price = 0.0
+        self._submitted_results: dict[int, dict] = {}
 
     def submit_entry_order(self, request: SubmitEntryOrderRequest) -> OrderSubmission:
         fill_price = request.reference_price
@@ -36,11 +38,12 @@ class PaperExecutionAdapter(ExecutionPort):
             "execution_ids": [f"PAPER_EXEC_{order_id}"],
             "lots": [{"position_id": order_id, "size_sol": request.size_sol}],
         }
+        self._submitted_results[order_id] = deepcopy(result)
         self.logger.info(
             "paper gmo entry simulated",
             {"order_id": order_id, "side": request.side, "size_sol": request.size_sol, "fill_price": fill_price},
         )
-        return OrderSubmission(order_id=order_id, order={"order_id": order_id}, result=result)
+        return OrderSubmission(order_id=order_id, order={"order_id": order_id}, result=deepcopy(result))
 
     def submit_close_order(self, request: SubmitCloseOrderRequest) -> OrderSubmission:
         size_sol = sum(lot["size_sol"] for lot in request.lots)
@@ -56,11 +59,12 @@ class PaperExecutionAdapter(ExecutionPort):
             "execution_ids": [f"PAPER_EXEC_{order_id}"],
             "lots": [],
         }
+        self._submitted_results[order_id] = deepcopy(result)
         self.logger.info(
             "paper gmo close simulated",
             {"order_id": order_id, "side": request.side, "size_sol": size_sol, "fill_price": fill_price},
         )
-        return OrderSubmission(order_id=order_id, order={"order_id": order_id}, result=result)
+        return OrderSubmission(order_id=order_id, order={"order_id": order_id}, result=deepcopy(result))
 
     def submit_protective_exit_orders(self, request: SubmitProtectiveExitOrdersRequest) -> ProtectiveExitOrdersSubmission:
         stop_loss_orders: list[OrderSubmission] = []
@@ -91,9 +95,11 @@ class PaperExecutionAdapter(ExecutionPort):
         )
 
     def confirm_order(self, order_id: int, timeout_ms: int) -> OrderConfirmation:
-        _ = order_id
         _ = timeout_ms
-        return OrderConfirmation(confirmed=True)
+        result = self._submitted_results.get(order_id)
+        if result is None:
+            return OrderConfirmation(confirmed=False, error=f"paper order not found: {order_id}")
+        return OrderConfirmation(confirmed=True, result=deepcopy(result))
 
     def cancel_order(self, order_id: int) -> None:
         self.logger.info("paper gmo cancel simulated", {"order_id": order_id})

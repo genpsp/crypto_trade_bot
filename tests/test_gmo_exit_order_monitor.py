@@ -110,6 +110,21 @@ class _FakeExecution:
         raise NotImplementedError
 
 
+class _FakeLock:
+    def __init__(self, *, acquire: bool = True) -> None:
+        self.acquire = acquire
+        self.acquire_calls = 0
+        self.release_calls = 0
+
+    def acquire_runner_lock(self, ttl_seconds: int) -> bool:
+        _ = ttl_seconds
+        self.acquire_calls += 1
+        return self.acquire
+
+    def release_runner_lock(self) -> None:
+        self.release_calls += 1
+
+
 class _PartialStopExecution(_FakeExecution):
     def get_executions(self, order_id: int):
         if order_id == 789:
@@ -183,6 +198,7 @@ class GmoExitOrderMonitorTest(unittest.TestCase):
         trade = _build_trade()
         execution = _FakeExecution()
         persistence = _FakePersistence(trade)
+        lock = _FakeLock()
         monitor = GmoExitOrderMonitor(
             api_client=object(),
             logger=_FakeLogger(),
@@ -192,7 +208,7 @@ class GmoExitOrderMonitorTest(unittest.TestCase):
                     pair="SOL/JPY",
                     execution=execution,
                     persistence=persistence,
-                    lock=object(),
+                    lock=lock,
                 )
             ],
         )
@@ -201,6 +217,34 @@ class GmoExitOrderMonitorTest(unittest.TestCase):
             monitor._handle_event({"channel": "orderEvents", "orderId": "789", "orderStatus": "EXPIRED"})
 
         close_position_mock.assert_called_once()
+        self.assertEqual(1, lock.acquire_calls)
+        self.assertEqual(1, lock.release_calls)
+
+    def test_stop_order_expired_defers_emergency_close_when_runner_lock_is_busy(self) -> None:
+        trade = _build_trade()
+        execution = _FakeExecution()
+        persistence = _FakePersistence(trade)
+        lock = _FakeLock(acquire=False)
+        monitor = GmoExitOrderMonitor(
+            api_client=object(),
+            logger=_FakeLogger(),
+            context_provider=lambda: [
+                ExitMonitorContext(
+                    model_id="gmo_ema_pullback_15m_both_v0",
+                    pair="SOL/JPY",
+                    execution=execution,
+                    persistence=persistence,
+                    lock=lock,
+                )
+            ],
+        )
+
+        with patch("apps.gmo_bot.infra.execution.exit_order_monitor.close_position") as close_position_mock:
+            monitor._handle_event({"channel": "orderEvents", "orderId": "789", "orderStatus": "EXPIRED"})
+
+        close_position_mock.assert_not_called()
+        self.assertEqual(1, lock.acquire_calls)
+        self.assertEqual(0, lock.release_calls)
 
     def test_stop_order_expired_does_not_trigger_emergency_close_when_current_lots_still_fully_protected(self) -> None:
         trade = _build_trade()

@@ -628,5 +628,35 @@ class GmoClosePositionTest(unittest.TestCase):
         self.assertEqual("WAITING", trade["execution"]["stop_loss_order_status"])
 
 
+    def test_exact_zero_total_realized_pnl_is_not_treated_as_missing(self) -> None:
+        trade = _build_open_trade()
+        trade["position"]["quantity_sol"] = 0.1
+        trade["position"]["quote_amount_jpy"] = 1356.8
+        trade["position"]["lots"] = [{"position_id": 281135490, "size_sol": 0.1}]
+        trade["execution"]["total_realized_pnl_jpy"] = 0.0
+        trade["execution"]["realized_pnl_jpy"] = -58.0
+        persistence = _FakePersistence(trade)
+        execution = _FinalCloseExecution()
+
+        result = close_position(
+            ClosePositionDependencies(
+                execution=execution,
+                lock=object(),
+                logger=_FakeLogger(),
+                persistence=persistence,
+            ),
+            ClosePositionInput(
+                config=_build_config(),
+                trade=trade,
+                close_reason="STOP_LOSS",
+                close_price=13944.0,
+            ),
+        )
+
+        self.assertEqual("CLOSED", result.status)
+        self.assertAlmostEqual(-38.0, trade["execution"]["exit_leg_realized_pnl_jpy"])
+        self.assertAlmostEqual(-38.0, trade["execution"]["total_realized_pnl_jpy"])
+        self.assertAlmostEqual(-38.0, trade["execution"]["realized_pnl_jpy"])
+
 if __name__ == "__main__":
     unittest.main()

@@ -20,6 +20,8 @@ from apps.gmo_bot.app.usecases.protective_exit_orders import (
     set_stop_loss_order_status,
 )
 
+EMERGENCY_CLOSE_RUN_LOCK_TTL_SECONDS = 600
+
 
 @dataclass
 class ExitMonitorContext:
@@ -136,39 +138,49 @@ class GmoExitOrderMonitor:
                 return
             if has_active_stop_loss_order(refreshed_trade):
                 return
-            mark_price = context.execution.get_mark_price(context.pair)
-            stop_price = float(refreshed_trade["position"]["stop_price"])
-            direction = str(refreshed_trade.get("direction") or "LONG")
-            should_force_close = (
-                direction == "LONG" and mark_price <= stop_price
-            ) or (
-                direction == "SHORT" and mark_price >= stop_price
-            )
-            if not should_force_close:
+            lock_acquired = context.lock.acquire_runner_lock(EMERGENCY_CLOSE_RUN_LOCK_TTL_SECONDS)
+            if not lock_acquired:
+                self.logger.info(
+                    "gmo stop order expired emergency close deferred because runner lock is busy",
+                    {"trade_id": refreshed_trade.get("trade_id"), "order_id": order_id},
+                )
                 return
-            close_position(
-                ClosePositionDependencies(
-                    execution=context.execution,
-                    lock=context.lock,
-                    logger=self.logger,
-                    persistence=context.persistence,
-                ),
-                ClosePositionInput(
-                    config=context.persistence.get_current_config(),
-                    trade=refreshed_trade,
-                    close_reason="STOP_LOSS",
-                    close_price=mark_price,
-                ),
-            )
-            self.logger.warn(
-                "gmo stop order expired and emergency close executed",
-                {
-                    "trade_id": refreshed_trade.get("trade_id"),
-                    "order_id": order_id,
-                    "mark_price": mark_price,
-                    "stop_price": stop_price,
-                },
-            )
+            try:
+                mark_price = context.execution.get_mark_price(context.pair)
+                stop_price = float(refreshed_trade["position"]["stop_price"])
+                direction = str(refreshed_trade.get("direction") or "LONG")
+                should_force_close = (
+                    direction == "LONG" and mark_price <= stop_price
+                ) or (
+                    direction == "SHORT" and mark_price >= stop_price
+                )
+                if not should_force_close:
+                    return
+                close_position(
+                    ClosePositionDependencies(
+                        execution=context.execution,
+                        lock=context.lock,
+                        logger=self.logger,
+                        persistence=context.persistence,
+                    ),
+                    ClosePositionInput(
+                        config=context.persistence.get_current_config(),
+                        trade=refreshed_trade,
+                        close_reason="STOP_LOSS",
+                        close_price=mark_price,
+                    ),
+                )
+                self.logger.warn(
+                    "gmo stop order expired and emergency close executed",
+                    {
+                        "trade_id": refreshed_trade.get("trade_id"),
+                        "order_id": order_id,
+                        "mark_price": mark_price,
+                        "stop_price": stop_price,
+                    },
+                )
+            finally:
+                context.lock.release_runner_lock()
 
     def _sibling_order_state(self, trade: dict[str, Any], *, filled_kind: str) -> tuple[int | None, str]:
         execution_snapshot = trade.get("execution", {})

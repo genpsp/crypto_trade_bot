@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 import unittest
 
 import requests
 
 from apps.gmo_bot.adapters.market_data.ohlcv_provider import OhlcvProvider
+
+
+JST = timezone(timedelta(hours=9))
+
+
+def _gmo_intraday_date_token(value: datetime) -> str:
+    return (value.astimezone(JST) - timedelta(hours=6)).strftime("%Y%m%d")
 
 
 class _FakeGmoClient:
@@ -60,11 +67,9 @@ class GmoOhlcvProviderTest(unittest.TestCase):
         self.assertEqual(100.5, bars[0].close)
 
     def test_fetch_bars_aggregates_1h_into_2h(self) -> None:
-        now = datetime.now(tz=UTC)
-        base = (now - timedelta(hours=4)).replace(minute=0, second=0, microsecond=0)
-        if base.hour % 2 != 0:
-            base -= timedelta(hours=1)
-        date_token = now.strftime("%Y%m%d")
+        now = datetime(2026, 3, 10, 12, 0, tzinfo=UTC)
+        base = datetime(2026, 3, 10, 8, 0, tzinfo=UTC)
+        date_token = _gmo_intraday_date_token(now)
         rows = []
         for index in range(4):
             open_time = base + timedelta(hours=index)

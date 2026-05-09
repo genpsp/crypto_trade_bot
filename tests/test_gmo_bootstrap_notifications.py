@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -596,6 +597,46 @@ class GmoBootstrapNotificationsTest(unittest.TestCase):
         self.assertEqual([[]], notifier.startup_payloads)
         run_cycle_mock.assert_not_called()
 
+
+    def test_start_forces_initial_cycle_even_outside_five_minute_window(self) -> None:
+        _StrictFakeNotifier.instances.clear()
+        run_cycle_mock = unittest.mock.Mock(
+            return_value={
+                "result": "NO_SIGNAL",
+                "summary": "NO_SIGNAL",
+                "run_id": "run_initial",
+                "trade_id": None,
+            }
+        )
+
+        class _FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 3, 10, 7, 7, tzinfo=tz)
+
+        with (
+            patch("apps.gmo_bot.infra.bootstrap.load_env", return_value=_FakeEnv()),
+            patch("apps.gmo_bot.infra.bootstrap.create_logger", return_value=_FakeLogger()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreClient", _FakeFirestoreClient),
+            patch("apps.gmo_bot.infra.bootstrap.Redis.from_url", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreConfigRepository", return_value=_FakeConfigRepo()),
+            patch("apps.gmo_bot.infra.bootstrap.GmoApiClient", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.OhlcvProvider", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.PaperExecutionAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.GmoMarginExecutionAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.FirestoreRepository", return_value=_FakePersistence()),
+            patch("apps.gmo_bot.infra.bootstrap.RedisLockAdapter", return_value=object()),
+            patch("apps.gmo_bot.infra.bootstrap.SlackNotifier", _StrictFakeNotifier),
+            patch("apps.gmo_bot.infra.bootstrap.create_cron_cycle", return_value=_FakeCronController()),
+            patch("apps.gmo_bot.infra.bootstrap.run_cycle", run_cycle_mock),
+            patch("apps.gmo_bot.infra.bootstrap.threading.Thread", _FakeThread),
+            patch("apps.gmo_bot.infra.bootstrap.datetime", _FixedDateTime),
+        ):
+            runtime = bootstrap()
+            runtime.start()
+            runtime.stop()
+
+        run_cycle_mock.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()
