@@ -23,6 +23,12 @@ class ModelMetadata:
     wallet_key_path: str | None
 
 
+@dataclass(frozen=True)
+class RuntimeModelConfig:
+    metadata: ModelMetadata
+    config: BotConfig
+
+
 class FirestoreConfigRepository:
     def __init__(self, firestore: Client):
         self.firestore = firestore
@@ -115,14 +121,12 @@ class FirestoreConfigRepository:
             wallet_key_path=wallet_key_path,
         )
 
-    def get_model_metadata(self, model_id: str) -> ModelMetadata:
-        model_data, config_payload = self._load_model_payload(model_id)
-        return self._parse_model_metadata(model_id, model_data, config_payload)
-
-    def get_current_config(self, model_id: str) -> BotConfig:
-        model_data, config_payload = self._load_model_payload(model_id)
-        model_metadata = self._parse_model_metadata(model_id, model_data, config_payload)
-
+    def _parse_current_config(
+        self,
+        model_id: str,
+        model_metadata: ModelMetadata,
+        config_payload: dict[str, Any],
+    ) -> BotConfig:
         normalized: dict[str, Any] = dict(config_payload)
         normalized.pop("enabled", None)
         normalized.pop("direction", None)
@@ -140,3 +144,17 @@ class FirestoreConfigRepository:
         normalized["execution"] = execution
 
         return parse_config(normalized)
+
+    def get_runtime_model(self, model_id: str) -> RuntimeModelConfig:
+        model_data, config_payload = self._load_model_payload(model_id)
+        model_metadata = self._parse_model_metadata(model_id, model_data, config_payload)
+        return RuntimeModelConfig(
+            metadata=model_metadata,
+            config=self._parse_current_config(model_id, model_metadata, config_payload),
+        )
+
+    def get_model_metadata(self, model_id: str) -> ModelMetadata:
+        return self.get_runtime_model(model_id).metadata
+
+    def get_current_config(self, model_id: str) -> BotConfig:
+        return self.get_runtime_model(model_id).config

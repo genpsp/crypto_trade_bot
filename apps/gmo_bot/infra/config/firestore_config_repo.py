@@ -22,6 +22,12 @@ class ModelMetadata:
     mode: str
 
 
+@dataclass(frozen=True)
+class RuntimeModelConfig:
+    metadata: ModelMetadata
+    config: BotConfig
+
+
 class FirestoreConfigRepository:
     def __init__(self, firestore: Client):
         self.firestore = firestore
@@ -80,13 +86,12 @@ class FirestoreConfigRepository:
             raise RuntimeError(f"{MODELS_COLLECTION_ID}/{model_id}.mode must be PAPER or LIVE")
         return ModelMetadata(enabled=enabled, direction=direction, mode=mode)
 
-    def get_model_metadata(self, model_id: str) -> ModelMetadata:
-        model_data, _ = self._load_model_payload(model_id)
-        return self._parse_model_metadata(model_id, model_data)
-
-    def get_current_config(self, model_id: str) -> BotConfig:
-        model_data, config_payload = self._load_model_payload(model_id)
-        metadata = self._parse_model_metadata(model_id, model_data)
+    def _parse_current_config(
+        self,
+        model_id: str,
+        metadata: ModelMetadata,
+        config_payload: dict[str, Any],
+    ) -> BotConfig:
         normalized: dict[str, Any] = dict(config_payload)
         normalized.pop("enabled", None)
         normalized.pop("direction", None)
@@ -100,3 +105,17 @@ class FirestoreConfigRepository:
         normalized["direction"] = metadata.direction
         normalized["execution"] = execution
         return parse_config(normalized)
+
+    def get_runtime_model(self, model_id: str) -> RuntimeModelConfig:
+        model_data, config_payload = self._load_model_payload(model_id)
+        metadata = self._parse_model_metadata(model_id, model_data)
+        return RuntimeModelConfig(
+            metadata=metadata,
+            config=self._parse_current_config(model_id, metadata, config_payload),
+        )
+
+    def get_model_metadata(self, model_id: str) -> ModelMetadata:
+        return self.get_runtime_model(model_id).metadata
+
+    def get_current_config(self, model_id: str) -> BotConfig:
+        return self.get_runtime_model(model_id).config

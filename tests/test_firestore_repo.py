@@ -217,6 +217,91 @@ class FirestoreRepositoryConfigCacheTest(unittest.TestCase):
         self.assertIs(first, second)
 
 
+class FirestoreRepositoryInitialConfigCacheTest(unittest.TestCase):
+    def test_initial_config_avoids_config_repo_read(self) -> None:
+        config = cast(
+            BotConfig,
+            {
+                "enabled": True,
+                "pair": "SOL/USDC",
+            },
+        )
+        config_repo = _CountingConfigRepo(config)
+        repo = FirestoreRepository(
+            firestore=None,  # type: ignore[arg-type]
+            config_repo=config_repo,  # type: ignore[arg-type]
+            mode="LIVE",
+            model_id="ema_pullback_15m_both_v0",
+            initial_config=config,
+        )
+
+        self.assertEqual(config, repo.get_current_config())
+        self.assertEqual(0, config_repo.calls)
+
+
+class _NoOpenTradeSentinelRepo(FirestoreRepository):
+    def __init__(self) -> None:
+        super().__init__(
+            firestore=None,  # type: ignore[arg-type]
+            config_repo=None,  # type: ignore[arg-type]
+            mode="LIVE",
+            model_id="ema_pullback_15m_both_v0",
+        )
+        self.load_state_calls = 0
+        self.scan_calls = 0
+
+    def _load_open_trade_from_state(self, pair: Any) -> dict[str, Any] | None:  # type: ignore[override]
+        _ = pair
+        self.load_state_calls += 1
+        self._open_trade_state_prevents_scan = True
+        return None
+
+    def _scan_open_trade(self, pair: Any) -> dict[str, Any] | None:  # type: ignore[override]
+        _ = pair
+        self.scan_calls += 1
+        return None
+
+
+class FirestoreRepositoryNoOpenTradeSentinelTest(unittest.TestCase):
+    def test_no_open_trade_sentinel_skips_history_scan(self) -> None:
+        repo = _NoOpenTradeSentinelRepo()
+
+        self.assertIsNone(repo.find_open_trade("SOL/USDC"))
+
+        self.assertEqual(1, repo.load_state_calls)
+        self.assertEqual(0, repo.scan_calls)
+
+
+class _RecentClosedBackfillCompleteRepo(FirestoreRepository):
+    def __init__(self) -> None:
+        super().__init__(
+            firestore=None,  # type: ignore[arg-type]
+            config_repo=None,  # type: ignore[arg-type]
+            mode="LIVE",
+            model_id="ema_pullback_15m_both_v0",
+        )
+        self.scan_calls = 0
+
+    def _load_recent_closed_from_state(self) -> list[dict[str, Any]]:  # type: ignore[override]
+        self._recent_closed_backfill_complete = True
+        return []
+
+    def _scan_recent_closed_trades(self, pair: Any, limit: int) -> list[dict[str, Any]]:  # type: ignore[override]
+        _ = pair
+        _ = limit
+        self.scan_calls += 1
+        return []
+
+
+class FirestoreRepositoryRecentClosedBackfillCompleteTest(unittest.TestCase):
+    def test_backfill_complete_skips_recent_closed_history_scan(self) -> None:
+        repo = _RecentClosedBackfillCompleteRepo()
+
+        self.assertEqual([], repo.list_recent_closed_trades("SOL/USDC", 10))
+
+        self.assertEqual(0, repo.scan_calls)
+
+
 class FirestoreRepositoryRunSaveNoReadTest(unittest.TestCase):
     def test_save_run_skipped_updates_without_read_before_write(self) -> None:
         repo = _SaveRunRepo()

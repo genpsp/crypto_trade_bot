@@ -37,6 +37,7 @@ def sanitize_firestore_value(value: Any) -> Any:
 SKIP_RUN_RESULTS = {"SKIPPED", "SKIPPED_ENTRY"}
 TRADE_SKIP_STATES = {"FAILED", "CANCELED"}
 OPEN_TRADE_STATE = "CONFIRMED"
+NO_OPEN_TRADE_STATE = "NONE"
 TERMINAL_TRADE_STATES = {"CLOSED", "FAILED", "CANCELED"}
 STATE_COLLECTION_NAME = "state"
 OPEN_TRADE_STATE_DOC_ID = "open_trade"
@@ -143,6 +144,7 @@ class FirestoreRepository(PersistencePort):
         config_repo: FirestoreConfigRepository,
         mode: str,
         model_id: str,
+        initial_config: BotConfig | None = None,
     ):
         self.firestore = firestore
         self.config_repo = config_repo
@@ -151,13 +153,15 @@ class FirestoreRepository(PersistencePort):
         self.trades_collection_name = "paper_trades" if mode == "PAPER" else "trades"
         self.runs_collection_name = "paper_runs" if mode == "PAPER" else "runs"
         self._trade_storage_cache: dict[str, str] = {}
-        self._current_config_cache: BotConfig | None = None
+        self._current_config_cache: BotConfig | None = deepcopy(initial_config) if initial_config is not None else None
         self._trade_snapshot_cache: dict[str, TradeRecord] = {}
         self._open_trade_cache: TradeRecord | None = None
         self._open_trade_cache_initialized = False
+        self._open_trade_state_prevents_scan = False
         self._recent_closed_cache: list[TradeRecord] = []
         self._recent_closed_cache_initialized = False
         self._recent_closed_backfill_attempted = False
+        self._recent_closed_backfill_complete = False
 
     def _model_doc(self):
         return self.firestore.collection(MODELS_COLLECTION_ID).document(self.model_id)
@@ -276,9 +280,18 @@ class FirestoreRepository(PersistencePort):
             payload["pair"] = pair
         self._open_trade_state_doc().set(sanitize_firestore_value(payload))
 
+    def _set_no_open_trade_state(self, pair: str | None = None) -> None:
+        payload: dict[str, Any] = {
+            "state": NO_OPEN_TRADE_STATE,
+            "updated_at_iso": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
+        }
+        if isinstance(pair, str):
+            payload["pair"] = pair
+        self._open_trade_state_doc().set(sanitize_firestore_value(payload), merge=True)
+
     def _clear_open_trade_state(self) -> None:
         try:
-            self._open_trade_state_doc().delete()
+            self._set_no_open_trade_state()
         except Exception:
             pass
 
@@ -301,13 +314,20 @@ class FirestoreRepository(PersistencePort):
             self._set_open_trade_cache(None)
 
     def _load_open_trade_from_state(self, pair: Pair) -> TradeRecord | None:
+        self._open_trade_state_prevents_scan = False
         state_snapshot = self._open_trade_state_doc().get()
         if not state_snapshot.exists:
             return None
 
         state_payload = state_snapshot.to_dict()
         if not isinstance(state_payload, dict):
-            self._clear_open_trade_state()
+            return None
+
+        raw_state = state_payload.get("state")
+        if raw_state == NO_OPEN_TRADE_STATE:
+            state_pair = state_payload.get("pair")
+            if not isinstance(state_pair, str) or state_pair == pair:
+                self._open_trade_state_prevents_scan = True
             return None
 
         state_pair = state_payload.get("pair")
@@ -316,17 +336,14 @@ class FirestoreRepository(PersistencePort):
 
         trade_id = state_payload.get("trade_id")
         if not isinstance(trade_id, str) or not trade_id:
-            self._clear_open_trade_state()
             return None
 
         raw_trade_date = state_payload.get("trade_date")
         trade_date = raw_trade_date if isinstance(raw_trade_date, str) and _is_day_doc_id(raw_trade_date) else None
         trade = self._load_trade_snapshot(trade_id, trade_date)
         if not isinstance(trade, dict):
-            self._clear_open_trade_state()
             return None
         if trade.get("state") != OPEN_TRADE_STATE or trade.get("pair") != pair:
-            self._clear_open_trade_state()
             return None
 
         resolved_trade_date = trade.get("trade_date")
@@ -377,13 +394,16 @@ class FirestoreRepository(PersistencePort):
         state_snapshot = self._recent_closed_state_doc().get()
         if not state_snapshot.exists:
             self._recent_closed_cache = []
+            self._recent_closed_backfill_complete = False
             return []
 
         payload = state_snapshot.to_dict()
         if not isinstance(payload, dict):
             self._recent_closed_cache = []
+            self._recent_closed_backfill_complete = False
             return []
 
+        self._recent_closed_backfill_complete = payload.get("backfill_complete") is True
         raw_items = payload.get("items")
         if not isinstance(raw_items, list):
             self._recent_closed_cache = []
@@ -400,10 +420,12 @@ class FirestoreRepository(PersistencePort):
         trimmed = trades[:RECENT_CLOSED_TRADES_MAX_ITEMS]
         self._recent_closed_cache = deepcopy(trimmed)
         self._recent_closed_cache_initialized = True
+        self._recent_closed_backfill_complete = True
         self._recent_closed_state_doc().set(
             sanitize_firestore_value(
                 {
                     "items": trimmed,
+                    "backfill_complete": True,
                     "updated_at_iso": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
                 }
             ),
@@ -533,7 +555,7 @@ class FirestoreRepository(PersistencePort):
             return None
 
         trade = self._load_open_trade_from_state(pair)
-        if not isinstance(trade, dict):
+        if not isinstance(trade, dict) and not self._open_trade_state_prevents_scan:
             trade = self._scan_open_trade(pair)
             if isinstance(trade, dict):
                 trade_id = trade.get("trade_id")
@@ -545,6 +567,8 @@ class FirestoreRepository(PersistencePort):
                         trade_date,
                         pair=pair_value if isinstance(pair_value, str) else None,
                     )
+            else:
+                self._set_no_open_trade_state(pair if isinstance(pair, str) else None)
 
         self._set_open_trade_cache(trade)
         if isinstance(trade, dict):
@@ -601,22 +625,21 @@ class FirestoreRepository(PersistencePort):
             for trade in cached
             if isinstance(trade, dict) and trade.get("state") == "CLOSED" and trade.get("pair") == pair
         ]
-        if len(filtered) >= limit:
+        if len(filtered) >= limit or self._recent_closed_backfill_complete:
             return deepcopy(filtered[:limit])
 
         if not self._recent_closed_backfill_attempted:
             self._recent_closed_backfill_attempted = True
             fallback_limit = max(limit * 3, RECENT_CLOSED_TRADES_MAX_ITEMS)
             scanned = self._scan_recent_closed_trades(pair, fallback_limit)
-            if scanned:
-                self._save_recent_closed_state(scanned)
-                filtered = [
-                    trade
-                    for trade in scanned
-                    if isinstance(trade, dict)
-                    and trade.get("state") == "CLOSED"
-                    and trade.get("pair") == pair
-                ]
+            self._save_recent_closed_state(scanned)
+            filtered = [
+                trade
+                for trade in scanned
+                if isinstance(trade, dict)
+                and trade.get("state") == "CLOSED"
+                and trade.get("pair") == pair
+            ]
 
         return deepcopy(filtered[:limit])
 

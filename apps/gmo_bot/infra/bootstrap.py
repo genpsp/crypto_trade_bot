@@ -17,7 +17,7 @@ from apps.gmo_bot.adapters.market_data.ohlcv_provider import OhlcvProvider
 from apps.gmo_bot.adapters.persistence.firestore_repo import FirestoreRepository
 from apps.gmo_bot.app.ports.execution_port import ExecutionPort
 from apps.gmo_bot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
-from apps.gmo_bot.domain.model.types import TradeRecord
+from apps.gmo_bot.domain.model.types import BotConfig, TradeRecord
 from apps.gmo_bot.infra.alerting import (
     SlackAlertConfig,
     SlackNotifier,
@@ -225,6 +225,14 @@ def bootstrap() -> AppRuntime:
     def _current_runtime_summaries() -> list[dict[str, str]]:
         return [_build_runtime_summary(runtime_specs[mid]) for mid in sorted(runtime_specs.keys())]
 
+    def _load_runtime_model(model_id: str) -> tuple[Any, BotConfig]:
+        combined_loader = getattr(config_repo, "get_runtime_model", None)
+        if callable(combined_loader):
+            runtime_model = combined_loader(model_id)
+            return runtime_model.metadata, runtime_model.config
+        # Test doubles and legacy implementations may not expose the combined loader.
+        return config_repo.get_model_metadata(model_id), config_repo.get_current_config(model_id)
+
     def _mark_cycle_completed() -> None:
         nonlocal last_cycle_completed_at, stale_cycle_alert_active
         with cycle_state_lock:
@@ -386,12 +394,12 @@ def bootstrap() -> AppRuntime:
 
     def _refresh_runtime_specs() -> None:
         nonlocal runtime_pause_state, last_runtime_refresh_at, warned_no_enabled_models
-        refreshed_contexts: dict[str, ModelRuntimeContext] = {}
-        refreshed_specs: dict[str, ModelRuntimeSpec] = {}
+        desired_specs: dict[str, ModelRuntimeSpec] = {}
+        desired_configs: dict[str, BotConfig] = {}
         all_model_ids = config_repo.list_model_ids()
+
         for model_id in all_model_ids:
-            metadata = config_repo.get_model_metadata(model_id)
-            config = config_repo.get_current_config(model_id)
+            metadata, config = _load_runtime_model(model_id)
             if not config["enabled"]:
                 continue
             strategy_name = config["strategy"]["name"]
@@ -404,28 +412,59 @@ def bootstrap() -> AppRuntime:
                 broker=config["broker"],
                 config_fingerprint=hashlib.sha1(repr(config).encode("utf-8")).hexdigest()[:12],
             )
-            execution = paper_execution if metadata.mode == "PAPER" else live_execution
-            refreshed_specs[model_id] = spec
-            refreshed_contexts[model_id] = ModelRuntimeContext(
+            desired_specs[model_id] = spec
+            desired_configs[model_id] = config
+
+        changed = False
+        for model_id in list(model_contexts.keys()):
+            if model_id in desired_specs:
+                continue
+            previous_spec = runtime_specs.get(model_id)
+            model_contexts.pop(model_id, None)
+            runtime_specs.pop(model_id, None)
+            failure_streaks_by_model.pop(model_id, None)
+            changed = True
+            logger.info(
+                "model runtime removed",
+                {
+                    "model_id": model_id,
+                    "mode": previous_spec.mode if previous_spec else "",
+                    "broker": previous_spec.broker if previous_spec else "",
+                },
+            )
+
+        for model_id in sorted(desired_specs.keys()):
+            spec = desired_specs[model_id]
+            if runtime_specs.get(model_id) == spec and model_id in model_contexts:
+                continue
+
+            execution = paper_execution if spec.mode == "PAPER" else live_execution
+            model_contexts[model_id] = ModelRuntimeContext(
                 model_id=model_id,
-                pair=config["pair"],
+                pair=spec.pair,
                 execution=execution,
-                persistence=FirestoreRepository(firestore, config_repo, mode=metadata.mode, model_id=model_id),
+                persistence=FirestoreRepository(
+                    firestore,
+                    config_repo,
+                    mode=spec.mode,
+                    model_id=model_id,
+                    initial_config=desired_configs[model_id],
+                ),
                 lock=RedisLockAdapter(redis=redis, logger=logger, lock_namespace=model_id),
             )
+            runtime_specs[model_id] = spec
+            changed = True
             logger.info("model runtime configured", _build_runtime_summary(spec))
-        model_contexts.clear()
-        model_contexts.update(refreshed_contexts)
-        runtime_specs.clear()
-        runtime_specs.update(refreshed_specs)
+
         runtime_pause_state = config_repo.is_global_pause_enabled()
         last_runtime_refresh_at = datetime.now(tz=UTC)
-        if refreshed_specs:
+        if desired_specs:
             warned_no_enabled_models = False
-            logger.info(
-                "runtime models selected",
-                {"enabled_models": [_build_runtime_summary(spec) for spec in refreshed_specs.values()]},
-            )
+            if changed:
+                logger.info(
+                    "runtime models selected",
+                    {"enabled_models": [_build_runtime_summary(spec) for spec in desired_specs.values()]},
+                )
         elif not warned_no_enabled_models:
             warned_no_enabled_models = True
             logger.warn("no enabled models found in Firestore models collection")

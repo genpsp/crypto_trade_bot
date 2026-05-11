@@ -19,7 +19,7 @@ from apps.dex_bot.adapters.market_data.ohlcv_provider import OhlcvProvider
 from apps.dex_bot.adapters.persistence.firestore_repo import FirestoreRepository
 from apps.dex_bot.app.ports.execution_port import ExecutionPort
 from apps.dex_bot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
-from apps.dex_bot.domain.model.types import TradeRecord
+from apps.dex_bot.domain.model.types import BotConfig, TradeRecord
 from apps.dex_bot.infra.alerting import SlackAlertConfig, SlackNotifier, is_execution_error_result
 from apps.dex_bot.infra.alerting.balance_chart import BalanceChartSeries, render_balance_chart_png
 from apps.dex_bot.infra.alerting.daily_trade_summary import (
@@ -273,6 +273,14 @@ def bootstrap() -> AppRuntime:
 
     def _current_runtime_summaries() -> list[dict[str, str]]:
         return [_build_runtime_summary(runtime_specs[mid]) for mid in sorted(runtime_specs.keys())]
+
+    def _load_runtime_model(model_id: str) -> tuple[Any, BotConfig]:
+        combined_loader = getattr(config_repo, "get_runtime_model", None)
+        if callable(combined_loader):
+            runtime_model = combined_loader(model_id)
+            return runtime_model.metadata, runtime_model.config
+        # Test doubles and legacy implementations may not expose the combined loader.
+        return config_repo.get_model_metadata(model_id), config_repo.get_current_config(model_id)
 
     def _active_model_contexts() -> list[ModelRuntimeContext]:
         return [model_contexts[mid] for mid in sorted(model_contexts.keys())]
@@ -739,30 +747,36 @@ def bootstrap() -> AppRuntime:
                 except Exception:
                     pass
 
-    def _create_runtime_context(spec: ModelRuntimeSpec) -> ModelRuntimeContext:
+    def _create_runtime_context(spec: ModelRuntimeSpec, initial_config: BotConfig | None = None) -> ModelRuntimeContext:
         return ModelRuntimeContext(
             model_id=spec.model_id,
             pair=spec.pair,
             execution=resolve_execution(spec.mode, spec.wallet_key_path),
-            persistence=FirestoreRepository(firestore, config_repo, mode=spec.mode, model_id=spec.model_id),
+            persistence=FirestoreRepository(
+                firestore,
+                config_repo,
+                mode=spec.mode,
+                model_id=spec.model_id,
+                initial_config=initial_config,
+            ),
             lock=RedisLockAdapter(redis, logger, lock_namespace=spec.model_id),
         )
 
-    def _load_enabled_model_specs() -> tuple[dict[str, ModelRuntimeSpec], list[str]]:
+    def _load_enabled_model_specs() -> tuple[dict[str, ModelRuntimeSpec], dict[str, BotConfig], list[str]]:
         nonlocal warned_no_models
         model_ids = config_repo.list_model_ids()
         if not model_ids:
             if not warned_no_models:
                 logger.warn("no models found in Firestore models collection")
             warned_no_models = True
-            return {}, []
+            return {}, {}, []
         warned_no_models = False
 
         specs: dict[str, ModelRuntimeSpec] = {}
+        configs: dict[str, BotConfig] = {}
         for model_id in model_ids:
             try:
-                runtime_config = config_repo.get_current_config(model_id)
-                model_metadata = config_repo.get_model_metadata(model_id)
+                model_metadata, runtime_config = _load_runtime_model(model_id)
             except Exception as error:
                 error_message = str(error)
                 logger.error(
@@ -809,7 +823,8 @@ def bootstrap() -> AppRuntime:
                 wallet_key_path=wallet_key_path,
                 config_fingerprint=config_fingerprint,
             )
-        return specs, model_ids
+            configs[model_id] = runtime_config
+        return specs, configs, model_ids
 
     def _refresh_model_contexts(
         *,
@@ -817,7 +832,7 @@ def bootstrap() -> AppRuntime:
         mark_refreshed_at: bool = True,
     ) -> list[ModelRuntimeContext]:
         nonlocal warned_no_enabled_models, last_runtime_refresh_at
-        desired_specs, all_model_ids = _load_enabled_model_specs()
+        desired_specs, desired_configs, all_model_ids = _load_enabled_model_specs()
         _sync_model_config_watchers(all_model_ids)
         changed = False
 
@@ -844,7 +859,7 @@ def bootstrap() -> AppRuntime:
             if current_spec == desired_spec:
                 continue
 
-            context = _create_runtime_context(desired_spec)
+            context = _create_runtime_context(desired_spec, desired_configs.get(model_id))
             model_contexts[model_id] = context
             runtime_specs[model_id] = desired_spec
             changed = True
