@@ -19,11 +19,11 @@ from apps.gmo_bot.infra.alerting.slack_notifier import (
 
 class _FakeLogger:
     def __init__(self) -> None:
+        self.infos: list[tuple[str, dict[str, object] | None]] = []
         self.warnings: list[tuple[str, dict[str, object] | None]] = []
 
     def info(self, message: str, context: dict[str, object] | None = None) -> None:
-        _ = message
-        _ = context
+        self.infos.append((message, context))
 
     def warn(self, message: str, context: dict[str, object] | None = None) -> None:
         self.warnings.append((message, context))
@@ -466,6 +466,10 @@ class SlackNotifierTest(unittest.TestCase):
         self.assertEqual("C0123ABCDE", complete_payload["channel_id"])
         self.assertEqual("123.456", complete_payload["thread_ts"])
         self.assertEqual(0, len(logger.warnings))
+        info_messages = [message for message, _context in logger.infos]
+        self.assertIn("slack daily summary delivery started", info_messages)
+        self.assertIn("slack daily summary message posted with bot token", info_messages)
+        self.assertEqual(2, info_messages.count("slack daily summary chart uploaded"))
 
     def test_notify_combined_daily_trade_summary_with_charts_falls_back_to_webhook_without_bot_config(self) -> None:
         logger = _FakeLogger()
@@ -495,6 +499,10 @@ class SlackNotifierTest(unittest.TestCase):
 
         self.assertEqual(1, mocked_post.call_count)
         self.assertEqual("https://hooks.slack.com/services/test/test/test", mocked_post.call_args.args[0])
+        self.assertIn(
+            "slack daily summary charts skipped because bot upload config is missing; falling back to webhook",
+            [message for message, _context in logger.warnings],
+        )
 
     def test_notify_combined_daily_trade_summary_with_charts_falls_back_to_webhook_on_api_error(self) -> None:
         logger = _FakeLogger()

@@ -305,14 +305,45 @@ class SlackNotifier:
         target_date_jst = dex_report.target_date_jst
         dedupe_key = f"daily_summary_jst:{target_date_jst}"
         message = self._build_combined_daily_summary_message(dex_report=dex_report, gmo_report=gmo_report)
+        self._logger.info(
+            "slack daily summary delivery started",
+            {
+                "target_date_jst": target_date_jst,
+                "dedupe_key": dedupe_key,
+                "webhook_configured": self._webhook_url is not None,
+                "bot_token_configured": self._bot_token is not None,
+                "daily_summary_channel_configured": self._daily_summary_channel_id is not None,
+                "dex_chart_bytes": len(dex_chart_png) if dex_chart_png is not None else 0,
+                "gmo_chart_bytes": len(gmo_chart_png) if gmo_chart_png is not None else 0,
+            },
+        )
         if self._bot_token is None or self._daily_summary_channel_id is None:
+            self._logger.warn(
+                "slack daily summary charts skipped because bot upload config is missing; falling back to webhook",
+                {
+                    "target_date_jst": target_date_jst,
+                    "dedupe_key": dedupe_key,
+                    "bot_token_configured": self._bot_token is not None,
+                    "daily_summary_channel_configured": self._daily_summary_channel_id is not None,
+                    "dex_chart_present": dex_chart_png is not None,
+                    "gmo_chart_present": gmo_chart_png is not None,
+                },
+            )
             self._send(message=message, dedupe_key=dedupe_key)
             return
         if not self._should_send(dedupe_key):
+            self._logger.info(
+                "slack daily summary delivery skipped by dedupe",
+                {"target_date_jst": target_date_jst, "dedupe_key": dedupe_key},
+            )
             return
 
         try:
             thread_ts = self._post_daily_summary_message_with_bot(message=message)
+            self._logger.info(
+                "slack daily summary message posted with bot token",
+                {"target_date_jst": target_date_jst, "dedupe_key": dedupe_key, "thread_ts": thread_ts},
+            )
         except Exception as error:
             self._logger.warn(
                 "failed to post slack daily summary with bot token; falling back to webhook",
@@ -327,13 +358,35 @@ class SlackNotifier:
         ]
         for filename, title, chart_png in chart_payloads:
             if chart_png is None:
+                self._logger.warn(
+                    "slack daily summary chart upload skipped because chart was not generated",
+                    {"target_date_jst": target_date_jst, "filename": filename, "thread_ts": thread_ts},
+                )
                 continue
             try:
+                self._logger.info(
+                    "slack daily summary chart upload started",
+                    {
+                        "target_date_jst": target_date_jst,
+                        "filename": filename,
+                        "bytes": len(chart_png),
+                        "thread_ts": thread_ts,
+                    },
+                )
                 self._upload_chart_png_with_bot(
                     content=chart_png,
                     filename=filename,
                     title=title,
                     thread_ts=thread_ts,
+                )
+                self._logger.info(
+                    "slack daily summary chart uploaded",
+                    {
+                        "target_date_jst": target_date_jst,
+                        "filename": filename,
+                        "bytes": len(chart_png),
+                        "thread_ts": thread_ts,
+                    },
                 )
             except Exception as error:
                 self._logger.warn(
