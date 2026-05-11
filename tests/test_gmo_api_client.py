@@ -130,6 +130,30 @@ class GmoApiClientOrderIdParsingTest(unittest.TestCase):
 
         self.assertEqual([{"executionId": 1530581068, "side": "SELL"}], executions)
 
+    def test_get_executions_returns_empty_for_null_data(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        payload = {"status": 0, "responsetime": "2026-05-10T23:45:00.000Z"}
+        with patch.object(client, "private_get", return_value=payload):
+            executions = client.get_executions(8435178135)
+
+        self.assertEqual([], executions)
+
+    def test_get_executions_returns_empty_for_empty_dict_data(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        payload = {"status": 0, "data": {}}
+        with patch.object(client, "private_get", return_value=payload):
+            executions = client.get_executions(8435178135)
+
+        self.assertEqual([], executions)
+
+    def test_get_executions_returns_empty_for_empty_nested_list(self) -> None:
+        client = GmoApiClient(api_key="key", api_secret="secret")
+        payload = {"status": 0, "data": {"list": []}}
+        with patch.object(client, "private_get", return_value=payload):
+            executions = client.get_executions(8435178135)
+
+        self.assertEqual([], executions)
+
     def test_get_order_accepts_nested_list_payload(self) -> None:
         client = GmoApiClient(api_key="key", api_secret="secret")
         payload = {

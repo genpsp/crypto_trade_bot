@@ -101,11 +101,10 @@ def _wait_for_order_status(
     last_status: str | None = None
     while True:
         order_status = _extract_order_status(execution.get_order(order_id))
-        if order_status is None:
-            return None
-        last_status = order_status
-        if order_status in target_statuses or order_status in TERMINAL_ORDER_STATUSES:
-            return order_status
+        if order_status is not None:
+            last_status = order_status
+            if order_status in target_statuses or order_status in TERMINAL_ORDER_STATUSES:
+                return order_status
         now = time.monotonic()
         if now >= deadline:
             return last_status
@@ -436,7 +435,7 @@ def reconcile_protective_exit_execution(
     if not order_candidates:
         return ProtectiveExitReconciliationResult(status="UNAVAILABLE")
 
-    pending_statuses = {"SUBMITTED", "ORDERED", "WAITING", "INACTIVE", "EXECUTED"}
+    pending_statuses = {"SUBMITTED", "ORDERED", "WAITING"}
     saw_pending = False
     last_order_id: int | None = None
     last_order_status: str | None = None
@@ -641,8 +640,10 @@ def apply_confirmed_exit_result(
         )
 
     trade["execution"].pop("exit_error", None)
-    if close_reason == "TAKE_PROFIT":
+    if close_reason == "TAKE_PROFIT" and trade.get("execution", {}).get("take_profit_order_id") == order_id:
         mark_protective_exit_orders_inactive(trade, take_profit_status="EXECUTED", stop_loss_status="INACTIVE")
+    elif close_reason == "TAKE_PROFIT":
+        mark_protective_exit_orders_inactive(trade)
     elif close_reason == "STOP_LOSS":
         stop_loss_updated = set_stop_loss_order_status(trade, order_id=order_id, status="EXECUTED")
         if stop_loss_updated:
@@ -653,7 +654,10 @@ def apply_confirmed_exit_result(
                 execution_snapshot["take_profit_order_status"] = "INACTIVE"
             sync_stop_loss_order_snapshot_fields(trade)
         else:
-            mark_protective_exit_orders_inactive(trade)
+            logger.warn(
+                "STOP_LOSS reconciliation invoked for order_id not present in stop_loss_orders snapshot",
+                {"trade_id": trade.get("trade_id"), "order_id": order_id},
+            )
     else:
         mark_protective_exit_orders_inactive(trade)
     trade["position"]["status"] = "CLOSED"

@@ -184,10 +184,14 @@ class GmoApiClient:
     def get_executions(self, order_id: int) -> list[dict[str, Any]]:
         payload = self.private_get("/v1/executions", {"orderId": order_id})
         data = payload.get("data")
+        if data is None:
+            return []
         if isinstance(data, list):
             return [item for item in data if isinstance(item, dict)]
         if isinstance(data, dict):
             nested_list = data.get("list")
+            if nested_list is None:
+                return []
             if isinstance(nested_list, list):
                 return [item for item in nested_list if isinstance(item, dict)]
         raise RuntimeError(f"GMO executions payload invalid for order_id={order_id}")

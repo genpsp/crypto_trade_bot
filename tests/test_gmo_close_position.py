@@ -8,6 +8,7 @@ from apps.gmo_bot.app.ports.execution_port import OrderConfirmation, OrderSubmis
 from apps.gmo_bot.app.usecases.close_position import (
     ClosePositionDependencies,
     ClosePositionInput,
+    _wait_for_order_status,
     apply_confirmed_exit_result,
     close_position,
     reconcile_protective_exit_execution,
@@ -175,7 +176,8 @@ class _PartialCloseExecution:
         self.canceled_orders.append(order_id)
 
     def get_order(self, order_id: int):
-        _ = order_id
+        if order_id in self.canceled_orders:
+            return {"orderId": order_id, "status": "CANCELED"}
         return None
 
     def get_executions(self, order_id: int):
@@ -233,7 +235,8 @@ class _FinalCloseExecution:
         self.canceled_orders.append(order_id)
 
     def get_order(self, order_id: int):
-        _ = order_id
+        if order_id in self.canceled_orders:
+            return {"orderId": order_id, "status": "CANCELED"}
         return None
 
     def get_executions(self, order_id: int):
@@ -335,6 +338,100 @@ class _ProtectiveStopExecutedWithoutExecutionsVisible:
         return []
 
 
+class _ProtectiveStopExecutedWithProcessedExecutions:
+    def get_mark_price(self, pair: str) -> float:
+        _ = pair
+        raise NotImplementedError
+
+    def get_available_margin_jpy(self) -> float:
+        raise NotImplementedError
+
+    def get_symbol_rule(self, pair: str):
+        _ = pair
+        raise NotImplementedError
+
+    def submit_close_order(self, request):
+        _ = request
+        raise NotImplementedError
+
+    def confirm_order(self, order_id: int, timeout_ms: int):
+        _ = order_id
+        _ = timeout_ms
+        raise NotImplementedError
+
+    def cancel_order(self, order_id: int) -> None:
+        _ = order_id
+
+    def get_order(self, order_id: int):
+        _ = order_id
+        return {"orderId": 8218604892, "status": "EXECUTED"}
+
+    def get_executions(self, order_id: int):
+        if order_id != 8218604892:
+            return []
+        return [
+            {
+                "executionId": 1530999999,
+                "positionId": 281135490,
+                "size": "0.6",
+                "price": "13651",
+                "fee": "3",
+                "lossGain": "-49.8",
+            }
+        ]
+
+
+class _NoVisibleProtectiveExitExecution:
+    def __init__(self, order_status: str | None = None) -> None:
+        self.order_status = order_status
+
+    def get_mark_price(self, pair: str) -> float:
+        _ = pair
+        raise NotImplementedError
+
+    def get_available_margin_jpy(self) -> float:
+        raise NotImplementedError
+
+    def get_symbol_rule(self, pair: str):
+        _ = pair
+        raise NotImplementedError
+
+    def submit_close_order(self, request):
+        _ = request
+        raise NotImplementedError
+
+    def confirm_order(self, order_id: int, timeout_ms: int):
+        _ = order_id
+        _ = timeout_ms
+        raise NotImplementedError
+
+    def cancel_order(self, order_id: int) -> None:
+        _ = order_id
+
+    def get_order(self, order_id: int):
+        _ = order_id
+        if self.order_status is None:
+            return None
+        return {"orderId": order_id, "status": self.order_status}
+
+    def get_executions(self, order_id: int):
+        _ = order_id
+        return []
+
+
+class _OrderStatusPollingExecution:
+    def __init__(self, orders: list[dict[str, Any] | None]) -> None:
+        self.orders = orders
+        self.calls = 0
+
+    def get_order(self, order_id: int):
+        _ = order_id
+        self.calls += 1
+        if self.calls <= len(self.orders):
+            return self.orders[self.calls - 1]
+        return self.orders[-1] if self.orders else None
+
+
 class _SequentialMultiLotCloseExecution:
     def __init__(self) -> None:
         self.canceled_orders: list[int] = []
@@ -392,7 +489,8 @@ class _SequentialMultiLotCloseExecution:
         self.canceled_orders.append(order_id)
 
     def get_order(self, order_id: int):
-        _ = order_id
+        if order_id in self.canceled_orders:
+            return {"orderId": order_id, "status": "CANCELED"}
         return None
 
     def get_executions(self, order_id: int):
@@ -452,6 +550,42 @@ class _ProtectiveStopWithUnknownLotExecution:
 
 
 class GmoClosePositionTest(unittest.TestCase):
+    def test__wait_for_order_status_polls_until_deadline_when_get_order_returns_none(self) -> None:
+        execution = _OrderStatusPollingExecution([None, None, None])
+
+        with unittest.mock.patch(
+            "apps.gmo_bot.app.usecases.close_position.time.monotonic",
+            side_effect=[0.0, 0.0, 0.05, 0.11],
+        ), unittest.mock.patch("apps.gmo_bot.app.usecases.close_position.time.sleep") as sleep_mock:
+            status = _wait_for_order_status(
+                execution,
+                8218604892,
+                target_statuses={"CANCELED"},
+                timeout_ms=100,
+            )
+
+        self.assertIsNone(status)
+        self.assertEqual(3, execution.calls)
+        self.assertEqual(2, sleep_mock.call_count)
+
+    def test__wait_for_order_status_returns_canceled_when_first_call_returns_none_then_canceled(self) -> None:
+        execution = _OrderStatusPollingExecution([None, {"orderId": 8218604892, "status": "CANCELED"}])
+
+        with unittest.mock.patch(
+            "apps.gmo_bot.app.usecases.close_position.time.monotonic",
+            side_effect=[0.0, 0.0],
+        ), unittest.mock.patch("apps.gmo_bot.app.usecases.close_position.time.sleep") as sleep_mock:
+            status = _wait_for_order_status(
+                execution,
+                8218604892,
+                target_statuses={"CANCELED"},
+                timeout_ms=100,
+            )
+
+        self.assertEqual("CANCELED", status)
+        self.assertEqual(2, execution.calls)
+        sleep_mock.assert_called_once()
+
     def test_partial_fill_retries_remaining_size_and_closes_trade(self) -> None:
         trade = _build_open_trade()
         persistence = _FakePersistence(trade)
@@ -520,8 +654,8 @@ class GmoClosePositionTest(unittest.TestCase):
         self.assertAlmostEqual(13944.0, trade["execution"]["exit_reference_price"])
         self.assertEqual("STOP_LOSS", trade["close_reason"])
         self.assertCountEqual([8218604891, 8218604892], execution.canceled_orders)
-        self.assertEqual("INACTIVE", trade["execution"]["take_profit_order_status"])
-        self.assertEqual("INACTIVE", trade["execution"]["stop_loss_order_status"])
+        self.assertEqual("CANCELED", trade["execution"]["take_profit_order_status"])
+        self.assertEqual("CANCELED", trade["execution"]["stop_loss_order_status"])
 
     def test_reconciles_protective_stop_fill_when_manual_close_hits_position_not_found(self) -> None:
         trade = _build_open_trade()
@@ -550,7 +684,7 @@ class GmoClosePositionTest(unittest.TestCase):
         self.assertAlmostEqual(13651.0, trade["execution"]["exit_reference_price"])
         self.assertEqual("EXECUTED", trade["execution"]["stop_loss_order_status"])
 
-    def test_reconcile_protective_stop_returns_pending_when_order_is_executed_but_executions_are_not_visible(self) -> None:
+    def test_reconcile_protective_stop_returns_unavailable_when_order_is_executed_but_executions_are_not_visible(self) -> None:
         trade = _build_open_trade()
         trade["execution"]["stop_loss_order"] = {"order_id": 8218604892, "price": 13651.0}
         persistence = _FakePersistence(trade)
@@ -564,8 +698,46 @@ class GmoClosePositionTest(unittest.TestCase):
             close_reason="STOP_LOSS",
         )
 
-        self.assertEqual("PENDING", reconciled.status)
+        self.assertEqual("UNAVAILABLE", reconciled.status)
         self.assertEqual("EXECUTED", reconciled.order_status)
+
+    def test_reconcile_protective_exit_execution_returns_unavailable_when_stop_order_already_executed_and_processed(self) -> None:
+        trade = _build_open_trade()
+        trade["execution"]["stop_loss_order"] = {"order_id": 8218604892, "price": 13651.0}
+        trade["execution"]["processed_exit_execution_ids"] = ["1530999999"]
+        persistence = _FakePersistence(trade)
+        execution = _ProtectiveStopExecutedWithProcessedExecutions()
+
+        reconciled = reconcile_protective_exit_execution(
+            execution=execution,
+            logger=_FakeLogger(),
+            persistence=persistence,
+            trade=trade,
+            close_reason="STOP_LOSS",
+        )
+
+        self.assertEqual("UNAVAILABLE", reconciled.status)
+        self.assertEqual(8218604892, reconciled.order_id)
+        self.assertEqual("EXECUTED", reconciled.order_status)
+        self.assertEqual("CONFIRMED", trade["state"])
+
+    def test_reconcile_protective_exit_execution_returns_unavailable_when_cached_status_is_inactive(self) -> None:
+        trade = _build_open_trade()
+        trade["execution"]["stop_loss_order_status"] = "INACTIVE"
+        persistence = _FakePersistence(trade)
+        execution = _NoVisibleProtectiveExitExecution()
+
+        reconciled = reconcile_protective_exit_execution(
+            execution=execution,
+            logger=_FakeLogger(),
+            persistence=persistence,
+            trade=trade,
+            close_reason="STOP_LOSS",
+        )
+
+        self.assertEqual("UNAVAILABLE", reconciled.status)
+        self.assertEqual(8218604892, reconciled.order_id)
+        self.assertEqual("INACTIVE", reconciled.order_status)
 
     def test_manual_close_splits_multiple_lots_into_single_lot_orders(self) -> None:
         trade = _build_open_trade()
@@ -665,6 +837,74 @@ class GmoClosePositionTest(unittest.TestCase):
         statuses = {item["order_id"]: item["status"] for item in trade["execution"]["stop_loss_orders"]}
         self.assertEqual("EXECUTED", statuses[8218604892])
         self.assertEqual("WAITING", statuses[8218604893])
+
+    def test_apply_confirmed_exit_result_does_not_wipe_other_stop_orders_when_order_id_missing(self) -> None:
+        trade = _build_open_trade()
+        trade["position"]["quantity_sol"] = 0.1
+        trade["position"]["quote_amount_jpy"] = 1356.8
+        trade["position"]["lots"] = [{"position_id": 281135490, "size_sol": 0.1}]
+        trade["execution"]["stop_loss_order_id"] = 8218604892
+        trade["execution"]["stop_loss_orders"] = [
+            {"order_id": 8218604892, "price": 13651.0, "status": "WAITING", "position_id": 281135490, "size_sol": 0.1},
+            {"order_id": 8218604893, "price": 13651.0, "status": "WAITING", "position_id": 281135491, "size_sol": 0.2},
+        ]
+        persistence = _FakePersistence(trade)
+
+        result = apply_confirmed_exit_result(
+            logger=_FakeLogger(),
+            persistence=persistence,
+            trade=trade,
+            execution_result={
+                "status": "CONFIRMED",
+                "avg_fill_price": 13944.0,
+                "filled_base_sol": 0.1,
+                "filled_quote_jpy": 1394.4,
+                "fee_jpy": 1.0,
+                "realized_pnl_jpy": -38.0,
+                "execution_ids": ["1530581068"],
+                "lots": [{"position_id": 281135490, "size_sol": 0.1}],
+            },
+            order_id=9999999999,
+            close_reason="STOP_LOSS",
+            close_price=13651.0,
+        )
+
+        self.assertEqual("CLOSED", result.status)
+        statuses = {item["order_id"]: item["status"] for item in trade["execution"]["stop_loss_orders"]}
+        self.assertEqual("WAITING", statuses[8218604892])
+        self.assertEqual("WAITING", statuses[8218604893])
+        self.assertEqual("WAITING", trade["execution"]["stop_loss_order_status"])
+
+    def test_apply_confirmed_exit_result_does_not_mark_take_profit_executed_for_manual_close_with_tp_reason(self) -> None:
+        trade = _build_open_trade()
+        trade["position"]["quantity_sol"] = 0.1
+        trade["position"]["quote_amount_jpy"] = 1356.8
+        trade["position"]["lots"] = [{"position_id": 281135490, "size_sol": 0.1}]
+        persistence = _FakePersistence(trade)
+
+        result = apply_confirmed_exit_result(
+            logger=_FakeLogger(),
+            persistence=persistence,
+            trade=trade,
+            execution_result={
+                "status": "CONFIRMED",
+                "avg_fill_price": 13418.6,
+                "filled_base_sol": 0.1,
+                "filled_quote_jpy": 1341.86,
+                "fee_jpy": 1.0,
+                "realized_pnl_jpy": 14.94,
+                "execution_ids": ["1530581069"],
+                "lots": [{"position_id": 281135490, "size_sol": 0.1}],
+            },
+            order_id=9000000001,
+            close_reason="TAKE_PROFIT",
+            close_price=13418.6,
+        )
+
+        self.assertEqual("CLOSED", result.status)
+        self.assertNotEqual(9000000001, trade["execution"]["take_profit_order_id"])
+        self.assertEqual("INACTIVE", trade["execution"]["take_profit_order_status"])
+        self.assertEqual("INACTIVE", trade["execution"]["stop_loss_order_status"])
 
     def test_stop_loss_full_close_calls_stop_status_setter_once(self) -> None:
         trade = _build_open_trade()
