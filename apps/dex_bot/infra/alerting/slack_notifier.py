@@ -460,11 +460,14 @@ class SlackNotifier:
         thread_ts: str,
     ) -> None:
         # This is the raw Web API flow wrapped by Slack SDK's files_upload_v2 helper.
-        upload_payload = self._post_slack_api_json(
+        # files.getUploadURLExternal does not accept JSON payloads in practice:
+        # Slack returns invalid_arguments and reports filename/length as missing.
+        # Send application/x-www-form-urlencoded just like slack_sdk's WebClient.
+        upload_payload = self._post_slack_api_form(
             _SLACK_GET_UPLOAD_URL_EXTERNAL_URL,
             {
                 "filename": filename,
-                "length": len(content),
+                "length": str(len(content)),
             },
         )
         upload_url = upload_payload.get("upload_url")
@@ -498,6 +501,26 @@ class SlackNotifier:
                 "Content-Type": "application/json; charset=utf-8",
             },
             json=payload,
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"Slack API response is invalid: {url}")
+        if data.get("ok") is not True:
+            raise RuntimeError(f"Slack API call failed: url={url} error={data.get('error')}")
+        return data
+
+    def _post_slack_api_form(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._bot_token is None:
+            raise RuntimeError("Slack bot token is not configured")
+        response = requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {self._bot_token}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data=payload,
             timeout=_REQUEST_TIMEOUT_SECONDS,
         )
         response.raise_for_status()

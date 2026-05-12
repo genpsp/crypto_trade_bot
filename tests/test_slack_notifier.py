@@ -460,11 +460,25 @@ class SlackNotifierTest(unittest.TestCase):
         self.assertEqual(7, mocked_post.call_count)
         self.assertEqual("https://slack.com/api/chat.postMessage", mocked_post.call_args_list[0].args[0])
         self.assertEqual("https://slack.com/api/files.getUploadURLExternal", mocked_post.call_args_list[1].args[0])
+        dex_upload_url_kwargs = mocked_post.call_args_list[1].kwargs
+        self.assertNotIn("json", dex_upload_url_kwargs)
+        self.assertEqual({"filename": "dex_balance_trend.png", "length": "7"}, dex_upload_url_kwargs["data"])
+        self.assertEqual(
+            "application/x-www-form-urlencoded",
+            dex_upload_url_kwargs["headers"]["Content-Type"],
+        )
         self.assertEqual("https://uploads.slack.test/dex", mocked_post.call_args_list[2].args[0])
         self.assertEqual("https://slack.com/api/files.completeUploadExternal", mocked_post.call_args_list[3].args[0])
         complete_payload = mocked_post.call_args_list[3].kwargs["json"]
         self.assertEqual("C0123ABCDE", complete_payload["channel_id"])
         self.assertEqual("123.456", complete_payload["thread_ts"])
+        gmo_upload_url_kwargs = mocked_post.call_args_list[4].kwargs
+        self.assertNotIn("json", gmo_upload_url_kwargs)
+        self.assertEqual({"filename": "gmo_balance_trend.png", "length": "7"}, gmo_upload_url_kwargs["data"])
+        self.assertEqual(
+            "application/x-www-form-urlencoded",
+            gmo_upload_url_kwargs["headers"]["Content-Type"],
+        )
         self.assertEqual(0, len(logger.warnings))
         info_messages = [message for message, _context in logger.infos]
         self.assertIn("slack daily summary delivery started", info_messages)
