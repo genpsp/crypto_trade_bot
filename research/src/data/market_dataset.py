@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import hashlib
 
 from apps.dex_bot.domain.model.types import OhlcvBar
+from research.src.data.regime_tagger import attach_regime_tags
 from research.src.data.partitioned_cache import PartitionedOhlcvCache
 
 
@@ -62,7 +63,7 @@ class MarketDataset:
         timeframe: str,
         bars: list[OhlcvBar],
     ) -> "MarketDataset":
-        sorted_bars = sorted(bars, key=lambda bar: bar.close_time)
+        sorted_bars = attach_regime_tags(sorted(bars, key=lambda bar: bar.close_time))
         if sorted_bars:
             start = _to_utc(sorted_bars[0].close_time)
             end = _to_utc(sorted_bars[-1].close_time)

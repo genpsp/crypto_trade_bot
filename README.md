@@ -355,3 +355,30 @@ python -m research.scripts.compare_runs --run latest --metric return_to_dd --top
 ```
 
 結果は `research/data/runs/{run_id}/manifest.json` と `trials.parquet` に保存され、`--keep-trades` 指定時は `trades/{trial_id}.parquet` も保存されます。
+
+
+## Backtest validity gates
+
+戦略・パラメータを LIVE に進める判断は、主観ではなく次の Gate A/B/C で行います。
+
+### Gate A: backtest 採用候補
+
+`research/scripts/run_sweep.py` は `holdout` 必須の sweep spec を読み、holdout 区間を主軸に CI / DSR / レジーム分解を保存します。候補判定は次で確認します。
+
+```bash
+python -m research.scripts.compare_runs --run latest --gate-a
+```
+
+最低条件は `closed_trades >= min_trades`, `total_scaled_pnl_pct_ci_low > 0`, `return_to_dd_ci_low > 0`, walk-forward positive ratio `>= 70%`, BULL/BEAR/CHOPPY 全てで positive, `dsr_p_value < 0.05`, stochastic seed p05 でも CI 下限 positive です。
+
+### Gate B: forward test 通過
+
+Gate A 通過後、PAPER モードで最低30日稼働し、`shadow_compare` で paper/LIVE ログと同期間 backtest を照合します。
+
+- trade 単位一致率 `>= 95%`
+- 累積 PnL 偏差が backtest 期待の `[-20%, +30%]`
+- shadow_compare 由来の Slack alert が0件
+
+### Gate C: LIVE 最小サイズ移行
+
+Gate B 通過後、`position_size_multiplier=0.5` で30日運用します。drawdown が backtest p95 を超えず、reject 率が `execution_profile` 記録値の +50% 以内なら本サイズへ移行します。

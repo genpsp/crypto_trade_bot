@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from research.src.store.lineage import build_run_id, capture_git_sha, now_utc_is
 from research.src.store.trial_store import TrialStore
 from research.src.sweep.plan import build_plan
 from research.src.sweep.spec_loader import SweepSpec, load_sweep_spec
+from research.src.eval.statistics import percentile
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,9 +61,91 @@ def _load_dataset(spec: SweepSpec) -> MarketDataset:
     )
 
 
+def _series_stats(values: list[float]) -> dict[str, float]:
+    return {
+        "mean": sum(values) / len(values),
+        "p05": percentile(values, 0.05),
+        "p95": percentile(values, 0.95),
+    }
+
+
+def _seed_group_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    tags = row.get("tags") if isinstance(row.get("tags"), dict) else {}
+    window = row.get("window") if isinstance(row.get("window"), dict) else {}
+    return (
+        tags.get("spec_name"),
+        tags.get("case_index"),
+        tags.get("case_name"),
+        window.get("window_id"),
+        window.get("role"),
+        tags.get("execution_model_id"),
+    )
+
+
+def _add_seed_aggregates(rows: list[dict[str, Any]]) -> None:
+    buckets: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        if row.get("error") is None:
+            buckets[_seed_group_key(row)].append(row)
+    metric_names = [
+        "total_scaled_pnl_pct",
+        "total_scaled_pnl_pct_ci_low",
+        "return_to_dd",
+        "return_to_dd_ci_low",
+        "average_r_multiple",
+        "deflated_sharpe",
+        "dsr_p_value",
+    ]
+    for group_rows in buckets.values():
+        for metric in metric_names:
+            values = []
+            for row in group_rows:
+                summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+                value = summary.get(metric)
+                if isinstance(value, (int, float)):
+                    values.append(float(value))
+            if not values:
+                continue
+            stats = _series_stats(values)
+            for row in group_rows:
+                summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+                summary["seed_count"] = len(group_rows)
+                for stat_name, stat_value in stats.items():
+                    summary[f"{metric}_seed_{stat_name}"] = round(stat_value, 6)
+
+
+def _wf_group_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    tags = row.get("tags") if isinstance(row.get("tags"), dict) else {}
+    return (tags.get("spec_name"), tags.get("case_index"), tags.get("seed"), tags.get("execution_model_id"))
+
+
+def _add_walk_forward_stability(rows: list[dict[str, Any]]) -> None:
+    ratios: dict[tuple[Any, ...], float] = {}
+    grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        window = row.get("window") if isinstance(row.get("window"), dict) else {}
+        if window.get("type") == "walk_forward" and window.get("role") == "test" and row.get("error") is None:
+            grouped[_wf_group_key(row)].append(row)
+    for key, group_rows in grouped.items():
+        if not group_rows:
+            continue
+        positives = 0
+        for row in group_rows:
+            summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+            positives += 1 if float(summary.get("total_scaled_pnl_pct") or 0.0) > 0 else 0
+        ratios[key] = positives / len(group_rows)
+    for row in rows:
+        key = _wf_group_key(row)
+        if key in ratios and isinstance(row.get("summary"), dict):
+            row["summary"]["walk_forward_positive_ratio"] = round(ratios[key], 6)
+
+
 def _ranked_trial_ids(rows: list[dict[str, Any]]) -> list[str]:
+    candidates = [row for row in rows if row.get("error") is None]
+    if any(((row.get("window") or {}).get("role") == "holdout") for row in candidates if isinstance(row.get("window"), dict)):
+        candidates = [row for row in candidates if isinstance(row.get("window"), dict) and row["window"].get("role") == "holdout"]
     ranked = sorted(
-        [row for row in rows if row.get("error") is None],
+        candidates,
         key=lambda row: (
             row.get("summary", {}).get("return_to_dd")
             if row.get("summary", {}).get("return_to_dd") is not None
@@ -96,6 +180,8 @@ def main() -> None:
     for trial in trials:
         result = result_by_id[trial.trial_id]
         rows.append({**trial.to_dict(), **result.to_dict()})
+    _add_seed_aggregates(rows)
+    _add_walk_forward_stability(rows)
 
     trades_by_trial_id: dict[str, list[dict[str, Any]]] | None = None
     if args.keep_trades == "all":
@@ -120,6 +206,9 @@ def main() -> None:
             "base_config": str(spec.base_config),
             "dataset": spec.dataset,
             "windows": spec.windows,
+            "holdout": spec.holdout,
+            "min_trades": spec.min_trades,
+            "execution_model": spec.execution_model,
             "axes": spec.axes,
             "combinations": spec.combinations,
         },
@@ -138,7 +227,7 @@ def main() -> None:
         "error_count": sum(1 for row in rows if row.get("error") is not None),
         "keep_trades": args.keep_trades,
         "trade_files_count": trade_files_count,
-        "ranked_by_return_to_dd": ranked_ids,
+        "ranked_by_holdout_return_to_dd": ranked_ids,
     }
     store = TrialStore(args.runs_root)
     run_dir = store.write_run(

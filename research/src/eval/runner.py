@@ -28,15 +28,22 @@ def _run_trial_with_bars(
     trial: TrialSpec,
     bars: list[OhlcvBar],
     keep_trades: KeepTradesMode = "none",
+    n_trials: int = 1,
 ) -> TrialResult:
     started = time.perf_counter()
     try:
         if len(bars) < 2:
             raise ValueError(f"trial window has too few bars: {len(bars)}")
         report = run_backtest(bars=bars, config=trial.config)
+        min_trades_raw = trial.tags.get("min_trades")
+        min_trades = int(min_trades_raw) if min_trades_raw is not None else None
+        summary = compute_summary(report, n_trials=n_trials, min_trades=min_trades)
+        summary["window_role"] = trial.window.role
+        summary["window_id"] = trial.window.window_id
+        summary["seed"] = trial.tags.get("seed")
         return TrialResult(
             trial_id=trial.trial_id,
-            summary=compute_summary(report),
+            summary=summary,
             no_signal_reason_counts=report.no_signal_reason_counts,
             runtime_seconds=round(time.perf_counter() - started, 6),
             error=None,
@@ -67,14 +74,15 @@ def run_trials(
         dataset = datasets[trial.dataset_key.stable_key()]
         trial_inputs.append((trial, trial.window.slice_bars(dataset.bars)))
 
+    n_trials = len(materialized)
     if workers <= 1:
         for trial, bars in trial_inputs:
-            yield _run_trial_with_bars(trial, bars, keep_trades)
+            yield _run_trial_with_bars(trial, bars, keep_trades, n_trials)
         return
 
     with ProcessPoolExecutor(max_workers=workers) as executor:
         future_to_trial_id = {
-            executor.submit(_run_trial_with_bars, trial, bars, keep_trades): trial.trial_id
+            executor.submit(_run_trial_with_bars, trial, bars, keep_trades, n_trials): trial.trial_id
             for trial, bars in trial_inputs
         }
         for future in as_completed(future_to_trial_id):

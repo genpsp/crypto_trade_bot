@@ -88,3 +88,31 @@ python -m research.scripts.compare_runs --runs RUN_ID_A,RUN_ID_B --metric return
 - 戦略パラメータは `config["strategy"]` 経由で上書きします。`setattr(module, ...)` の monkey-patch は禁止です。
 - 新規の実験結果は `research/data/runs/` に保存します。`research/data/processed/*_latest.json` は旧資産の読み取り互換扱いです。
 - ロジック改修PRでは `compare_runs.py` または `run_diff.ipynb` の回帰確認結果を添付してください。
+
+
+## 6. Backtest validity
+
+`sweep` YAML は `holdout` と `min_trades` を必須にしています。執行モデルは `execution_model.id` で `ideal_v1` / `pessimistic_v1` / `stochastic_v1` を選択できます。
+
+```yaml
+min_trades: 30
+holdout:
+  type: time_split
+  train_end: 2025-11-30T23:59:59Z
+  test_start: 2025-12-01T00:00:00Z
+execution_model:
+  id: stochastic_v1
+  profile: research/data/execution_profiles/gmo_soljpy.json
+  seeds: [1, 2, 3, 4, 5]
+```
+
+補助CLI:
+
+```bash
+python -m research.scripts.recommend_min_trades --win-rate 0.45 --r 1.8
+python -m research.scripts.build_execution_profile --broker GMO_COIN --pair SOL/JPY --input live_trades.json --output research/data/execution_profiles/gmo_soljpy.json
+python -m research.scripts.shadow_compare --broker GMO_COIN --live-trades-json live.json --backtest-trades-json backtest.json --slack-on-threshold 0.05
+python -m research.scripts.compare_runs --run latest --gate-a
+```
+
+`trials.parquet` の summary には bootstrap CI (`*_ci_low/high`), `deflated_sharpe`, `dsr_p_value`, `by_regime`, seed集約 (`*_seed_mean/p05/p95`) が保存されます。

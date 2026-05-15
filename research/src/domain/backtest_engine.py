@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -31,6 +32,8 @@ from shared.utils.math import round_to
 from apps.dex_bot.domain.utils.time import get_bar_duration_seconds
 
 from research.src.domain.backtest_types import BacktestReport, BacktestSummary, BacktestTrade
+from research.src.data.regime_tagger import get_bar_regime
+from research.src.eval.execution_model import RejectedEntry, build_execution_model, buy_fill_price, sell_fill_price
 
 
 @dataclass
@@ -45,6 +48,9 @@ class _OpenPosition:
     position_size_multiplier: float
     base_notional_usdc: float
     effective_notional_usdc: float
+    entry_regime: dict[str, str]
+    execution_model_id: str
+    execution_seed: int | None
 
 
 def _to_utc_iso(value: datetime) -> str:
@@ -105,11 +111,15 @@ def _slippage_ratio(slippage_bps: int) -> float:
 
 
 def _simulate_buy_fill_price(trigger_price: float, slippage_bps: int) -> float:
-    return trigger_price * (1 + _slippage_ratio(slippage_bps))
+    # Backward-compatible wrapper for legacy analysis scripts. The engine itself
+    # dispatches through ExecutionModel.
+    return buy_fill_price(trigger_price, slippage_bps)
 
 
 def _simulate_sell_fill_price(trigger_price: float, slippage_bps: int) -> float:
-    return max(0.0, trigger_price * (1 - _slippage_ratio(slippage_bps)))
+    # Backward-compatible wrapper for legacy analysis scripts. The engine itself
+    # dispatches through ExecutionModel.
+    return sell_fill_price(trigger_price, slippage_bps)
 
 
 def _resolve_ohlcv_limit(config: BotConfig) -> int:
@@ -159,6 +169,10 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
     ohlcv_limit = _resolve_ohlcv_limit(config)
     bar_duration_seconds = get_bar_duration_seconds(config["signal_timeframe"])
     portfolio_quote_usdc = _resolve_initial_quote_balance(config)
+    execution_seed_raw = config["execution"].get("seed")
+    execution_seed = int(execution_seed_raw) if isinstance(execution_seed_raw, int) or (isinstance(execution_seed_raw, str) and execution_seed_raw.isdigit()) else None
+    rng = random.Random(execution_seed)
+    execution_model = build_execution_model(config["execution"])
 
     open_position: _OpenPosition | None = None
     trades: list[BacktestTrade] = []
@@ -186,21 +200,33 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
 
             if stop_hit or tp_hit:
                 if stop_hit and tp_hit:
-                    exit_reason = "STOP_LOSS_AND_TP_SAME_BAR"
-                    exit_trigger_price = open_position.stop_price
+                    exit_fill = execution_model.simulate_same_bar_stop_and_tp(
+                        position=open_position,
+                        bar=current_bar,
+                        slippage_bps=slippage_bps,
+                        rng=rng,
+                    )
                 elif stop_hit:
-                    exit_reason = "STOP_LOSS"
-                    exit_trigger_price = open_position.stop_price
+                    exit_fill = execution_model.simulate_stop_fill(
+                        position=open_position,
+                        bar=current_bar,
+                        slippage_bps=slippage_bps,
+                        rng=rng,
+                    )
                 else:
-                    exit_reason = "TAKE_PROFIT"
-                    exit_trigger_price = open_position.take_profit_price
+                    exit_fill = execution_model.simulate_tp_fill(
+                        position=open_position,
+                        bar=current_bar,
+                        slippage_bps=slippage_bps,
+                        rng=rng,
+                    )
+                exit_reason = exit_fill.reason
+                exit_price = exit_fill.price
 
                 if is_long:
-                    exit_price = _simulate_sell_fill_price(exit_trigger_price, slippage_bps)
                     risk_per_unit = open_position.entry_price - open_position.stop_price
                     pnl_per_unit = exit_price - open_position.entry_price
                 else:
-                    exit_price = _simulate_buy_fill_price(exit_trigger_price, slippage_bps)
                     risk_per_unit = open_position.stop_price - open_position.entry_price
                     pnl_per_unit = open_position.entry_price - exit_price
 
@@ -230,6 +256,9 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
                         base_notional_usdc=round_to(open_position.base_notional_usdc, 2),
                         effective_notional_usdc=round_to(open_position.effective_notional_usdc, 2),
                         holding_bars=index - open_position.entry_index,
+                        entry_regime=dict(open_position.entry_regime),
+                        execution_model_id=open_position.execution_model_id,
+                        execution_seed=open_position.execution_seed,
                     )
                 )
                 closed_exit_reasons.append(exit_reason)
@@ -332,11 +361,20 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             no_signal_reasons["ENTRY_DISABLED_BY_POSITION_SIZE_MULTIPLIER"] += 1
             continue
 
-        if entry_direction == "LONG":
-            resolved_entry_price = _simulate_buy_fill_price(decision.entry_price, slippage_bps)
-        else:
-            resolved_entry_price = _simulate_sell_fill_price(decision.entry_price, slippage_bps)
+        entry_fill = execution_model.simulate_entry_fill(
+            decision=decision,
+            direction=entry_direction,
+            bars=bars,
+            index=index,
+            slippage_bps=slippage_bps,
+            rng=rng,
+        )
+        if isinstance(entry_fill, RejectedEntry):
+            no_signal_count += 1
+            no_signal_reasons[entry_fill.reason] += 1
+            continue
 
+        resolved_entry_price = entry_fill.price
         if resolved_entry_price <= 0:
             no_signal_count += 1
             no_signal_reasons["INVALID_ENTRY_FILL_PRICE"] += 1
@@ -391,8 +429,8 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
 
         enter_count += 1
         open_position = _OpenPosition(
-            entry_index=index,
-            entry_time=current_bar.close_time,
+            entry_index=entry_fill.bar_index,
+            entry_time=entry_fill.fill_time,
             direction=entry_direction,
             quantity_sol=quantity_sol,
             entry_price=resolved_entry_price,
@@ -401,6 +439,9 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             position_size_multiplier=size_multiplier,
             base_notional_usdc=base_notional_usdc,
             effective_notional_usdc=effective_notional_usdc,
+            entry_regime=get_bar_regime(bars[entry_fill.bar_index]),
+            execution_model_id=execution_model.model_id,
+            execution_seed=execution_seed,
         )
 
     if open_position is not None:
@@ -420,6 +461,9 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
                 base_notional_usdc=round_to(open_position.base_notional_usdc, 2),
                 effective_notional_usdc=round_to(open_position.effective_notional_usdc, 2),
                 holding_bars=None,
+                entry_regime=dict(open_position.entry_regime),
+                execution_model_id=open_position.execution_model_id,
+                execution_seed=open_position.execution_seed,
             )
         )
 
@@ -451,6 +495,8 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             average_r_multiple=round_to(_safe_average([value for value in r_values if value is not None]), 6),
             first_bar_close_time=_to_utc_iso(bars[0].close_time),
             last_bar_close_time=_to_utc_iso(bars[-1].close_time),
+            execution_model_id=execution_model.model_id,
+            execution_seed=execution_seed,
         ),
         no_signal_reason_counts=dict(no_signal_reasons),
         trades=trades,

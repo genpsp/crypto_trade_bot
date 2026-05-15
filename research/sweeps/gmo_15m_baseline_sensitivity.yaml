@@ -2,6 +2,18 @@ name: gmo_15m_baseline_sensitivity
 model_id: gmo_ema_pullback_15m_both_v0
 base_config: research/models/gmo_ema_pullback_15m_both_v0/config/current.json
 
+min_trades: 30
+holdout:
+  type: time_split
+  train_end: 2025-11-30T23:59:59Z
+  test_start: 2025-12-01T00:00:00Z
+
+execution_model:
+  id: stochastic_v1
+  profile: research/data/execution_profiles/gmo_soljpy.json
+  seeds: [1, 2, 3, 4, 5]
+  additional_slippage_bps: 1.0
+
 dataset:
   broker: GMO_COIN
   pair: SOL/JPY
@@ -9,8 +21,6 @@ dataset:
   bars_path: research/data/raw/soljpy_15m_1y.csv
 
 windows:
-  - type: last_n_days
-    days: 365
   - type: walk_forward
     train_days: 180
     test_days: 90

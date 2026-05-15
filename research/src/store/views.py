@@ -11,8 +11,32 @@ def _metric_value(row: dict[str, Any], metric: str) -> Any:
     return summary.get(metric)
 
 
-def rank(rows: Iterable[dict[str, Any]], *, by: str = "return_to_dd", desc: bool = True, top_k: int = 10) -> list[dict[str, Any]]:
-    valid = [row for row in rows if row.get("error") in (None, "")]
+def _role(row: dict[str, Any]) -> str | None:
+    window = row.get("window") if isinstance(row.get("window"), dict) else {}
+    tags = row.get("tags") if isinstance(row.get("tags"), dict) else {}
+    summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+    return window.get("role") or tags.get("window_role") or summary.get("window_role")
+
+
+def rank(
+    rows: Iterable[dict[str, Any]],
+    *,
+    by: str = "return_to_dd",
+    desc: bool = True,
+    top_k: int = 10,
+    role: str | None = None,
+    eligible_only: bool = False,
+) -> list[dict[str, Any]]:
+    valid = []
+    for row in rows:
+        if row.get("error") not in (None, ""):
+            continue
+        if role is not None and _role(row) != role:
+            continue
+        summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+        if eligible_only and summary.get("rank_eligible") is False:
+            continue
+        valid.append(row)
     return sorted(
         valid,
         key=lambda row: _metric_value(row, by) if _metric_value(row, by) is not None else float("-inf"),

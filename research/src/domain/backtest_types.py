@@ -22,6 +22,9 @@ class BacktestTrade:
     base_notional_usdc: float | None
     effective_notional_usdc: float | None
     holding_bars: int | None
+    entry_regime: dict[str, str] | None = None
+    execution_model_id: str | None = None
+    execution_seed: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -44,6 +47,8 @@ class BacktestSummary:
     average_r_multiple: float
     first_bar_close_time: str
     last_bar_close_time: str
+    execution_model_id: str = "ideal_v1"
+    execution_seed: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
