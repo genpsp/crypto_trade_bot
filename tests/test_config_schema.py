@@ -63,6 +63,16 @@ class ConfigSchemaTest(unittest.TestCase):
         parsed = parse_config(payload)
         self.assertEqual(parsed["strategy"]["name"], "ema_trend_pullback_15m_v0")
 
+    def test_preserves_optional_strategy_params(self) -> None:
+        payload = deepcopy(_build_base_config())
+        payload["signal_timeframe"] = "15m"
+        payload["strategy"]["name"] = "ema_trend_pullback_15m_v0"
+        payload["strategy"]["max_distance_from_ema_fast_pct"] = 0.7
+        payload["strategy"]["pullback_lookback_bars"] = 5
+        parsed = parse_config(payload)
+        self.assertEqual(0.7, parsed["strategy"]["max_distance_from_ema_fast_pct"])
+        self.assertEqual(5, parsed["strategy"]["pullback_lookback_bars"])
+
     def test_ema_trend_pullback_15m_strategy_rejects_non_15m_timeframe(self) -> None:
         payload = deepcopy(_build_base_config())
         payload["signal_timeframe"] = "2h"

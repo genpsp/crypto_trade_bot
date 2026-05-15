@@ -18,6 +18,10 @@ class GmoSeedScriptTest(unittest.TestCase):
         ])
         self.assertEqual(configs["gmo_ema_pullback_2h_long_v0"]["pair"], "SOL/JPY")
         self.assertEqual(configs["gmo_ema_pullback_15m_both_v0"]["execution"]["slippage_bps"], 3)
+        self.assertEqual(
+            0.05,
+            configs["gmo_ema_pullback_15m_both_v0"]["strategy"]["short_upper_trend_min_gap_pct"],
+        )
         self.assertFalse(configs["gmo_ema_pullback_2h_long_v0"]["enabled"])
         self.assertFalse(configs["gmo_storm_2h_short_v0"]["enabled"])
         self.assertTrue(configs["gmo_ema_pullback_15m_both_v0"]["enabled"])

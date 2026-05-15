@@ -16,7 +16,6 @@ from research.src.adapters.csv_bar_repository import read_bars_from_csv, write_j
 from research.src.domain.backtest_engine import run_backtest
 from research.src.infra.research_config import load_bot_config
 
-import apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0 as gmo_strategy
 
 
 DEFAULT_CONFIG = "research/models/gmo_ema_pullback_15m_both_v0/config/current.json"
@@ -28,7 +27,6 @@ DEFAULT_OUTPUT = "research/data/processed/gmo_15m_param_sweep_latest.json"
 class SweepCase:
     name: str
     config_overrides: dict[str, dict[str, Any]]
-    strategy_overrides: dict[str, Any]
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,36 +55,42 @@ def _deep_merge_config(config: dict[str, Any], overrides: dict[str, dict[str, An
 
 def _build_cases() -> list[SweepCase]:
     return [
-        SweepCase("baseline", {}, {}),
-        SweepCase("max_trades=2", {"risk": {"max_trades_per_day": 2}}, {}),
-        SweepCase("max_trades=3", {"risk": {"max_trades_per_day": 3}}, {}),
-        SweepCase("volatile_size=0.55", {"risk": {"volatile_size_multiplier": 0.55}}, {}),
-        SweepCase("volatile_size=0.4", {"risk": {"volatile_size_multiplier": 0.4}}, {}),
-        SweepCase("tp=1.6", {"exit": {"take_profit_r_multiple": 1.6}}, {}),
-        SweepCase("long_gap=0.1", {}, {"LONG_WEAK_UPPER_TREND_MIN_GAP_PCT": 0.1}),
-        SweepCase("long_gap=0.15", {}, {"LONG_WEAK_UPPER_TREND_MIN_GAP_PCT": 0.15}),
-        SweepCase("chase=0.7", {}, {"MAX_DISTANCE_FROM_EMA_FAST_PCT": 0.7}),
-        SweepCase("rsi_long_upper=64", {}, {"RSI_LONG_UPPER_BOUND": 64}),
-        SweepCase("short_gap=0.1", {}, {"SHORT_UPPER_TREND_MIN_GAP_PCT": 0.1}),
+        SweepCase("baseline", {}),
+        SweepCase("max_trades=2", {"risk": {"max_trades_per_day": 2}}),
+        SweepCase("max_trades=3", {"risk": {"max_trades_per_day": 3}}),
+        SweepCase("volatile_size=0.55", {"risk": {"volatile_size_multiplier": 0.55}}),
+        SweepCase("volatile_size=0.4", {"risk": {"volatile_size_multiplier": 0.4}}),
+        SweepCase("tp=1.6", {"exit": {"take_profit_r_multiple": 1.6}}),
+        SweepCase("long_gap=0.1", {"strategy": {"long_weak_upper_trend_min_gap_pct": 0.1}}),
+        SweepCase("long_gap=0.15", {"strategy": {"long_weak_upper_trend_min_gap_pct": 0.15}}),
+        SweepCase("chase=0.7", {"strategy": {"max_distance_from_ema_fast_pct": 0.7}}),
+        SweepCase("rsi_long_upper=64", {"strategy": {"rsi_long_upper_bound": 64}}),
+        SweepCase("short_gap=0.1", {"strategy": {"short_upper_trend_min_gap_pct": 0.1}}),
         SweepCase(
             "tp=1.6 + short_gap=0.1",
-            {"exit": {"take_profit_r_multiple": 1.6}},
-            {"SHORT_UPPER_TREND_MIN_GAP_PCT": 0.1},
+            {
+                "exit": {"take_profit_r_multiple": 1.6},
+                "strategy": {"short_upper_trend_min_gap_pct": 0.1},
+            },
         ),
         SweepCase(
             "tp=1.6 + max_trades=2",
             {"exit": {"take_profit_r_multiple": 1.6}, "risk": {"max_trades_per_day": 2}},
-            {},
         ),
         SweepCase(
             "max_trades=2 + short_gap=0.1",
-            {"risk": {"max_trades_per_day": 2}},
-            {"SHORT_UPPER_TREND_MIN_GAP_PCT": 0.1},
+            {
+                "risk": {"max_trades_per_day": 2},
+                "strategy": {"short_upper_trend_min_gap_pct": 0.1},
+            },
         ),
         SweepCase(
             "tp=1.6 + max_trades=2 + short_gap=0.1",
-            {"exit": {"take_profit_r_multiple": 1.6}, "risk": {"max_trades_per_day": 2}},
-            {"SHORT_UPPER_TREND_MIN_GAP_PCT": 0.1},
+            {
+                "exit": {"take_profit_r_multiple": 1.6},
+                "risk": {"max_trades_per_day": 2},
+                "strategy": {"short_upper_trend_min_gap_pct": 0.1},
+            },
         ),
     ]
 
@@ -134,22 +138,11 @@ def _run_case(
     bars: list[Any],
 ) -> dict[str, Any]:
     config = _deep_merge_config(base_config, case.config_overrides)
-    originals: dict[str, Any] = {}
-
-    for attr_name, value in case.strategy_overrides.items():
-        originals[attr_name] = getattr(gmo_strategy, attr_name)
-        setattr(gmo_strategy, attr_name, value)
-
-    try:
-        report = run_backtest(bars, config)
-    finally:
-        for attr_name, value in originals.items():
-            setattr(gmo_strategy, attr_name, value)
+    report = run_backtest(bars, config)
 
     return {
         "name": case.name,
         "config_overrides": case.config_overrides,
-        "strategy_overrides": case.strategy_overrides,
         "summary": _summarize_report(report),
     }
 

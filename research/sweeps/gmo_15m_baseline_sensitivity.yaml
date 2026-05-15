@@ -1,0 +1,27 @@
+name: gmo_15m_baseline_sensitivity
+model_id: gmo_ema_pullback_15m_both_v0
+base_config: research/models/gmo_ema_pullback_15m_both_v0/config/current.json
+
+dataset:
+  broker: GMO_COIN
+  pair: SOL/JPY
+  timeframe: 15m
+  bars_path: research/data/raw/soljpy_15m_1y.csv
+
+windows:
+  - type: last_n_days
+    days: 365
+  - type: walk_forward
+    train_days: 180
+    test_days: 90
+    step_days: 90
+
+axes:
+  - path: risk.max_trades_per_day
+    values: [2, 3, 4]
+  - path: risk.volatile_size_multiplier
+    values: [0.4, 0.55, 0.7]
+  - path: exit.take_profit_r_multiple
+    values: [1.6, 1.8, 2.0]
+
+combinations: full_grid

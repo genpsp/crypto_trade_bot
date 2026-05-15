@@ -345,9 +345,13 @@ python -m unittest
 
 分析系は `research/` に分離しています。詳細は `research/README.md` を参照してください。
 
-例:
+基本フロー:
 
 ```bash
-python -m research.scripts.fetch_ohlcv --pair SOL/USDC --timeframe 15m --years 0.5 --output research/data/raw/solusdc_15m.csv
-python -m research.scripts.run_backtest --config research/models/ema_pullback_15m_both_v0/config/current.json --bars research/data/raw/solusdc_15m.csv --output research/data/processed/backtest_latest.json
+python -m research.scripts.data_sync --broker GMO_COIN --pair SOL/JPY --timeframe 15m --since 2023-01-01
+python -m research.scripts.run_sweep --spec research/sweeps/gmo_15m_baseline_sensitivity.yaml --workers 4
+# trade明細も保存する場合は run_sweep に --keep-trades all を付ける
+python -m research.scripts.compare_runs --run latest --metric return_to_dd --top 10
 ```
+
+結果は `research/data/runs/{run_id}/manifest.json` と `trials.parquet` に保存され、`--keep-trades` 指定時は `trades/{trial_id}.parquet` も保存されます。

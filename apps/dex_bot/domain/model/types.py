@@ -18,6 +18,27 @@ class StrategyConfig(TypedDict):
     ema_slow_period: int
     swing_low_lookback_bars: int
     entry: Literal["ON_BAR_CLOSE"]
+    pullback_lookback_bars: NotRequired[int]
+    max_distance_from_ema_fast_pct: NotRequired[float]
+    short_breakdown_lookback_bars: NotRequired[int]
+    rsi_period: NotRequired[int]
+    rsi_long_lower_bound: NotRequired[float]
+    rsi_long_upper_bound: NotRequired[float]
+    rsi_short_lower_bound: NotRequired[float]
+    rsi_short_upper_bound: NotRequired[float]
+    long_weak_upper_trend_min_gap_pct: NotRequired[float]
+    long_weak_trend_confirm_timeframe_minutes: NotRequired[int]
+    short_upper_trend_min_gap_pct: NotRequired[float]
+    short_reversal_guard_min_upper_trend_gap_pct: NotRequired[float]
+    short_upper_fast_slope_max_pct: NotRequired[float]
+    short_upper_close_drift_max_pct: NotRequired[float]
+    atr_period: NotRequired[int]
+    atr_stop_multiplier: NotRequired[float]
+    long_atr_pct_max: NotRequired[float]
+    upper_trend_timeframe_minutes: NotRequired[int]
+    upper_trend_ema_fast_period: NotRequired[int]
+    upper_trend_ema_slow_period: NotRequired[int]
+    swing_lookback_bars: NotRequired[int]
 
 
 class RiskConfig(TypedDict):

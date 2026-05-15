@@ -52,6 +52,20 @@ class GmoConfigSchemaTest(unittest.TestCase):
         self.assertEqual(parsed["execution"]["broker"], "GMO_COIN")
         self.assertEqual(parsed["execution"]["min_notional_jpy"], 5000.0)
 
+    def test_preserves_configurable_15m_strategy_params(self) -> None:
+        config = self._valid_config()
+        config["strategy"]["short_upper_trend_min_gap_pct"] = 0.1
+        config["strategy"]["rsi_long_upper_bound"] = 64
+        parsed = parse_config(config)
+        self.assertEqual(0.1, parsed["strategy"]["short_upper_trend_min_gap_pct"])
+        self.assertEqual(64.0, parsed["strategy"]["rsi_long_upper_bound"])
+
+    def test_rejects_invalid_configurable_strategy_param(self) -> None:
+        config = self._valid_config()
+        config["strategy"]["short_breakdown_lookback_bars"] = 0
+        with self.assertRaisesRegex(ValueError, "short_breakdown_lookback_bars"):
+            parse_config(config)
+
     def test_rejects_invalid_pair(self) -> None:
         config = self._valid_config()
         config["pair"] = "SOL/USDC"

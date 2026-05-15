@@ -76,6 +76,8 @@ class GmoEmaTrendPullback15mStrategyTest(unittest.TestCase):
             previous_close=100.0,
             previous_ema_fast=100.1,
         )
+        strategy = dict(self.strategy)
+        strategy["short_upper_fast_slope_max_pct"] = 0.1
         with (
             patch(
                 "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0.calculate_minimum_bars",
@@ -88,10 +90,6 @@ class GmoEmaTrendPullback15mStrategyTest(unittest.TestCase):
             patch(
                 "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0._calculate_upper_trend_regime_metrics",
                 return_value=(0.12, 0.0),
-            ),
-            patch(
-                "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0.SHORT_UPPER_FAST_SLOPE_MAX_PCT",
-                0.1,
             ),
             patch(
                 "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0.build_ema_market_context",
@@ -108,7 +106,7 @@ class GmoEmaTrendPullback15mStrategyTest(unittest.TestCase):
         ):
             decision = evaluate_ema_trend_pullback_15m_v0(
                 bars=self.bars,
-                strategy=self.strategy,
+                strategy=strategy,
                 risk=self.risk,
                 exit=self.exit,
                 execution=self.execution,

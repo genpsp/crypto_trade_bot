@@ -26,6 +26,8 @@ class ResearchConfigTest(unittest.TestCase):
         self.assertEqual(5000.0, config["execution"]["min_notional_usdc"])
         self.assertEqual(5000.0, config["execution"]["min_notional_jpy"])
         self.assertEqual(1_000_000.0, config["execution"]["initial_quote_balance"])
+        self.assertEqual(0.05, config["strategy"]["short_upper_trend_min_gap_pct"])
+        self.assertEqual(68.0, config["strategy"]["rsi_long_upper_bound"])
 
 
 class ResearchFetchOhlcvProviderTest(unittest.TestCase):

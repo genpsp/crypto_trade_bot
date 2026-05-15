@@ -7,6 +7,14 @@ from research.src.app.backtest_usecase import BacktestInput, run_backtest_usecas
 from research.src.infra.research_config import load_bot_config
 
 
+def _print_deprecation_notice() -> None:
+    print(
+        "[research] DEPRECATED: run_backtest.py is a legacy single-purpose CLI. "
+        "Prefer `python -m research.scripts.run_sweep --spec ...` and "
+        "`python -m research.scripts.compare_runs ...` for new research runs."
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run offline backtest with shared dex-bot strategy")
     parser.add_argument("--config", required=True, help="JSON config file path")
@@ -20,6 +28,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    _print_deprecation_notice()
     args = parse_args()
     config = load_bot_config(args.config)
 

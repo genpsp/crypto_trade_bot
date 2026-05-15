@@ -22,6 +22,38 @@ DEFAULT_STORM_ATR_PCT_THRESHOLD = 1.40
 DEFAULT_VOLATILE_SIZE_MULTIPLIER = 0.75
 DEFAULT_STORM_SIZE_MULTIPLIER = 0.50
 
+STRATEGY_OPTIONAL_INT_FIELDS: dict[str, int] = {
+    "pullback_lookback_bars": 1,
+    "short_breakdown_lookback_bars": 1,
+    "rsi_period": 1,
+    "long_weak_trend_confirm_timeframe_minutes": 1,
+    "atr_period": 1,
+    "upper_trend_timeframe_minutes": 1,
+    "upper_trend_ema_fast_period": 1,
+    "upper_trend_ema_slow_period": 1,
+    "swing_lookback_bars": 1,
+}
+
+STRATEGY_OPTIONAL_FLOAT_FIELDS: dict[str, float] = {
+    "max_distance_from_ema_fast_pct": 0.0,
+    "long_weak_upper_trend_min_gap_pct": 0.0,
+    "short_upper_trend_min_gap_pct": 0.0,
+    "short_reversal_guard_min_upper_trend_gap_pct": 0.0,
+    "short_upper_fast_slope_max_pct": 0.0,
+    "short_upper_close_drift_max_pct": 0.0,
+    "atr_stop_multiplier": 0.0,
+    "long_atr_pct_max": 0.0,
+}
+
+STRATEGY_OPTIONAL_RSI_BOUND_FIELDS = frozenset(
+    {
+        "rsi_long_lower_bound",
+        "rsi_long_upper_bound",
+        "rsi_short_lower_bound",
+        "rsi_short_upper_bound",
+    }
+)
+
 
 def _require(condition: bool, message: str) -> None:
     if not condition:
@@ -49,13 +81,46 @@ def _parse_strategy(strategy: Any, prefix: str) -> StrategyConfig:
         f"{prefix}.swing_low_lookback_bars must be positive int",
     )
     _require(strategy.get("entry") == "ON_BAR_CLOSE", f"{prefix}.entry must be ON_BAR_CLOSE")
-    return {
+
+    parsed: StrategyConfig = {
         "name": strategy["name"],
         "ema_fast_period": strategy["ema_fast_period"],
         "ema_slow_period": strategy["ema_slow_period"],
         "swing_low_lookback_bars": strategy["swing_low_lookback_bars"],
         "entry": strategy["entry"],
     }
+
+    for key, minimum in STRATEGY_OPTIONAL_INT_FIELDS.items():
+        if key not in strategy:
+            continue
+        value = strategy[key]
+        _require(
+            isinstance(value, int) and not isinstance(value, bool) and value >= minimum,
+            f"{prefix}.{key} must be int >= {minimum}",
+        )
+        parsed[key] = value  # type: ignore[literal-required]
+
+    for key, minimum in STRATEGY_OPTIONAL_FLOAT_FIELDS.items():
+        if key not in strategy:
+            continue
+        value = strategy[key]
+        _require(
+            isinstance(value, (int, float)) and not isinstance(value, bool) and float(value) >= minimum,
+            f"{prefix}.{key} must be number >= {minimum}",
+        )
+        parsed[key] = float(value)  # type: ignore[literal-required]
+
+    for key in STRATEGY_OPTIONAL_RSI_BOUND_FIELDS:
+        if key not in strategy:
+            continue
+        value = strategy[key]
+        _require(
+            isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= float(value) <= 100,
+            f"{prefix}.{key} must be number between 0 and 100",
+        )
+        parsed[key] = float(value)  # type: ignore[literal-required]
+
+    return parsed
 
 
 def _parse_risk(risk: Any, prefix: str) -> dict[str, float | int]:

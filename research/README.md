@@ -1,85 +1,90 @@
 # research
 
-`research` は「分析専用」のディレクトリです。  
-実運用 bot (`apps.dex_bot`) と分離しつつ、戦略ロジックは `apps.dex_bot` を直接呼んで共有します。
-
-## 役割
-
-- `apps/dex_bot`: 実売買実行（LIVE/PAPER、Firestore、Redis、Jupiter）
-- `research`: データ取得・バックテスト・検証レポート
-
-この分離は正しいです。理由は、分析試行錯誤の変更を実運用コードに混ぜないためです。
-
-## 共有ロジック
-
-バックテストのエントリー判定は次を直接使用します。
-
-- `apps.dex_bot.domain.strategy.registry.evaluate_strategy_for_model`
-
-つまり、戦略条件は単一ソースで管理されます。
+`research` は「分析専用」のディレクトリです。実運用 bot (`apps/*_bot`) と分離しつつ、戦略判定は `apps.*.domain.strategy.registry.evaluate_strategy_for_model` を呼び出して単一ソースを維持します。
 
 ## ディレクトリ
 
-- `research/data/raw`: 収集したOHLCV CSV
-- `research/data/processed`: バックテスト結果 JSON
-- `research/notebooks`: Notebook置き場
+- `research/data/cache`: `(broker, pair, timeframe)` ごとの月次 Parquet OHLCV キャッシュ
+- `research/data/raw`: 旧CSV入力（読み取り互換・移行元）
+- `research/data/runs/{run_id}`: 新しいバックテスト結果ストア
+  - `manifest.json`: spec snapshot / git sha / dataset hash / 実行時刻
+  - `trials.parquet`: 1試行1行の結果
+  - `trades/{trial_id}.parquet`: trade明細（`--keep-trades all` / `on-error` 指定時）
+- `research/data/processed`: 旧JSON出力置き場（読み取り互換のみ。新規結果は `runs/` に保存）
+- `research/sweeps`: 宣言的 sweep YAML
+- `research/notebooks`: run store を読むNotebook
+- `research/notebooks/_archive`: 旧 `backtest_playground_*.ipynb`
 - `research/scripts`: CLIエントリ
-- `research/src`: 分析用モジュール（adapters/app/domain/infra）
+- `research/src`: data / eval / sweep / store 層
 
-## 使い方
+## 1. データ同期
 
-リポジトリルートで実行:
-
-```bash
-python -m research.scripts.fetch_ohlcv \
-  --pair SOL/USDC \
-  --timeframe 2h \
-  --years 2 \
-  --output research/data/raw/solusdc_2h.csv
-```
-
-15m で取得する例:
+初回または日次更新では Parquet キャッシュを同期します。
 
 ```bash
-python -m research.scripts.fetch_ohlcv \
-  --pair SOL/USDC \
-  --timeframe 15m \
-  --years 0.5 \
-  --output research/data/raw/solusdc_15m.csv
+python -m research.scripts.data_sync       --broker GMO_COIN --pair SOL/JPY --timeframe 15m       --since 2023-01-01
 ```
 
-上記は初回に2年分をCSV保存し、2回目以降は既存CSVを再利用します。  
-強制再取得したい場合のみ `--refresh` を付けてください。
+旧CSVをキャッシュへ移行する場合:
 
 ```bash
-python -m research.scripts.run_backtest \
-  --config research/models/ema_pullback_2h_long_v0/config/current.json \
-  --bars research/data/raw/solusdc_2h.csv \
-  --output research/data/processed/backtest_latest.json
+python -m research.scripts.migrate_csv_to_parquet       --input research/data/raw/soljpy_15m_1y.csv       --broker GMO_COIN --pair SOL/JPY --timeframe 15m
 ```
 
-`--config` は `research/models/<model_id>/config/current.json` を指定します。  
-モデル設定はこの1ファイルに集約されています。
+`fetch_ohlcv.py` は互換ラッパとして残しています。CSVが必要な場合のみ使ってください。
 
-Walk-forward（複数窓）の例:
+## 2. Sweep 実行
+
+パラメータ・window・dataset は YAML で宣言します。
 
 ```bash
-python -m research.scripts.run_walk_forward \
-  --config research/models/ema_pullback_15m_both_v0/config/current.json \
-  --bars research/data/raw/solusdc_15m_3y.csv \
-  --train-days 180 \
-  --test-days 90 \
-  --step-days 90 \
-  --output research/data/processed/walk_forward_core_long_15m_6m3m.json
+python -m research.scripts.run_sweep       --spec research/sweeps/gmo_15m_baseline_sensitivity.yaml       --workers 4
+
+# trade明細も保存して trial_drilldown で資産曲線を確認する場合
+python -m research.scripts.run_sweep       --spec research/sweeps/gmo_15m_baseline_sensitivity.yaml       --workers 4       --keep-trades all
 ```
 
-## Notebook で実行（コピペ不要）
+出力例:
 
-`jupyter lab` を起動したら下記ノートを開いて、`Run -> Run All Cells` を実行してください。
+```text
+research/data/runs/20260515-094012-gmo-15m-baseline-sensitivity-a1b2c3d/
+├── manifest.json
+├── trials.parquet
+└── trades/{trial_id}.parquet  # --keep-trades 指定時
+```
 
-- ロングモデル: `research/notebooks/backtest_playground.ipynb`
-- ショートモデル: `research/notebooks/backtest_playground_short.ipynb`
+smoke test では `--max-trials 1` を使えます。
 
-- パラメータはノート内の `Parameters` セルだけ編集
-- `REFRESH_DATA=False` なら既存CSVを再利用
-- 結果は `research/data/processed/backtest_latest.json` に保存
+## 3. 結果比較
+
+ランキング:
+
+```bash
+python -m research.scripts.compare_runs --run latest --metric return_to_dd --top 10
+```
+
+軸別マージナル:
+
+```bash
+python -m research.scripts.compare_runs --run latest --metric return_to_dd --marginal
+```
+
+run間diff:
+
+```bash
+python -m research.scripts.compare_runs --runs RUN_ID_A,RUN_ID_B --metric return_to_dd
+```
+
+## 4. Notebook
+
+`jupyter lab` を起動して次のNotebookを開き、冒頭の Parameters セルだけ編集して `Run All` します。Notebook内ではバックテストを再実行せず、`research/data/runs/` の Parquet を読むだけです。
+
+- `research/notebooks/run_overview.ipynb`: 1 run のランキング・軸別マージナル・window安定性
+- `research/notebooks/run_diff.ipynb`: 2 run の改善/劣化比較
+- `research/notebooks/trial_drilldown.ipynb`: 1 trial の config / summary / no-signal / trade明細（保存時）
+
+## 5. 開発ルール
+
+- 戦略パラメータは `config["strategy"]` 経由で上書きします。`setattr(module, ...)` の monkey-patch は禁止です。
+- 新規の実験結果は `research/data/runs/` に保存します。`research/data/processed/*_latest.json` は旧資産の読み取り互換扱いです。
+- ロジック改修PRでは `compare_runs.py` または `run_diff.ipynb` の回帰確認結果を添付してください。

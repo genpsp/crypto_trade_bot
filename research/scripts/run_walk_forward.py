@@ -12,6 +12,14 @@ from research.src.infra.research_config import load_bot_config
 from research.src.adapters.csv_bar_repository import read_bars_from_csv
 
 
+def _print_deprecation_notice() -> None:
+    print(
+        "[research] DEPRECATED: run_walk_forward.py is a legacy single-purpose CLI. "
+        "Prefer `python -m research.scripts.run_sweep --spec ...` and "
+        "`python -m research.scripts.compare_runs ...` for new research runs."
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run walk-forward backtest (train/test rolling windows)")
     parser.add_argument("--config", required=True, help="JSON config file path")
@@ -113,6 +121,7 @@ def _aggregate_test_summaries(windows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def main() -> None:
+    _print_deprecation_notice()
     args = parse_args()
     config = load_bot_config(args.config)
     bars = read_bars_from_csv(args.bars)

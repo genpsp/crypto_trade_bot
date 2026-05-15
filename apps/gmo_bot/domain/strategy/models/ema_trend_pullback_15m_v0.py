@@ -113,10 +113,12 @@ def _build_upper_timeframe_closes(bars: list[OhlcvBar], timeframe_minutes: int) 
 def _evaluate_upper_timeframe_trend(
     bars: list[OhlcvBar],
     timeframe_minutes: int = UPPER_TREND_TIMEFRAME_MINUTES,
+    ema_fast_period: int = UPPER_TREND_EMA_FAST_PERIOD,
+    ema_slow_period: int = UPPER_TREND_EMA_SLOW_PERIOD,
 ) -> tuple[str, float | None, float | None, int]:
     upper_closes = _build_upper_timeframe_closes(bars, timeframe_minutes)
-    upper_ema_fast_values = ema_series(upper_closes, UPPER_TREND_EMA_FAST_PERIOD)
-    upper_ema_slow_values = ema_series(upper_closes, UPPER_TREND_EMA_SLOW_PERIOD)
+    upper_ema_fast_values = ema_series(upper_closes, ema_fast_period)
+    upper_ema_slow_values = ema_series(upper_closes, ema_slow_period)
     upper_ema_fast = upper_ema_fast_values[-1] if upper_ema_fast_values else None
     upper_ema_slow = upper_ema_slow_values[-1] if upper_ema_slow_values else None
     if upper_ema_fast is None or upper_ema_slow is None:
@@ -139,6 +141,20 @@ def _resolve_position_size_multiplier(atr_pct: float | None, risk: RiskConfig) -
     return "NORMAL", 1.0
 
 
+def _strategy_int(strategy: StrategyConfig, key: str, default: int) -> int:
+    raw = strategy.get(key, default)
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        return default
+    return raw
+
+
+def _strategy_float(strategy: StrategyConfig, key: str, default: float) -> float:
+    raw = strategy.get(key, default)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return default
+    return float(raw)
+
+
 def _calculate_ema_gap_pct(ema_fast: float | None, ema_slow: float | None) -> float | None:
     if ema_fast is None or ema_slow is None or not math.isfinite(ema_fast) or not math.isfinite(ema_slow):
         return None
@@ -158,9 +174,10 @@ def _calculate_pct_change(current: float | None, previous: float | None) -> floa
 def _calculate_upper_trend_regime_metrics(
     bars: list[OhlcvBar],
     timeframe_minutes: int = UPPER_TREND_TIMEFRAME_MINUTES,
+    ema_fast_period: int = UPPER_TREND_EMA_FAST_PERIOD,
 ) -> tuple[float | None, float | None]:
     upper_closes = _build_upper_timeframe_closes(bars, timeframe_minutes)
-    upper_ema_fast_values = ema_series(upper_closes, UPPER_TREND_EMA_FAST_PERIOD)
+    upper_ema_fast_values = ema_series(upper_closes, ema_fast_period)
     upper_fast_slope_pct = None
     if len(upper_ema_fast_values) >= 2:
         upper_fast_slope_pct = _calculate_pct_change(
@@ -184,11 +201,76 @@ def evaluate_ema_trend_pullback_15m_v0(
     execution: ExecutionConfig,
     direction: ModelDirection = "BOTH",
 ) -> StrategyDecision:
+    pullback_lookback_bars = _strategy_int(strategy, "pullback_lookback_bars", PULLBACK_LOOKBACK_BARS)
+    max_distance_from_ema_fast_pct = _strategy_float(
+        strategy,
+        "max_distance_from_ema_fast_pct",
+        MAX_DISTANCE_FROM_EMA_FAST_PCT,
+    )
+    short_breakdown_lookback_bars = _strategy_int(
+        strategy,
+        "short_breakdown_lookback_bars",
+        SHORT_BREAKDOWN_LOOKBACK_BARS,
+    )
+    rsi_period = _strategy_int(strategy, "rsi_period", RSI_PERIOD)
+    rsi_long_lower_bound = _strategy_float(strategy, "rsi_long_lower_bound", RSI_LONG_LOWER_BOUND)
+    rsi_long_upper_bound = _strategy_float(strategy, "rsi_long_upper_bound", RSI_LONG_UPPER_BOUND)
+    rsi_short_lower_bound = _strategy_float(strategy, "rsi_short_lower_bound", RSI_SHORT_LOWER_BOUND)
+    rsi_short_upper_bound = _strategy_float(strategy, "rsi_short_upper_bound", RSI_SHORT_UPPER_BOUND)
+    long_weak_upper_trend_min_gap_pct = _strategy_float(
+        strategy,
+        "long_weak_upper_trend_min_gap_pct",
+        LONG_WEAK_UPPER_TREND_MIN_GAP_PCT,
+    )
+    long_weak_trend_confirm_timeframe_minutes = _strategy_int(
+        strategy,
+        "long_weak_trend_confirm_timeframe_minutes",
+        LONG_WEAK_TREND_CONFIRM_TIMEFRAME_MINUTES,
+    )
+    short_upper_trend_min_gap_pct = _strategy_float(
+        strategy,
+        "short_upper_trend_min_gap_pct",
+        SHORT_UPPER_TREND_MIN_GAP_PCT,
+    )
+    short_reversal_guard_min_upper_trend_gap_pct = _strategy_float(
+        strategy,
+        "short_reversal_guard_min_upper_trend_gap_pct",
+        SHORT_REVERSAL_GUARD_MIN_UPPER_TREND_GAP_PCT,
+    )
+    short_upper_fast_slope_max_pct = _strategy_float(
+        strategy,
+        "short_upper_fast_slope_max_pct",
+        SHORT_UPPER_FAST_SLOPE_MAX_PCT,
+    )
+    short_upper_close_drift_max_pct = _strategy_float(
+        strategy,
+        "short_upper_close_drift_max_pct",
+        SHORT_UPPER_CLOSE_DRIFT_MAX_PCT,
+    )
+    atr_period = _strategy_int(strategy, "atr_period", ATR_PERIOD)
+    atr_stop_multiplier = _strategy_float(strategy, "atr_stop_multiplier", ATR_STOP_MULTIPLIER)
+    long_atr_pct_max = _strategy_float(strategy, "long_atr_pct_max", LONG_ATR_PCT_MAX)
+    upper_trend_timeframe_minutes = _strategy_int(
+        strategy,
+        "upper_trend_timeframe_minutes",
+        UPPER_TREND_TIMEFRAME_MINUTES,
+    )
+    upper_trend_ema_fast_period = _strategy_int(
+        strategy,
+        "upper_trend_ema_fast_period",
+        UPPER_TREND_EMA_FAST_PERIOD,
+    )
+    upper_trend_ema_slow_period = _strategy_int(
+        strategy,
+        "upper_trend_ema_slow_period",
+        UPPER_TREND_EMA_SLOW_PERIOD,
+    )
+
     minimum_bars = calculate_minimum_bars(
         strategy,
-        PULLBACK_LOOKBACK_BARS + 1,
-        RSI_PERIOD + 1,
-        ATR_PERIOD + 1,
+        pullback_lookback_bars + 1,
+        rsi_period + 1,
+        atr_period + 1,
     )
     diagnostics: dict[str, Any] = {
         "bars_count": len(bars),
@@ -239,9 +321,11 @@ def evaluate_ema_trend_pullback_15m_v0(
 
     upper_trend_state, upper_ema_fast, upper_ema_slow, upper_bars_count = _evaluate_upper_timeframe_trend(
         bars,
-        UPPER_TREND_TIMEFRAME_MINUTES,
+        upper_trend_timeframe_minutes,
+        upper_trend_ema_fast_period,
+        upper_trend_ema_slow_period,
     )
-    diagnostics["upper_trend_timeframe"] = f"{UPPER_TREND_TIMEFRAME_MINUTES // 60}h"
+    diagnostics["upper_trend_timeframe"] = f"{upper_trend_timeframe_minutes // 60}h"
     diagnostics["upper_trend_bars_count"] = upper_bars_count
     diagnostics["upper_trend_ema_fast"] = upper_ema_fast
     diagnostics["upper_trend_ema_slow"] = upper_ema_slow
@@ -249,7 +333,8 @@ def evaluate_ema_trend_pullback_15m_v0(
     upper_trend_gap_pct = _calculate_ema_gap_pct(upper_ema_fast, upper_ema_slow)
     upper_fast_slope_pct, upper_close_drift_pct_3 = _calculate_upper_trend_regime_metrics(
         bars,
-        UPPER_TREND_TIMEFRAME_MINUTES,
+        upper_trend_timeframe_minutes,
+        upper_trend_ema_fast_period,
     )
     diagnostics["upper_trend_gap_pct"] = upper_trend_gap_pct
     diagnostics["upper_fast_slope_pct"] = upper_fast_slope_pct
@@ -284,15 +369,17 @@ def evaluate_ema_trend_pullback_15m_v0(
     if (
         entry_direction == "LONG"
         and upper_trend_gap_pct is not None
-        and upper_trend_gap_pct < LONG_WEAK_UPPER_TREND_MIN_GAP_PCT
+        and upper_trend_gap_pct < long_weak_upper_trend_min_gap_pct
     ):
         weak_trend_state_2h, weak_trend_ema_fast_2h, weak_trend_ema_slow_2h, weak_trend_bars_count_2h = (
             _evaluate_upper_timeframe_trend(
                 bars,
-                LONG_WEAK_TREND_CONFIRM_TIMEFRAME_MINUTES,
+                long_weak_trend_confirm_timeframe_minutes,
+                upper_trend_ema_fast_period,
+                upper_trend_ema_slow_period,
             )
         )
-        diagnostics["weak_long_trend_2h_timeframe"] = f"{LONG_WEAK_TREND_CONFIRM_TIMEFRAME_MINUTES // 60}h"
+        diagnostics["weak_long_trend_2h_timeframe"] = f"{long_weak_trend_confirm_timeframe_minutes // 60}h"
         diagnostics["weak_long_trend_2h_state"] = weak_trend_state_2h
         diagnostics["weak_long_trend_2h_bars_count"] = weak_trend_bars_count_2h
         diagnostics["weak_long_trend_2h_ema_fast"] = weak_trend_ema_fast_2h
@@ -309,7 +396,7 @@ def evaluate_ema_trend_pullback_15m_v0(
                 diagnostics=diagnostics,
             )
     if entry_direction == "SHORT":
-        if upper_trend_gap_pct is None or upper_trend_gap_pct < SHORT_UPPER_TREND_MIN_GAP_PCT:
+        if upper_trend_gap_pct is None or upper_trend_gap_pct < short_upper_trend_min_gap_pct:
             return build_no_signal(
                 (
                     "NO_SIGNAL: upper timeframe downtrend is too weak for short "
@@ -322,11 +409,11 @@ def evaluate_ema_trend_pullback_15m_v0(
             )
         if (
             upper_trend_gap_pct is not None
-            and upper_trend_gap_pct >= SHORT_REVERSAL_GUARD_MIN_UPPER_TREND_GAP_PCT
+            and upper_trend_gap_pct >= short_reversal_guard_min_upper_trend_gap_pct
         ):
             if (
                 upper_fast_slope_pct is not None
-                and upper_fast_slope_pct > SHORT_UPPER_FAST_SLOPE_MAX_PCT
+                and upper_fast_slope_pct > short_upper_fast_slope_max_pct
             ):
                 return build_no_signal(
                     (
@@ -340,7 +427,7 @@ def evaluate_ema_trend_pullback_15m_v0(
                 )
             if (
                 upper_close_drift_pct_3 is not None
-                and upper_close_drift_pct_3 > SHORT_UPPER_CLOSE_DRIFT_MAX_PCT
+                and upper_close_drift_pct_3 > short_upper_close_drift_max_pct
             ):
                 return build_no_signal(
                     (
@@ -378,7 +465,7 @@ def evaluate_ema_trend_pullback_15m_v0(
         )
 
     latest_index = len(bars) - 1
-    pullback_start_index = max(0, latest_index - PULLBACK_LOOKBACK_BARS)
+    pullback_start_index = max(0, latest_index - pullback_lookback_bars)
     has_pullback = False
     for index in range(pullback_start_index, latest_index):
         bar_ema_fast = ema_fast_by_bar[index]
@@ -433,7 +520,7 @@ def evaluate_ema_trend_pullback_15m_v0(
         )
 
     if entry_direction == "SHORT":
-        short_breakdown_start_index = max(0, latest_index - SHORT_BREAKDOWN_LOOKBACK_BARS)
+        short_breakdown_start_index = max(0, latest_index - short_breakdown_lookback_bars)
         short_breakdown_reference_low = min(lows[short_breakdown_start_index:latest_index])
         short_breakdown_confirmed = entry_price < short_breakdown_reference_low
         diagnostics["short_breakdown_reference_low"] = short_breakdown_reference_low
@@ -455,7 +542,7 @@ def evaluate_ema_trend_pullback_15m_v0(
     else:
         distance_from_ema_fast_pct = ((ema_fast - entry_price) / entry_price) * 100
     diagnostics["distance_from_ema_fast_pct"] = distance_from_ema_fast_pct
-    if distance_from_ema_fast_pct > MAX_DISTANCE_FROM_EMA_FAST_PCT:
+    if distance_from_ema_fast_pct > max_distance_from_ema_fast_pct:
         no_signal_summary = "NO_SIGNAL: entry is too far from EMA fast"
         no_signal_reason = "CHASE_ENTRY_TOO_FAR_FROM_EMA"
         if entry_direction == "SHORT":
@@ -469,7 +556,7 @@ def evaluate_ema_trend_pullback_15m_v0(
             diagnostics=diagnostics,
         )
 
-    rsi_values = rsi_series(closes, RSI_PERIOD)
+    rsi_values = rsi_series(closes, rsi_period)
     rsi_value = rsi_values[-1] if rsi_values else None
     diagnostics["rsi"] = rsi_value
     if rsi_value is None or math.isnan(rsi_value):
@@ -480,7 +567,7 @@ def evaluate_ema_trend_pullback_15m_v0(
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
-    if entry_direction == "LONG" and rsi_value < RSI_LONG_LOWER_BOUND:
+    if entry_direction == "LONG" and rsi_value < rsi_long_lower_bound:
         return build_no_signal(
             "NO_SIGNAL: RSI is too low",
             "RSI_TOO_LOW",
@@ -488,7 +575,7 @@ def evaluate_ema_trend_pullback_15m_v0(
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
-    if entry_direction == "LONG" and rsi_value > RSI_LONG_UPPER_BOUND:
+    if entry_direction == "LONG" and rsi_value > rsi_long_upper_bound:
         return build_no_signal(
             "NO_SIGNAL: RSI is too high",
             "RSI_TOO_HIGH",
@@ -496,7 +583,7 @@ def evaluate_ema_trend_pullback_15m_v0(
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
-    if entry_direction == "SHORT" and rsi_value < RSI_SHORT_LOWER_BOUND:
+    if entry_direction == "SHORT" and rsi_value < rsi_short_lower_bound:
         return build_no_signal(
             "NO_SIGNAL: RSI is too low for short",
             "SHORT_RSI_TOO_LOW",
@@ -504,7 +591,7 @@ def evaluate_ema_trend_pullback_15m_v0(
             ema_slow=ema_slow,
             diagnostics=diagnostics,
         )
-    if entry_direction == "SHORT" and rsi_value > RSI_SHORT_UPPER_BOUND:
+    if entry_direction == "SHORT" and rsi_value > rsi_short_upper_bound:
         return build_no_signal(
             "NO_SIGNAL: RSI is too high for short",
             "SHORT_RSI_TOO_HIGH",
@@ -513,7 +600,7 @@ def evaluate_ema_trend_pullback_15m_v0(
             diagnostics=diagnostics,
         )
 
-    atr_values = atr_series(highs, lows, closes, ATR_PERIOD)
+    atr_values = atr_series(highs, lows, closes, atr_period)
     latest_atr = atr_values[-1] if atr_values else None
     atr_pct = ((latest_atr / entry_price) * 100) if latest_atr is not None else None
     volatility_regime, position_size_multiplier = _resolve_position_size_multiplier(atr_pct, risk)
@@ -521,7 +608,7 @@ def evaluate_ema_trend_pullback_15m_v0(
     diagnostics["atr_pct"] = atr_pct
     diagnostics["volatility_regime"] = volatility_regime
     diagnostics["position_size_multiplier"] = position_size_multiplier
-    if entry_direction == "LONG" and atr_pct is not None and atr_pct >= LONG_ATR_PCT_MAX:
+    if entry_direction == "LONG" and atr_pct is not None and atr_pct >= long_atr_pct_max:
         return build_no_signal(
             f"NO_SIGNAL: long ATR regime is too hot (atr_pct={atr_pct:.4f})",
             "LONG_ATR_REGIME_TOO_HOT",
@@ -546,7 +633,7 @@ def evaluate_ema_trend_pullback_15m_v0(
         diagnostics["swing_low_stop"] = swing_low_stop
         diagnostics["stop_candidate"] = stop_candidate
         if latest_atr is not None and math.isfinite(latest_atr) and latest_atr > 0:
-            atr_stop = entry_price - latest_atr * ATR_STOP_MULTIPLIER
+            atr_stop = entry_price - latest_atr * atr_stop_multiplier
             if atr_stop < stop_candidate:
                 return build_no_signal(
                     "NO_SIGNAL: ATR stop conflicts with max loss cap",
@@ -562,7 +649,7 @@ def evaluate_ema_trend_pullback_15m_v0(
         diagnostics["swing_high_stop"] = swing_high_stop
         diagnostics["stop_candidate"] = stop_candidate
         if latest_atr is not None and math.isfinite(latest_atr) and latest_atr > 0:
-            atr_stop = entry_price + latest_atr * ATR_STOP_MULTIPLIER
+            atr_stop = entry_price + latest_atr * atr_stop_multiplier
             if atr_stop > stop_candidate:
                 return build_no_signal(
                     "NO_SIGNAL: ATR stop conflicts with max loss cap",
