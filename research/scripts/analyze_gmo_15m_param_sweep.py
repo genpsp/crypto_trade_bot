@@ -53,9 +53,30 @@ def _deep_merge_config(config: dict[str, Any], overrides: dict[str, dict[str, An
     return merged
 
 
+ATR_STOP_GRID = (1.5, 1.8, 2.0, 2.5, 3.0)
+TAKE_PROFIT_R_GRID = (1.5, 1.8, 2.0, 2.5)
+
+
+def _build_atr_tp_cases() -> list[SweepCase]:
+    cases: list[SweepCase] = []
+    for atr in ATR_STOP_GRID:
+        for tp in TAKE_PROFIT_R_GRID:
+            cases.append(
+                SweepCase(
+                    f"atr={atr} tp={tp}",
+                    {
+                        "strategy": {"atr_stop_multiplier": atr},
+                        "exit": {"take_profit_r_multiple": tp},
+                    },
+                )
+            )
+    return cases
+
+
 def _build_cases() -> list[SweepCase]:
     return [
         SweepCase("baseline", {}),
+        *_build_atr_tp_cases(),
         SweepCase("max_trades=2", {"risk": {"max_trades_per_day": 2}}),
         SweepCase("max_trades=3", {"risk": {"max_trades_per_day": 3}}),
         SweepCase("volatile_size=0.55", {"risk": {"volatile_size_multiplier": 0.55}}),
