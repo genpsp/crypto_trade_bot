@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>{{ context.model_id }} performance report ({{ context.from_date_jst }} – {{ context.to_date_jst }})</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", sans-serif; margin: 0; padding: 24px; color: #222; background: #fafafa; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 32px 0 12px; padding-bottom: 4px; border-bottom: 2px solid #444; }
+  h3 { font-size: 14px; margin: 18px 0 6px; color: #444; }
+  .meta { color: #666; font-size: 13px; }
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }
+  .kpi-card { background: #fff; border: 1px solid #e1e1e1; border-radius: 6px; padding: 12px 14px; }
+  .kpi-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+  .kpi-value { font-size: 20px; font-weight: 600; margin-top: 4px; }
+  .kpi-value.positive { color: #1c7c2c; }
+  .kpi-value.negative { color: #b71c1c; }
+  table { border-collapse: collapse; width: 100%; background: #fff; font-size: 12.5px; }
+  th, td { border: 1px solid #ddd; padding: 6px 9px; text-align: right; }
+  th { background: #f0f0f0; text-align: left; }
+  td.label, th.label { text-align: left; }
+  td.positive { color: #1c7c2c; }
+  td.negative { color: #b71c1c; }
+  img.chart { max-width: 100%; height: auto; display: block; margin: 6px 0 14px; border: 1px solid #eee; background: #fff; }
+  details { background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 10px 14px; margin-top: 8px; }
+  details summary { cursor: pointer; font-weight: 600; }
+  .empty { color: #999; font-style: italic; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) {
+    .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+    .row2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<h1>{{ context.model_id }} — Performance Report</h1>
+<div class="meta">
+  Period: {{ context.from_date_jst }} → {{ context.to_date_jst }} (JST) ·
+  Mode: {{ context.mode }} ·
+  Generated: {{ context.generated_at_jst }}
+</div>
+
+<h2>§A Summary</h2>
+<div class="kpi-grid">
+  <div class="kpi-card">
+    <div class="kpi-label">Total trades</div>
+    <div class="kpi-value">{{ metrics.total_trades }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Closed</div>
+    <div class="kpi-value">{{ metrics.closed_trades }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Win rate</div>
+    <div class="kpi-value">{{ fmt_pct(metrics.win_rate_pct) }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Net PnL (JPY)</div>
+    <div class="kpi-value {{ pn_class(metrics.net_pnl_jpy) }}">{{ fmt_jpy(metrics.net_pnl_jpy) }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Gross PnL (JPY)</div>
+    <div class="kpi-value {{ pn_class(metrics.gross_pnl_jpy) }}">{{ fmt_jpy(metrics.gross_pnl_jpy) }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Fees (JPY)</div>
+    <div class="kpi-value">{{ fmt_jpy(metrics.fees_jpy) }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Profit factor</div>
+    <div class="kpi-value">{{ fmt_ratio(metrics.profit_factor) }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Avg R:R</div>
+    <div class="kpi-value">{{ fmt_ratio(metrics.avg_rr) }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Max drawdown (JPY)</div>
+    <div class="kpi-value negative">{{ fmt_jpy(metrics.max_drawdown_jpy) }}{% if metrics.max_drawdown_pct is not none %} ({{ fmt_pct(metrics.max_drawdown_pct) }}){% endif %}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Longest loss streak</div>
+    <div class="kpi-value">{{ metrics.longest_loss_streak }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Sharpe (daily, ann.)</div>
+    <div class="kpi-value">{{ fmt_ratio(metrics.sharpe_daily) }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Cumulative return</div>
+    <div class="kpi-value {{ pn_class(metrics.cumulative_return_pct) }}">{{ fmt_pct(metrics.cumulative_return_pct) }}</div>
+  </div>
+</div>
+
+<h2>§B Balance trajectory</h2>
+{% if charts.equity_curve %}
+<img class="chart" alt="Equity curve" src="data:image/png;base64,{{ charts.equity_curve }}">
+{% else %}<p class="empty">No balance data available.</p>{% endif %}
+{% if charts.drawdown %}
+<img class="chart" alt="Drawdown" src="data:image/png;base64,{{ charts.drawdown }}">
+{% endif %}
+{% if charts.daily_pnl %}
+<img class="chart" alt="Daily PnL" src="data:image/png;base64,{{ charts.daily_pnl }}">
+{% endif %}
+
+<h2>§C Trade analysis</h2>
+<div class="row2">
+  <div>
+    {% if charts.pnl_distribution %}<img class="chart" alt="PnL distribution" src="data:image/png;base64,{{ charts.pnl_distribution }}">{% endif %}
+  </div>
+  <div>
+    {% if charts.holding_time %}<img class="chart" alt="Holding time" src="data:image/png;base64,{{ charts.holding_time }}">{% endif %}
+  </div>
+</div>
+{% if charts.hour_dow_heatmap %}<img class="chart" alt="Win-rate heatmap" src="data:image/png;base64,{{ charts.hour_dow_heatmap }}">{% endif %}
+
+<h3>Direction</h3>
+{% if attribution.by_direction %}
+<table>
+  <thead><tr><th class="label">Direction</th><th>Count</th><th>Win</th><th>Loss</th><th>Win rate</th><th>Sum PnL (JPY)</th><th>Avg PnL (JPY)</th></tr></thead>
+  <tbody>
+  {% for row in attribution.by_direction %}
+    <tr>
+      <td class="label">{{ row.label }}</td>
+      <td>{{ row.count }}</td>
+      <td>{{ row.win_count }}</td>
+      <td>{{ row.loss_count }}</td>
+      <td>{{ fmt_pct(row.win_rate_pct) }}</td>
+      <td class="{{ pn_class(row.sum_pnl_jpy) }}">{{ fmt_jpy(row.sum_pnl_jpy) }}</td>
+      <td class="{{ pn_class(row.avg_pnl_jpy) }}">{{ fmt_jpy(row.avg_pnl_jpy) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">No closed trades.</p>{% endif %}
+
+<h2>§D Win/Loss attribution</h2>
+<h3>Close reason</h3>
+{% if attribution.by_close_reason %}
+<table>
+  <thead><tr><th class="label">Close reason</th><th>Count</th><th>Win</th><th>Loss</th><th>Win rate</th><th>Sum PnL (JPY)</th><th>Avg PnL (JPY)</th></tr></thead>
+  <tbody>
+  {% for row in attribution.by_close_reason %}
+    <tr>
+      <td class="label">{{ row.label }}</td>
+      <td>{{ row.count }}</td>
+      <td>{{ row.win_count }}</td>
+      <td>{{ row.loss_count }}</td>
+      <td>{{ fmt_pct(row.win_rate_pct) }}</td>
+      <td class="{{ pn_class(row.sum_pnl_jpy) }}">{{ fmt_jpy(row.sum_pnl_jpy) }}</td>
+      <td class="{{ pn_class(row.avg_pnl_jpy) }}">{{ fmt_jpy(row.avg_pnl_jpy) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">No closed trades.</p>{% endif %}
+
+<h3>Entry signal comparison (winners vs losers)</h3>
+{% if attribution.signal_compare %}
+<table>
+  <thead><tr><th class="label">Signal</th><th>Win mean</th><th>Win median</th><th>Loss mean</th><th>Loss median</th><th>n win</th><th>n loss</th></tr></thead>
+  <tbody>
+  {% for column, stats in attribution.signal_compare.items() %}
+    <tr>
+      <td class="label">{{ column }}</td>
+      <td>{{ fmt_num(stats.win_mean) }}</td>
+      <td>{{ fmt_num(stats.win_median) }}</td>
+      <td>{{ fmt_num(stats.loss_mean) }}</td>
+      <td>{{ fmt_num(stats.loss_median) }}</td>
+      <td>{{ stats.n_win }}</td>
+      <td>{{ stats.n_loss }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">No signal data.</p>{% endif %}
+
+<div class="row2">
+  <div>{% if charts.signal_ema_fast %}<img class="chart" alt="EMA fast" src="data:image/png;base64,{{ charts.signal_ema_fast }}">{% endif %}</div>
+  <div>{% if charts.signal_r_multiple %}<img class="chart" alt="Plan R multiple" src="data:image/png;base64,{{ charts.signal_r_multiple }}">{% endif %}</div>
+</div>
+{% if charts.slippage %}<img class="chart" alt="Slippage" src="data:image/png;base64,{{ charts.slippage }}">{% endif %}
+
+<h3>Loss clusters (3+ consecutive losses)</h3>
+{% if attribution.loss_clusters %}
+<table>
+  <thead><tr><th class="label">Start (JST)</th><th class="label">End (JST)</th><th>Trades</th><th>Total PnL (JPY)</th></tr></thead>
+  <tbody>
+  {% for row in attribution.loss_clusters %}
+    <tr>
+      <td class="label">{{ row.started_at_jst }}</td>
+      <td class="label">{{ row.ended_at_jst }}</td>
+      <td>{{ row.trade_count }}</td>
+      <td class="negative">{{ fmt_jpy(row.total_pnl_jpy) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">No streaks of 3+ losses.</p>{% endif %}
+
+<h2>§E Decision log analysis</h2>
+<h3>NO_SIGNAL reasons (top 10)</h3>
+{% if decision_log.no_signal_reasons %}
+<table>
+  <thead><tr><th class="label">Reason / Summary</th><th>Count</th></tr></thead>
+  <tbody>
+  {% for label, count in decision_log.no_signal_reasons %}
+    <tr><td class="label">{{ label }}</td><td>{{ count }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">No NO_SIGNAL records.</p>{% endif %}
+
+<h3>SKIPPED / SKIPPED_ENTRY (by reason)</h3>
+{% if decision_log.skipped_reasons %}
+<table>
+  <thead><tr><th class="label">Result</th><th class="label">Reason / Summary</th><th>Occurrences</th></tr></thead>
+  <tbody>
+  {% for result, label, count in decision_log.skipped_reasons %}
+    <tr><td class="label">{{ result }}</td><td class="label">{{ label }}</td><td>{{ count }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">No SKIPPED records.</p>{% endif %}
+
+<h3>FAILED runs timeline</h3>
+{% if decision_log.failed_runs %}
+<table>
+  <thead><tr><th class="label">Executed at (JST)</th><th class="label">Summary</th><th class="label">Reason</th></tr></thead>
+  <tbody>
+  {% for row in decision_log.failed_runs %}
+    <tr><td class="label">{{ row.executed_at_jst }}</td><td class="label">{{ row.summary }}</td><td class="label">{{ row.reason }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">No FAILED runs.</p>{% endif %}
+
+<h2>§F Full trade ledger</h2>
+<details>
+  <summary>{{ trade_table|length }} trade(s)</summary>
+  {% if trade_table %}
+  <table>
+    <thead>
+      <tr>
+        <th class="label">Entry (JST)</th>
+        <th class="label">Exit (JST)</th>
+        <th class="label">Dir</th>
+        <th>Qty (SOL)</th>
+        <th>Entry</th>
+        <th>Exit</th>
+        <th>Fees (JPY)</th>
+        <th>PnL (JPY)</th>
+        <th class="label">Close reason</th>
+        <th>Slip in (bps)</th>
+        <th>Slip out (bps)</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for row in trade_table %}
+      <tr>
+        <td class="label">{{ row.entry_time }}</td>
+        <td class="label">{{ row.exit_time }}</td>
+        <td class="label">{{ row.direction }}</td>
+        <td>{{ fmt_qty(row.quantity_sol) }}</td>
+        <td>{{ fmt_num(row.entry_price) }}</td>
+        <td>{{ fmt_num(row.exit_price) }}</td>
+        <td>{{ fmt_jpy(row.fee_total_jpy) }}</td>
+        <td class="{{ pn_class(row.pnl_jpy) }}">{{ fmt_jpy(row.pnl_jpy) }}</td>
+        <td class="label">{{ row.close_reason }}</td>
+        <td>{{ fmt_num(row.entry_slippage_bps) }}</td>
+        <td>{{ fmt_num(row.exit_slippage_bps) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty">No trades.</p>{% endif %}
+</details>
+
+</body>
+</html>

@@ -7,4 +7,6 @@ dependencies = [
     "matplotlib>=3.9",
     "pyarrow>=16.0.0",
     "PyYAML>=6.0",
+    "pandas>=2.2",
+    "Jinja2>=3.1",
 ]

@@ -679,6 +679,75 @@ class FirestoreRepository(PersistencePort):
         records.sort(key=lambda record: str(record.get("snapshot_date_jst") or ""))
         return deepcopy(records[-days:])
 
+    def list_trades_in_range(self, from_date_jst: str, to_date_jst: str) -> list[TradeRecord]:
+        if not _is_day_doc_id(from_date_jst) or not _is_day_doc_id(to_date_jst):
+            raise ValueError("from_date_jst and to_date_jst must be YYYY-MM-DD")
+
+        from_date = datetime.fromisoformat(from_date_jst).date()
+        to_date = datetime.fromisoformat(to_date_jst).date()
+        if to_date < from_date:
+            return []
+
+        trades: list[TradeRecord] = []
+        cursor = from_date
+        while cursor <= to_date:
+            trade_date = cursor.isoformat()
+            for doc in self._trade_items_collection_for_date(trade_date).stream():
+                payload = doc.to_dict()
+                if not isinstance(payload, dict):
+                    continue
+                payload.setdefault("trade_date", trade_date)
+                trades.append(deepcopy(payload))
+            cursor += timedelta(days=1)
+        return trades
+
+    def list_runs_in_range(self, from_date_jst: str, to_date_jst: str) -> list[RunRecord]:
+        if not _is_day_doc_id(from_date_jst) or not _is_day_doc_id(to_date_jst):
+            raise ValueError("from_date_jst and to_date_jst must be YYYY-MM-DD")
+
+        from_date = datetime.fromisoformat(from_date_jst).date()
+        to_date = datetime.fromisoformat(to_date_jst).date()
+        if to_date < from_date:
+            return []
+
+        runs: list[RunRecord] = []
+        cursor = from_date
+        while cursor <= to_date:
+            run_date = cursor.isoformat()
+            day_ref = self._runs_collection().document(run_date)
+            for doc in day_ref.collection("items").stream():
+                payload = doc.to_dict()
+                if not isinstance(payload, dict):
+                    continue
+                payload.setdefault("run_date", run_date)
+                runs.append(deepcopy(payload))
+            cursor += timedelta(days=1)
+        return runs
+
+    def list_daily_balances_in_range(
+        self, from_date_jst: str, to_date_jst: str
+    ) -> list[DailyBalanceRecord]:
+        if not _is_day_doc_id(from_date_jst) or not _is_day_doc_id(to_date_jst):
+            raise ValueError("from_date_jst and to_date_jst must be YYYY-MM-DD")
+
+        records: list[DailyBalanceRecord] = []
+        for snapshot in self._daily_balance_collection().stream():
+            payload = snapshot.to_dict()
+            if not isinstance(payload, dict):
+                continue
+            snapshot_date_jst = payload.get("snapshot_date_jst")
+            if not isinstance(snapshot_date_jst, str) or not _is_day_doc_id(snapshot_date_jst):
+                doc_id = getattr(snapshot, "id", "")
+                if not isinstance(doc_id, str) or not _is_day_doc_id(doc_id):
+                    continue
+                snapshot_date_jst = doc_id
+                payload["snapshot_date_jst"] = doc_id
+            if from_date_jst <= snapshot_date_jst <= to_date_jst:
+                records.append(deepcopy(payload))
+
+        records.sort(key=lambda record: str(record.get("snapshot_date_jst") or ""))
+        return records
+
     def save_run(self, run: RunRecord) -> None:
         runs_collection = self._runs_collection()
         run_date = _extract_run_date(run)
