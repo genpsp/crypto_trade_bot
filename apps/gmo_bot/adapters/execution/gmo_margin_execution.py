@@ -334,25 +334,27 @@ class GmoMarginExecutionAdapter(ExecutionPort):
             execution_id = execution.get("executionId")
             if execution_id is not None:
                 execution_ids.append(str(execution_id))
-        if total_size <= 0:
+        if total_size <= POSITION_SIZE_EPSILON:
             raise RuntimeError("GMO executions resolved but filled size is 0")
-        avg_fill_price = total_quote / total_size
+        # Round persisted-shape values before returning to suppress float drift
+        # that would otherwise leak into Firestore exit_result snapshots.
+        avg_fill_price = round(total_quote / total_size, 6)
         lots = [
-            {"position_id": position_id, "size_sol": size}
+            {"position_id": position_id, "size_sol": round(size, 9)}
             for position_id, size in sorted(lots_by_position_id.items())
-            if size > 0
+            if size > POSITION_SIZE_EPSILON
         ]
         result = {
             "status": "CONFIRMED",
             "avg_fill_price": avg_fill_price,
-            "filled_base_sol": total_size,
-            "filled_quote_jpy": total_quote,
-            "fee_jpy": total_fee,
+            "filled_base_sol": round(total_size, 9),
+            "filled_quote_jpy": round(total_quote, 6),
+            "fee_jpy": round(total_fee, 6),
             "execution_ids": execution_ids,
             "lots": lots,
         }
         if has_realized_pnl:
-            result["realized_pnl_jpy"] = total_realized_pnl
+            result["realized_pnl_jpy"] = round(total_realized_pnl, 6)
         return result
 
 

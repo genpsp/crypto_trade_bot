@@ -25,6 +25,9 @@ PROTECTIVE_EXIT_CANCEL_CONFIRM_TIMEOUT_MS = 2_000
 PROTECTIVE_EXIT_CANCEL_CONFIRM_POLL_INTERVAL_SECONDS = 0.05
 POSITION_SIZE_EPSILON = 1e-9
 TERMINAL_ORDER_STATUSES = {"CANCELED", "EXECUTED", "EXPIRED", "FAILED"}
+# Maximum sequential close attempts when partial fills keep returning. Caps API
+# blast radius and runner_lock TTL consumption if GMO repeatedly fills tiny amounts.
+MAX_SEQUENTIAL_CLOSE_ATTEMPTS = 5
 
 
 @dataclass
@@ -204,24 +207,26 @@ def aggregate_execution_records(executions: list[dict[str, Any]]) -> dict[str, A
         if execution_id is not None:
             execution_ids.append(execution_id)
 
-    if total_size <= 0:
+    if total_size <= POSITION_SIZE_EPSILON:
         raise RuntimeError("GMO executions resolved but filled size is 0")
 
+    # Round before this dict is persisted as the exit_result snapshot to avoid
+    # float drift like 0.029999999... leaking into Firestore documents.
     result = {
         "status": "CONFIRMED",
-        "avg_fill_price": total_quote / total_size,
-        "filled_base_sol": total_size,
-        "filled_quote_jpy": total_quote,
-        "fee_jpy": total_fee,
+        "avg_fill_price": round_to(total_quote / total_size, 6),
+        "filled_base_sol": round_to(total_size, 9),
+        "filled_quote_jpy": round_to(total_quote, 6),
+        "fee_jpy": round_to(total_fee, 6),
         "execution_ids": execution_ids,
         "lots": [
-            {"position_id": position_id, "size_sol": size}
+            {"position_id": position_id, "size_sol": round_to(size, 9)}
             for position_id, size in sorted(lots_by_position_id.items())
-            if size > 0
+            if size > POSITION_SIZE_EPSILON
         ],
     }
     if has_realized_pnl:
-        result["realized_pnl_jpy"] = total_realized_pnl
+        result["realized_pnl_jpy"] = round_to(total_realized_pnl, 6)
     return result
 
 
@@ -742,7 +747,30 @@ def close_position(dependencies: ClosePositionDependencies, input_data: ClosePos
                 )
         trade["execution"]["exit_reference_price"] = round_to(input_data.close_price, 6)
         remaining_lots = list(lots)
+        attempts = 0
+        previous_total_size: float | None = None
         while remaining_lots:
+            if attempts >= MAX_SEQUENTIAL_CLOSE_ATTEMPTS:
+                summary = (
+                    f"FAILED: exceeded {MAX_SEQUENTIAL_CLOSE_ATTEMPTS} sequential close attempts "
+                    "while remaining lots persist"
+                )
+                logger.error(
+                    "gmo close_position aborted due to attempt cap",
+                    {
+                        "trade_id": trade["trade_id"],
+                        "attempts": attempts,
+                        "remaining_lot_count": len(remaining_lots),
+                    },
+                )
+                trade["execution"]["exit_submission_state"] = "FAILED"
+                trade["execution"]["exit_error"] = summary
+                persistence.update_trade(
+                    trade["trade_id"],
+                    strip_none({"execution": trade["execution"], "updated_at": now_iso()}),
+                )
+                return ClosePositionResult(status="FAILED", trade_id=trade["trade_id"], summary=summary)
+
             current_lot = remaining_lots[0]
             submission = execution.submit_close_order(
                 SubmitCloseOrderRequest(
@@ -786,7 +814,35 @@ def close_position(dependencies: ClosePositionDependencies, input_data: ClosePos
             )
             if close_result.status != "PARTIALLY_CLOSED":
                 return close_result
+            attempts += 1
             remaining_lots = list(trade.get("position", {}).get("lots") or [])
+            current_total_size = sum(
+                _to_float(lot.get("size_sol")) or 0.0 for lot in remaining_lots
+            )
+            # Detect stall: if remaining size did not shrink meaningfully this attempt,
+            # we'd otherwise spin against a stuck order book — bail out.
+            if (
+                previous_total_size is not None
+                and previous_total_size - current_total_size <= POSITION_SIZE_EPSILON
+            ):
+                summary = "FAILED: partial close made no progress between attempts"
+                logger.error(
+                    "gmo close_position aborted due to no progress",
+                    {
+                        "trade_id": trade["trade_id"],
+                        "attempts": attempts,
+                        "previous_total_size_sol": previous_total_size,
+                        "current_total_size_sol": current_total_size,
+                    },
+                )
+                trade["execution"]["exit_submission_state"] = "FAILED"
+                trade["execution"]["exit_error"] = summary
+                persistence.update_trade(
+                    trade["trade_id"],
+                    strip_none({"execution": trade["execution"], "updated_at": now_iso()}),
+                )
+                return ClosePositionResult(status="FAILED", trade_id=trade["trade_id"], summary=summary)
+            previous_total_size = current_total_size
 
         return ClosePositionResult(
             status="FAILED",

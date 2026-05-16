@@ -86,7 +86,7 @@ def main() -> None:
 
     logger.info("モデルID推定", {"model_id": model_id})
 
-    persistence = FirestoreRepository(firestore, config_repo, mode="LIVE", model_id=model_id)
+    persistence = FirestoreRepository(firestore, config_repo, mode="LIVE", model_id=model_id, logger=logger)
 
     trade = persistence.get_trade(trade_id)
     if not isinstance(trade, dict):

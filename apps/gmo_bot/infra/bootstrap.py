@@ -162,8 +162,12 @@ def bootstrap() -> AppRuntime:
         if callable(unsubscribe):
             try:
                 unsubscribe()
-            except Exception:
-                pass
+            except Exception as error:
+                # Surface listener cleanup failures so leaked SDK threads are visible.
+                logger.warn(
+                    "firestore listener unsubscribe failed; SDK thread may leak",
+                    {"error": str(error)},
+                )
 
     def _mark_runtime_refresh_needed(reason: str) -> None:
         if runtime_refresh_needed.is_set():
@@ -449,6 +453,7 @@ def bootstrap() -> AppRuntime:
                     mode=spec.mode,
                     model_id=model_id,
                     initial_config=desired_configs[model_id],
+                    logger=logger,
                 ),
                 lock=RedisLockAdapter(redis=redis, logger=logger, lock_namespace=model_id),
             )
@@ -494,29 +499,36 @@ def bootstrap() -> AppRuntime:
             interval_seconds = 15
 
         while not watchdog_stop_event.wait(interval_seconds):
-            if not runtime_specs:
-                continue
-            with cycle_state_lock:
-                elapsed_seconds = int((datetime.now(tz=UTC) - last_cycle_completed_at).total_seconds())
-                should_alert = elapsed_seconds >= threshold_seconds and not stale_cycle_alert_active
+            # An exception escaping this body kills the daemon thread silently.
+            try:
+                if not runtime_specs:
+                    continue
+                with cycle_state_lock:
+                    elapsed_seconds = int((datetime.now(tz=UTC) - last_cycle_completed_at).total_seconds())
+                    should_alert = elapsed_seconds >= threshold_seconds and not stale_cycle_alert_active
+                    if should_alert:
+                        stale_cycle_alert_active = True
                 if should_alert:
-                    stale_cycle_alert_active = True
-            if should_alert:
-                notifier.notify_stale_cycle(
-                    elapsed_seconds=elapsed_seconds,
-                    threshold_minutes=threshold_minutes,
-                    model_ids=sorted(runtime_specs.keys()),
-                )
+                    notifier.notify_stale_cycle(
+                        elapsed_seconds=elapsed_seconds,
+                        threshold_minutes=threshold_minutes,
+                        model_ids=sorted(runtime_specs.keys()),
+                    )
+            except Exception as error:
+                logger.error("watchdog loop iteration failed", {"error": str(error)})
 
     def _exit_fallback_loop() -> None:
         while not exit_fallback_stop_event.wait(EXIT_FALLBACK_POLL_INTERVAL_SECONDS):
-            if getattr(live_execution, "protective_exit_enabled", True):
-                continue
-            _refresh_runtime_if_needed()
-            _refresh_pause_if_needed()
-            pause_all = bool(runtime_pause_state)
-            for context in _active_model_contexts():
-                _run_model_cycle(context, pause_all)
+            try:
+                if getattr(live_execution, "protective_exit_enabled", True):
+                    continue
+                _refresh_runtime_if_needed()
+                _refresh_pause_if_needed()
+                pause_all = bool(runtime_pause_state)
+                for context in _active_model_contexts():
+                    _run_model_cycle(context, pause_all)
+            except Exception as error:
+                logger.error("exit fallback loop iteration failed", {"error": str(error)})
 
     def _run_model_cycle(
         context: ModelRuntimeContext,
@@ -573,22 +585,25 @@ def bootstrap() -> AppRuntime:
 
     def _open_trade_poll_loop() -> None:
         while not open_trade_poll_stop_event.wait(OPEN_TRADE_POLL_INTERVAL_SECONDS):
-            if not getattr(live_execution, "protective_exit_enabled", True):
-                continue
-            _refresh_runtime_if_needed()
-            _refresh_pause_if_needed()
-            pause_all = bool(runtime_pause_state)
-            for context in _active_model_contexts():
-                open_trade = context.persistence.find_open_trade(context.pair)
-                if open_trade is None:
+            try:
+                if not getattr(live_execution, "protective_exit_enabled", True):
                     continue
-                _run_model_cycle(
-                    context,
-                    pause_all,
-                    prefetched_open_trade=open_trade,
-                    use_prefetched_open_trade=True,
-                    high_frequency_poll=True,
-                )
+                _refresh_runtime_if_needed()
+                _refresh_pause_if_needed()
+                pause_all = bool(runtime_pause_state)
+                for context in _active_model_contexts():
+                    open_trade = context.persistence.find_open_trade(context.pair)
+                    if open_trade is None:
+                        continue
+                    _run_model_cycle(
+                        context,
+                        pause_all,
+                        prefetched_open_trade=open_trade,
+                        use_prefetched_open_trade=True,
+                        high_frequency_poll=True,
+                    )
+            except Exception as error:
+                logger.error("open trade poll loop iteration failed", {"error": str(error)})
 
     cron_controller: CronController | None = None
 

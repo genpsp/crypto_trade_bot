@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import random
+import threading
 import time
 from typing import Any
 
@@ -11,6 +13,11 @@ import requests
 PUBLIC_API_BASE_URL = "https://api.coin.z.com/public"
 PRIVATE_API_BASE_URL = "https://api.coin.z.com/private"
 DEFAULT_HTTP_TIMEOUT_SECONDS = 10
+# Retry policy for transient failures (idempotent calls only).
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_BASE_SECONDS = 0.3
+RETRY_BACKOFF_MAX_SECONDS = 2.0
+RETRYABLE_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
 class GmoApiClient:
@@ -28,16 +35,27 @@ class GmoApiClient:
         self.public_base_url = public_base_url.rstrip("/")
         self.private_base_url = private_base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
-        self.session = requests.Session()
+        # requests.Session is not documented as thread-safe: connection pool
+        # corruption and header bleed have been observed under concurrent use.
+        # Give each thread its own Session.
+        self._session_local = threading.local()
+
+    @property
+    def session(self) -> requests.Session:
+        existing = getattr(self._session_local, "value", None)
+        if existing is None:
+            existing = requests.Session()
+            self._session_local.value = existing
+        return existing
 
     def public_get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        return self._request("GET", self.public_base_url, path, params=params)
+        return self._request("GET", self.public_base_url, path, params=params, retry=True)
 
     def private_get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        return self._request("GET", self.private_base_url, path, params=params, private=True)
+        return self._request("GET", self.private_base_url, path, params=params, private=True, retry=True)
 
-    def private_post(self, path: str, body: dict[str, Any]) -> Any:
-        return self._request("POST", self.private_base_url, path, body=body, private=True)
+    def private_post(self, path: str, body: dict[str, Any], *, retry: bool = False) -> Any:
+        return self._request("POST", self.private_base_url, path, body=body, private=True, retry=retry)
 
     def private_put(self, path: str, body: dict[str, Any]) -> Any:
         return self._request("PUT", self.private_base_url, path, body=body, private=True)
@@ -239,7 +257,9 @@ class GmoApiClient:
             page += 1
 
     def cancel_order(self, order_id: int) -> None:
-        self.private_post("/v1/cancelOrder", {"orderId": order_id})
+        # cancelOrder is idempotent at the GMO API level (re-cancel of a finished
+        # order returns an application error, but transport-level retries are safe).
+        self.private_post("/v1/cancelOrder", {"orderId": order_id}, retry=True)
 
     def _request(
         self,
@@ -250,6 +270,48 @@ class GmoApiClient:
         params: dict[str, Any] | None = None,
         body: dict[str, Any] | None = None,
         private: bool = False,
+        retry: bool = False,
+    ) -> Any:
+        attempts = RETRY_MAX_ATTEMPTS if retry else 1
+        last_error: Exception | None = None
+        for attempt_index in range(attempts):
+            try:
+                return self._send_request(
+                    method=method,
+                    base_url=base_url,
+                    path=path,
+                    params=params,
+                    body=body,
+                    private=private,
+                )
+            except (requests.ConnectionError, requests.Timeout) as error:
+                last_error = error
+            except requests.HTTPError as error:
+                status_code = getattr(getattr(error, "response", None), "status_code", None)
+                if status_code not in RETRYABLE_HTTP_STATUSES:
+                    raise
+                last_error = error
+            if attempt_index >= attempts - 1:
+                break
+            # Exponential backoff with full jitter to avoid thundering herd across
+            # concurrent model cycles hitting the same rate-limited endpoint.
+            base_delay = min(
+                RETRY_BACKOFF_MAX_SECONDS,
+                RETRY_BACKOFF_BASE_SECONDS * (2 ** attempt_index),
+            )
+            time.sleep(random.uniform(0, base_delay))
+        assert last_error is not None
+        raise last_error
+
+    def _send_request(
+        self,
+        *,
+        method: str,
+        base_url: str,
+        path: str,
+        params: dict[str, Any] | None,
+        body: dict[str, Any] | None,
+        private: bool,
     ) -> Any:
         url = f"{base_url}{path}"
         headers: dict[str, str] = {}

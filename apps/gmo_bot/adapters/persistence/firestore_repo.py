@@ -7,9 +7,10 @@ from typing import Any
 
 from google.api_core.exceptions import AlreadyExists
 from google.cloud.firestore import Client
-from google.cloud.firestore_v1 import Increment
+from google.cloud.firestore_v1 import Increment, transactional
 from google.cloud.firestore_v1.base_query import FieldFilter
 
+from apps.gmo_bot.app.ports.logger_port import LoggerPort
 from apps.gmo_bot.app.ports.persistence_port import PersistencePort
 from apps.gmo_bot.domain.model.types import BotConfig, DailyBalanceRecord, Pair, RunRecord, TradeRecord
 from apps.gmo_bot.infra.config.firestore_config_repo import FirestoreConfigRepository, MODELS_COLLECTION_ID
@@ -72,19 +73,25 @@ def _extract_trade_date_from_trade_id(trade_id: str) -> str | None:
     return _parse_iso_date(timestamp_head)
 
 
-def _extract_trade_date_from_payload(payload: dict[str, Any]) -> str:
-    for key in ("trade_date", "created_at", "bar_close_time_iso"):
+def _extract_trade_date_from_payload(payload: dict[str, Any]) -> tuple[str, bool]:
+    """Resolve trade_date from a payload.
+
+    Returns ``(trade_date, used_today_fallback)`` so callers can warn when none of
+    the payload's date hints resolved and we fell back to JST today.
+    """
+
+    for key in ("trade_date", "created_at", "bar_close_time_iso", "updated_at"):
         raw_value = payload.get(key)
         if isinstance(raw_value, str):
             parsed_date = _parse_iso_date(raw_value)
             if parsed_date is not None:
-                return parsed_date
+                return parsed_date, False
     trade_id = payload.get("trade_id")
     if isinstance(trade_id, str):
         parsed_from_trade_id = _extract_trade_date_from_trade_id(trade_id)
         if parsed_from_trade_id is not None:
-            return parsed_from_trade_id
-    return datetime.now(tz=JST).date().isoformat()
+            return parsed_from_trade_id, False
+    return datetime.now(tz=JST).date().isoformat(), True
 
 
 def _extract_day_date(day_start_iso: str, day_end_iso: str) -> str:
@@ -145,11 +152,13 @@ class FirestoreRepository(PersistencePort):
         mode: str,
         model_id: str,
         initial_config: BotConfig | None = None,
+        logger: LoggerPort | None = None,
     ):
         self.firestore = firestore
         self.config_repo = config_repo
         self.mode = mode
         self.model_id = model_id
+        self.logger = logger
         self.trades_collection_name = "paper_trades" if mode == "PAPER" else "trades"
         self.runs_collection_name = "paper_runs" if mode == "PAPER" else "runs"
         self._trade_storage_cache: dict[str, str] = {}
@@ -212,7 +221,21 @@ class FirestoreRepository(PersistencePort):
             if _is_day_doc_id(normalized_payload_trade_date):
                 return normalized_payload_trade_date
 
-        return _extract_trade_date_from_trade_id(trade_id) or datetime.now(tz=JST).date().isoformat()
+        extracted = _extract_trade_date_from_trade_id(trade_id)
+        if extracted is not None:
+            return extracted
+
+        fallback = datetime.now(tz=JST).date().isoformat()
+        if self.logger is not None:
+            self.logger.warn(
+                "trade_date fallback to JST today; old trade may split into today's day doc",
+                {
+                    "trade_id": trade_id,
+                    "fallback_date": fallback,
+                    "model_id": self.model_id,
+                },
+            )
+        return fallback
 
     def _daily_balance_collection(self):
         return self._model_doc().collection(DAILY_BALANCE_COLLECTION_NAME)
@@ -292,8 +315,14 @@ class FirestoreRepository(PersistencePort):
     def _clear_open_trade_state(self) -> None:
         try:
             self._set_no_open_trade_state()
-        except Exception:
-            pass
+        except Exception as error:
+            if self.logger is not None:
+                # Suppressing this previously meant the next cycle could read a
+                # stale CONFIRMED state document and trigger a double-entry.
+                self.logger.error(
+                    "failed to clear open_trade state document; next cycle may see stale CONFIRMED",
+                    {"model_id": self.model_id, "error": str(error)},
+                )
 
     def _set_open_trade_cache(self, trade: TradeRecord | None) -> None:
         self._open_trade_cache = deepcopy(trade) if isinstance(trade, dict) else None
@@ -437,14 +466,46 @@ class FirestoreRepository(PersistencePort):
         if not isinstance(trade_id, str):
             return
 
-        cached = self._load_recent_closed_from_state()
-        merged: list[TradeRecord] = [deepcopy(trade)]
-        for item in cached:
-            existing_id = item.get("trade_id")
-            if isinstance(existing_id, str) and existing_id == trade_id:
-                continue
-            merged.append(item)
-        self._save_recent_closed_state(merged)
+        doc_ref = self._recent_closed_state_doc()
+        new_trade = deepcopy(trade)
+        updated_at_iso = datetime.now(tz=UTC).isoformat().replace("+00:00", "Z")
+
+        @transactional
+        def _commit(tx: Any) -> list[TradeRecord]:
+            snapshot = doc_ref.get(transaction=tx)
+            existing_items: list[TradeRecord] = []
+            if snapshot.exists:
+                payload = snapshot.to_dict()
+                if isinstance(payload, dict):
+                    raw_items = payload.get("items")
+                    if isinstance(raw_items, list):
+                        for item in raw_items:
+                            if isinstance(item, dict):
+                                existing_items.append(deepcopy(item))
+            merged: list[TradeRecord] = [deepcopy(new_trade)]
+            for item in existing_items:
+                existing_id = item.get("trade_id")
+                if isinstance(existing_id, str) and existing_id == trade_id:
+                    continue
+                merged.append(item)
+            trimmed = merged[:RECENT_CLOSED_TRADES_MAX_ITEMS]
+            tx.set(
+                doc_ref,
+                sanitize_firestore_value(
+                    {
+                        "items": trimmed,
+                        "backfill_complete": True,
+                        "updated_at_iso": updated_at_iso,
+                    }
+                ),
+                merge=True,
+            )
+            return trimmed
+
+        trimmed = _commit(self.firestore.transaction())
+        self._recent_closed_cache = deepcopy(trimmed)
+        self._recent_closed_cache_initialized = True
+        self._recent_closed_backfill_complete = True
 
     def _scan_recent_closed_trades(self, pair: Pair, limit: int) -> list[TradeRecord]:
         if limit <= 0:
@@ -519,7 +580,16 @@ class FirestoreRepository(PersistencePort):
         self._touch_model_metadata()
         payload: TradeRecord = dict(trade)
         payload.setdefault("model_id", self.model_id)
-        trade_date = _extract_trade_date_from_payload(payload)
+        trade_date, used_today_fallback = _extract_trade_date_from_payload(payload)
+        if used_today_fallback and self.logger is not None:
+            self.logger.warn(
+                "create_trade fell back to JST today for trade_date; payload lacked all date hints",
+                {
+                    "trade_id": trade.get("trade_id"),
+                    "trade_date": trade_date,
+                    "model_id": self.model_id,
+                },
+            )
         payload["trade_date"] = trade_date
         updated_at_iso = payload.get("updated_at")
         updated_at_iso_value = updated_at_iso if isinstance(updated_at_iso, str) else None

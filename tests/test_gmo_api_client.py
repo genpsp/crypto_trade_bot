@@ -221,7 +221,7 @@ class GmoApiClientOrderIdParsingTest(unittest.TestCase):
         with patch.object(client, "private_post", return_value={"status": 0, "data": None}) as post_mock:
             client.cancel_order(12345)
 
-        post_mock.assert_called_once_with("/v1/cancelOrder", {"orderId": 12345})
+        post_mock.assert_called_once_with("/v1/cancelOrder", {"orderId": 12345}, retry=True)
 
     def test_get_open_positions_accepts_list_payload(self) -> None:
         client = GmoApiClient(api_key="key", api_secret="secret")

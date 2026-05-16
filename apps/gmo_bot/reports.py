@@ -72,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         config_repo=config_repo,
         mode=mode,
         model_id=args.model_id,
+        logger=logger,
     )
 
     request = GenerateReportRequest(

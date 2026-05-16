@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from copy import deepcopy
 from uuid import uuid4
 
@@ -17,13 +18,20 @@ from apps.gmo_bot.app.ports.logger_port import LoggerPort
 
 PAPER_INITIAL_MARGIN_JPY = 1_000_000.0
 DEFAULT_SYMBOL_RULE = SymbolRule(symbol="SOL_JPY", tick_size=1.0, size_step=0.01, min_order_size=0.01)
+# Bound the in-memory order cache so long-running PAPER processes don't leak.
+SUBMITTED_RESULTS_MAX_ENTRIES = 1024
 
 
 class PaperExecutionAdapter(ExecutionPort):
     def __init__(self, logger: LoggerPort):
         self.logger = logger
         self._latest_price = 0.0
-        self._submitted_results: dict[int, dict] = {}
+        self._submitted_results: "OrderedDict[int, dict]" = OrderedDict()
+
+    def _store_submitted_result(self, order_id: int, result: dict) -> None:
+        self._submitted_results[order_id] = result
+        while len(self._submitted_results) > SUBMITTED_RESULTS_MAX_ENTRIES:
+            self._submitted_results.popitem(last=False)
 
     def submit_entry_order(self, request: SubmitEntryOrderRequest) -> OrderSubmission:
         fill_price = request.reference_price
@@ -38,7 +46,7 @@ class PaperExecutionAdapter(ExecutionPort):
             "execution_ids": [f"PAPER_EXEC_{order_id}"],
             "lots": [{"position_id": order_id, "size_sol": request.size_sol}],
         }
-        self._submitted_results[order_id] = deepcopy(result)
+        self._store_submitted_result(order_id, deepcopy(result))
         self.logger.info(
             "paper gmo entry simulated",
             {"order_id": order_id, "side": request.side, "size_sol": request.size_sol, "fill_price": fill_price},
@@ -59,7 +67,7 @@ class PaperExecutionAdapter(ExecutionPort):
             "execution_ids": [f"PAPER_EXEC_{order_id}"],
             "lots": [],
         }
-        self._submitted_results[order_id] = deepcopy(result)
+        self._store_submitted_result(order_id, deepcopy(result))
         self.logger.info(
             "paper gmo close simulated",
             {"order_id": order_id, "side": request.side, "size_sol": size_sol, "fill_price": fill_price},
