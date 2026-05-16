@@ -175,6 +175,13 @@ class FirestoreRepository(PersistencePort):
         self.logger = logger
         self.trades_collection_name = "paper_trades" if mode == "PAPER" else "trades"
         self.runs_collection_name = "paper_runs" if mode == "PAPER" else "runs"
+        # §11.2: these seven cache fields form one logical "trade cache" unit.
+        # Grouped here visually so a future refactor can promote them to a
+        # dedicated ``_TradeCache`` class injected via the constructor (this
+        # would let unit tests reset/freeze the cache deterministically). The
+        # promotion itself is deferred because every cache-using method below
+        # currently dereferences ``self._<field>`` directly — a search/replace
+        # change spanning ~30 call sites.
         self._trade_storage_cache: dict[str, str] = {}
         self._current_config_cache: BotConfig | None = deepcopy(initial_config) if initial_config is not None else None
         self._trade_snapshot_cache: dict[str, TradeRecord] = {}
@@ -186,6 +193,24 @@ class FirestoreRepository(PersistencePort):
         self._recent_closed_backfill_attempted = False
         self._recent_closed_backfill_complete = False
         self._last_model_metadata_touch_at: datetime | None = None
+
+    def reset_caches(self) -> None:
+        """Drop all in-memory caches.
+
+        §11.2: small testability seam — lets unit tests start from a clean
+        cache between scenarios without rebuilding the whole repository.
+        """
+
+        self._trade_storage_cache.clear()
+        self._trade_snapshot_cache.clear()
+        self._open_trade_cache = None
+        self._open_trade_cache_initialized = False
+        self._open_trade_state_prevents_scan = False
+        self._recent_closed_cache = []
+        self._recent_closed_cache_initialized = False
+        self._recent_closed_backfill_attempted = False
+        self._recent_closed_backfill_complete = False
+        self._last_model_metadata_touch_at = None
 
     def _model_doc(self):
         return self.firestore.collection(MODELS_COLLECTION_ID).document(self.model_id)

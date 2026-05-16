@@ -166,6 +166,16 @@ def _is_mark_price_rate_limit_error_message(message: str) -> bool:
 
 
 def _should_persist_run_record(run: RunRecord) -> bool:
+    # 12.9 / 6.5 context:
+    # - OPENED / CLOSED / PARTIALLY_CLOSED / FAILED are always persisted; they
+    #   are load-bearing for reporting and incident review.
+    # - SKIPPED is persisted only when the skip reason is operationally
+    #   actionable (execution_error: insufficient funds, slippage, etc; or
+    #   market_data maintenance windows). This filter keeps Firestore writes
+    #   bounded — without it, "lock:runner already acquired" and similar
+    #   benign skips would write thousands of rows per day.
+    # - The Slack alerting layer applies the same marker logic so noise stays
+    #   consistent between persisted records and notifications.
     result = str(run.get("result") or "")
     if result in ("OPENED", "CLOSED", "PARTIALLY_CLOSED", "FAILED"):
         return True

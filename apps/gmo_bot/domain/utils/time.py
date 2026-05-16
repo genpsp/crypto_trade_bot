@@ -64,6 +64,13 @@ def get_jst_day_range(target: datetime) -> tuple[str, str]:
 
 
 def build_trade_id(bar_close_time_iso: str, model_id: str, direction: Direction) -> str:
+    # §12.6 caveat: the sanitiser collapses ``.`` (and other punctuation) to
+    # ``_``, which means hypothetical model_ids like ``foo.bar`` and
+    # ``foo_bar`` would produce the same trade_id. Today all real model_ids
+    # match ``[A-Za-z0-9_-]+`` so the collision is not reachable; if that
+    # invariant is ever relaxed, append a short ``sha1(model_id)[:6]`` suffix
+    # *and* migrate existing OPEN trade IDs in Firestore (changing this
+    # format mid-flight will orphan in-flight trades).
     safe_model_id = "".join(char if char.isalnum() or char in ("-", "_") else "_" for char in model_id)
     side = "LONG" if direction == "LONG" else "SHORT"
     return f"{bar_close_time_iso}_{safe_model_id}_{side}"

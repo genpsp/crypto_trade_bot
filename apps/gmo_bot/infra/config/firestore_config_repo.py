@@ -12,6 +12,7 @@ MODELS_COLLECTION_ID = "models"
 GLOBAL_CONTROL_COLLECTION_ID = "control"
 GLOBAL_CONTROL_DOC_ID = "global"
 GLOBAL_CONTROL_PAUSE_FIELD = "pause_all"
+GLOBAL_CONTROL_STALE_CYCLE_THRESHOLD_FIELD = "stale_cycle_threshold_minutes"
 GMO_BROKER = "GMO_COIN"
 
 
@@ -66,6 +67,29 @@ class FirestoreConfigRepository:
                 flush=True,
             )
         return False
+
+    def get_stale_cycle_threshold_minutes(self) -> int | None:
+        """Return the operator-overridden stale-cycle threshold in minutes.
+
+        12.10: GMO maintenance windows can exceed the 10-minute default, so the
+        threshold is read from ``control/global.stale_cycle_threshold_minutes``
+        when present. ``None`` means "no override; use the compiled-in default".
+        """
+
+        control_snapshot = self.firestore.collection(GLOBAL_CONTROL_COLLECTION_ID).document(
+            GLOBAL_CONTROL_DOC_ID
+        ).get()
+        if not control_snapshot.exists:
+            return None
+        payload = control_snapshot.to_dict()
+        if not isinstance(payload, dict):
+            return None
+        raw_value = payload.get(GLOBAL_CONTROL_STALE_CYCLE_THRESHOLD_FIELD)
+        if isinstance(raw_value, bool):
+            return None
+        if isinstance(raw_value, (int, float)) and raw_value > 0:
+            return int(raw_value)
+        return None
 
     def _load_model_payload(self, model_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
         model_ref = self.firestore.collection(MODELS_COLLECTION_ID).document(model_id)

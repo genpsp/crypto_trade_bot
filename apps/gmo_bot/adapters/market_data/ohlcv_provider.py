@@ -69,6 +69,11 @@ class OhlcvProvider(MarketDataPort):
         max_attempts = self._max_attempts_for_interval(interval, limit)
         while len(bars_by_open_time) < limit and attempts < max_attempts:
             date_token = self._date_token(cursor, interval)
+            # 12.7: 30-second cache TTL is intentionally short for the
+            # current-day date_token, because the latest in-progress bar can
+            # change between fetches. `_is_confirmed_bar` (applied after
+            # fetch) discards any unconfirmed bar, so transient cache hits on
+            # an unconfirmed bar do not leak into decisions.
             cache_key = f"cache:gmo:ohlcv:{symbol}:{interval}:{date_token}"
             rows = self._get_cached_rows(cache_key)
             if rows is None:
@@ -213,6 +218,11 @@ class OhlcvProvider(MarketDataPort):
         aggregated: list[OhlcvBar] = []
         for bucket in sorted(grouped.keys()):
             items = sorted(grouped[bucket], key=lambda item: item.open_time)
+            # 12.8: a bucket with fewer than 2 source bars is necessarily
+            # incomplete (e.g. only the first 1h of a 2h aggregate is
+            # available). Drop it so callers never see a partial higher-tf
+            # bar — the current day's most-recent aggregate will simply be
+            # missing until the next source bar arrives.
             if len(items) < 2:
                 continue
             aggregated.append(

@@ -88,6 +88,17 @@ def _should_log_cycle_result(*, run_result: str, high_frequency_poll: bool) -> b
 
 
 def bootstrap() -> AppRuntime:
+    # §11.1 deferred work:
+    # The 500+ line body below is one giant closure: `runtime_specs`,
+    # `model_contexts`, `failure_streaks_by_model`, the various Event/Lock
+    # objects, and per-thread runners are all captured by free functions.
+    # Promoting these to attributes of an `AppRuntime` class (with the
+    # threads/Events created in `__init__` and the loops as bound methods)
+    # would let tests instantiate a subset of the runtime and drive
+    # individual phases (e.g. `runtime._run_model_cycle(ctx, paused=False)`)
+    # without hitting Firestore, Redis, or GMO. The refactor is intentionally
+    # deferred — it touches almost every line in this function and is best
+    # done as a standalone PR with a thorough regression test pass.
     env = load_env()
     logger = create_logger("gmo-bot")
     firestore = FirestoreClient.from_service_account_json(env.GOOGLE_APPLICATION_CREDENTIALS)
@@ -510,6 +521,10 @@ def bootstrap() -> AppRuntime:
 
     def _watchdog_loop() -> None:
         nonlocal stale_cycle_alert_active
+        # 12.10: allow runtime override via control/global.stale_cycle_threshold_minutes
+        # because GMO maintenance windows can exceed the compiled-in default.
+        # Re-read on every iteration so operators can extend the threshold
+        # without a redeploy when an unplanned maintenance announcement lands.
         threshold_minutes = STALE_CYCLE_ALERT_MINUTES
         threshold_seconds = threshold_minutes * 60
         interval_seconds = max(15, min(60, threshold_seconds // 3))
@@ -521,15 +536,18 @@ def bootstrap() -> AppRuntime:
             try:
                 if not runtime_specs:
                     continue
+                override_minutes = config_repo.get_stale_cycle_threshold_minutes()
+                effective_minutes = override_minutes if isinstance(override_minutes, int) and override_minutes > 0 else threshold_minutes
+                effective_seconds = effective_minutes * 60
                 with cycle_state_lock:
                     elapsed_seconds = int((datetime.now(tz=UTC) - last_cycle_completed_at).total_seconds())
-                    should_alert = elapsed_seconds >= threshold_seconds and not stale_cycle_alert_active
+                    should_alert = elapsed_seconds >= effective_seconds and not stale_cycle_alert_active
                     if should_alert:
                         stale_cycle_alert_active = True
                 if should_alert:
                     notifier.notify_stale_cycle(
                         elapsed_seconds=elapsed_seconds,
-                        threshold_minutes=threshold_minutes,
+                        threshold_minutes=effective_minutes,
                         model_ids=sorted(runtime_specs.keys()),
                     )
             except Exception as error:

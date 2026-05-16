@@ -19,7 +19,7 @@ from apps.gmo_bot.app.usecases.usecase_utils import now_iso, strip_none, summari
 from apps.gmo_bot.domain.model.trade_state import assert_trade_state_transition
 from apps.gmo_bot.domain.model.types import BotConfig, CloseReason, TradeRecord, TradeState
 from apps.gmo_bot.domain.utils.coercion import to_float as _to_float, to_str as _to_str
-from apps.gmo_bot.domain.utils.numeric import POSITION_SIZE_EPSILON
+from apps.gmo_bot.domain.utils.numeric import POSITION_SIZE_EPSILON, round_jpy, sum_jpy, to_decimal
 from shared.utils.math import round_to
 
 ORDER_CONFIRM_TIMEOUT_MS = 20_000
@@ -167,9 +167,12 @@ def filter_tracked_exit_executions(
 
 def aggregate_execution_records(executions: list[dict[str, Any]]) -> dict[str, Any]:
     total_size = 0.0
-    total_quote = 0.0
-    total_fee = 0.0
-    total_realized_pnl = 0.0
+    # §4.1: accumulate quote, fee, realized_pnl in Decimal to avoid float
+    # drift across many partial executions. JPY-denominated fields are
+    # rounded to whole yen at the storage boundary.
+    quote_terms: list = []
+    fee_terms: list = []
+    pnl_terms: list = []
     has_realized_pnl = False
     lots_by_position_id: dict[int, float] = defaultdict(float)
     execution_ids: list[str] = []
@@ -180,10 +183,10 @@ def aggregate_execution_records(executions: list[dict[str, Any]]) -> dict[str, A
         fee = _to_float(execution.get("fee")) or 0.0
         loss_gain = _to_float(execution.get("lossGain"))
         total_size += size
-        total_quote += price * size
-        total_fee += fee
+        quote_terms.append(to_decimal(price) * to_decimal(size))
+        fee_terms.append(fee)
         if loss_gain is not None:
-            total_realized_pnl += loss_gain
+            pnl_terms.append(loss_gain)
             has_realized_pnl = True
         position_id = execution.get("positionId")
         if isinstance(position_id, int):
@@ -195,14 +198,18 @@ def aggregate_execution_records(executions: list[dict[str, Any]]) -> dict[str, A
     if total_size <= POSITION_SIZE_EPSILON:
         raise RuntimeError("GMO executions resolved but filled size is 0")
 
-    # Round before this dict is persisted as the exit_result snapshot to avoid
-    # float drift like 0.029999999... leaking into Firestore documents.
+    total_quote_decimal = sum(quote_terms, to_decimal(0))
+    total_fee_decimal = sum_jpy(fee_terms)
+    total_pnl_decimal = sum_jpy(pnl_terms)
+
+    # Round before persisting the exit_result snapshot. Prices and sizes keep
+    # higher precision; JPY totals snap to whole yen per GMO settlement.
     result = {
         "status": "CONFIRMED",
-        "avg_fill_price": round_to(total_quote / total_size, 6),
+        "avg_fill_price": round_to(float(total_quote_decimal / to_decimal(total_size)), 6),
         "filled_base_sol": round_to(total_size, 9),
-        "filled_quote_jpy": round_to(total_quote, 6),
-        "fee_jpy": round_to(total_fee, 6),
+        "filled_quote_jpy": round_jpy(total_quote_decimal),
+        "fee_jpy": round_jpy(total_fee_decimal),
         "execution_ids": execution_ids,
         "lots": [
             {"position_id": position_id, "size_sol": round_to(size, 9)}
@@ -211,7 +218,7 @@ def aggregate_execution_records(executions: list[dict[str, Any]]) -> dict[str, A
         ],
     }
     if has_realized_pnl:
-        result["realized_pnl_jpy"] = round_to(total_realized_pnl, 6)
+        result["realized_pnl_jpy"] = round_jpy(total_pnl_decimal)
     return result
 
 
@@ -538,7 +545,8 @@ def apply_confirmed_exit_result(
     trade["execution"]["processed_exit_execution_ids"] = sorted(processed_execution_ids)
     existing_exit_fee_jpy = _to_float(trade["execution"].get("exit_fee_jpy")) or 0.0
     exit_fee_jpy = _to_float(execution_result.get("fee_jpy")) or 0.0
-    trade["execution"]["exit_fee_jpy"] = round_to(existing_exit_fee_jpy + exit_fee_jpy, 6)
+    # §4.1: JPY accumulation in Decimal then snap to whole yen.
+    trade["execution"]["exit_fee_jpy"] = round_jpy(sum_jpy([existing_exit_fee_jpy, exit_fee_jpy]))
 
     open_quantity_sol = _to_float(trade["position"].get("quantity_sol"))
     open_quote_amount_jpy = _to_float(trade["position"].get("quote_amount_jpy"))
@@ -562,7 +570,7 @@ def apply_confirmed_exit_result(
         realized_increment_jpy = (
             closed_entry_quote_jpy - filled_quote_jpy if direction == "SHORT" else filled_quote_jpy - closed_entry_quote_jpy
         )
-    trade["execution"]["exit_leg_realized_pnl_jpy"] = round_to(realized_increment_jpy, 6)
+    trade["execution"]["exit_leg_realized_pnl_jpy"] = round_jpy(realized_increment_jpy)
     existing_total_realized_pnl_jpy = _to_float(trade["execution"].get("total_realized_pnl_jpy"))
     existing_legacy_realized_pnl_jpy = _to_float(trade["execution"].get("realized_pnl_jpy"))
     existing_realized_pnl_jpy = (
@@ -572,7 +580,9 @@ def apply_confirmed_exit_result(
         if existing_legacy_realized_pnl_jpy is not None
         else 0.0
     )
-    total_realized_pnl_jpy = round_to(existing_realized_pnl_jpy + realized_increment_jpy, 6)
+    # §4.1: cumulative realized pnl across partial closes uses Decimal so
+    # successive sums stay whole-yen accurate.
+    total_realized_pnl_jpy = round_jpy(sum_jpy([existing_realized_pnl_jpy, realized_increment_jpy]))
     trade["execution"]["total_realized_pnl_jpy"] = total_realized_pnl_jpy
     trade["execution"]["realized_pnl_jpy"] = total_realized_pnl_jpy
 
@@ -678,6 +688,133 @@ def apply_confirmed_exit_result(
     )
 
 
+def _run_sequential_close_loop(
+    *,
+    execution: ExecutionPort,
+    logger: LoggerPort,
+    persistence: PersistencePort,
+    trade: TradeRecord,
+    config: BotConfig,
+    input_data: ClosePositionInput,
+    close_side: str,
+    initial_lots: list[dict[str, Any]],
+) -> ClosePositionResult:
+    """Drive the partial-close retry loop.
+
+    §9.1: extracted from ``close_position`` so the orchestration body (cancel
+    protective orders → reconcile → close → handle failure) reads in a single
+    screen. The loop terminates when:
+
+    - ``apply_confirmed_exit_result`` returns a non-PARTIAL status (success),
+    - ``MAX_SEQUENTIAL_CLOSE_ATTEMPTS`` is reached (cap), or
+    - remaining size fails to shrink between attempts (stall).
+    """
+
+    remaining_lots = list(initial_lots)
+    attempts = 0
+    previous_total_size: float | None = None
+    while remaining_lots:
+        if attempts >= MAX_SEQUENTIAL_CLOSE_ATTEMPTS:
+            summary = (
+                f"FAILED: exceeded {MAX_SEQUENTIAL_CLOSE_ATTEMPTS} sequential close attempts "
+                "while remaining lots persist"
+            )
+            logger.error(
+                "gmo close_position aborted due to attempt cap",
+                {
+                    "trade_id": trade["trade_id"],
+                    "attempts": attempts,
+                    "remaining_lot_count": len(remaining_lots),
+                },
+            )
+            trade["execution"]["exit_submission_state"] = "FAILED"
+            trade["execution"]["exit_error"] = summary
+            persistence.update_trade(
+                trade["trade_id"],
+                strip_none({"execution": trade["execution"], "updated_at": now_iso()}),
+            )
+            return ClosePositionResult(status="FAILED", trade_id=trade["trade_id"], summary=summary)
+
+        current_lot = remaining_lots[0]
+        submission = execution.submit_close_order(
+            SubmitCloseOrderRequest(
+                side=close_side,
+                lots=[current_lot],
+                slippage_bps=int(config["execution"]["slippage_bps"]),
+                reference_price=input_data.close_price,
+            )
+        )
+        trade["execution"]["exit_order_id"] = submission.order_id
+        trade["execution"]["exit_submission_state"] = "SUBMITTED"
+        if submission.order:
+            trade["execution"]["exit_order"] = submission.order
+        persistence.update_trade(
+            trade["trade_id"],
+            strip_none({"execution": trade["execution"], "updated_at": now_iso()}),
+        )
+
+        confirmation = execution.confirm_order(submission.order_id, ORDER_CONFIRM_TIMEOUT_MS)
+        if not confirmation.confirmed or confirmation.result is None:
+            trade["execution"]["exit_submission_state"] = "FAILED"
+            trade["execution"]["exit_error"] = confirmation.error or "exit order not confirmed"
+            persistence.update_trade(
+                trade["trade_id"],
+                strip_none({"execution": trade["execution"], "updated_at": now_iso()}),
+            )
+            return ClosePositionResult(
+                status="FAILED",
+                trade_id=trade["trade_id"],
+                summary=f"FAILED: {summarize_error_for_log(str(trade['execution']['exit_error']))}",
+            )
+
+        close_result = apply_confirmed_exit_result(
+            logger=logger,
+            persistence=persistence,
+            trade=trade,
+            execution_result=confirmation.result,
+            order_id=submission.order_id,
+            close_reason=input_data.close_reason,
+            close_price=input_data.close_price,
+        )
+        if close_result.status != "PARTIALLY_CLOSED":
+            return close_result
+        attempts += 1
+        remaining_lots = list(trade.get("position", {}).get("lots") or [])
+        current_total_size = sum(
+            _to_float(lot.get("size_sol")) or 0.0 for lot in remaining_lots
+        )
+        # Stall detection: if remaining size didn't shrink, bail out rather than
+        # spin against a stuck order book.
+        if (
+            previous_total_size is not None
+            and previous_total_size - current_total_size <= POSITION_SIZE_EPSILON
+        ):
+            summary = "FAILED: partial close made no progress between attempts"
+            logger.error(
+                "gmo close_position aborted due to no progress",
+                {
+                    "trade_id": trade["trade_id"],
+                    "attempts": attempts,
+                    "previous_total_size_sol": previous_total_size,
+                    "current_total_size_sol": current_total_size,
+                },
+            )
+            trade["execution"]["exit_submission_state"] = "FAILED"
+            trade["execution"]["exit_error"] = summary
+            persistence.update_trade(
+                trade["trade_id"],
+                strip_none({"execution": trade["execution"], "updated_at": now_iso()}),
+            )
+            return ClosePositionResult(status="FAILED", trade_id=trade["trade_id"], summary=summary)
+        previous_total_size = current_total_size
+
+    return ClosePositionResult(
+        status="FAILED",
+        trade_id=trade["trade_id"],
+        summary="FAILED: no position lots after sequential close attempts",
+    )
+
+
 def close_position(dependencies: ClosePositionDependencies, input_data: ClosePositionInput) -> ClosePositionResult:
     execution = dependencies.execution
     logger = dependencies.logger
@@ -742,108 +879,15 @@ def close_position(dependencies: ClosePositionDependencies, input_data: ClosePos
                     },
                 )
         trade["execution"]["exit_reference_price"] = round_to(input_data.close_price, 6)
-        remaining_lots = list(lots)
-        attempts = 0
-        previous_total_size: float | None = None
-        while remaining_lots:
-            if attempts >= MAX_SEQUENTIAL_CLOSE_ATTEMPTS:
-                summary = (
-                    f"FAILED: exceeded {MAX_SEQUENTIAL_CLOSE_ATTEMPTS} sequential close attempts "
-                    "while remaining lots persist"
-                )
-                logger.error(
-                    "gmo close_position aborted due to attempt cap",
-                    {
-                        "trade_id": trade["trade_id"],
-                        "attempts": attempts,
-                        "remaining_lot_count": len(remaining_lots),
-                    },
-                )
-                trade["execution"]["exit_submission_state"] = "FAILED"
-                trade["execution"]["exit_error"] = summary
-                persistence.update_trade(
-                    trade["trade_id"],
-                    strip_none({"execution": trade["execution"], "updated_at": now_iso()}),
-                )
-                return ClosePositionResult(status="FAILED", trade_id=trade["trade_id"], summary=summary)
-
-            current_lot = remaining_lots[0]
-            submission = execution.submit_close_order(
-                SubmitCloseOrderRequest(
-                    side=close_side,
-                    lots=[current_lot],
-                    slippage_bps=int(config["execution"]["slippage_bps"]),
-                    reference_price=input_data.close_price,
-                )
-            )
-            trade["execution"]["exit_order_id"] = submission.order_id
-            trade["execution"]["exit_submission_state"] = "SUBMITTED"
-            if submission.order:
-                trade["execution"]["exit_order"] = submission.order
-            persistence.update_trade(
-                trade["trade_id"],
-                strip_none({"execution": trade["execution"], "updated_at": now_iso()}),
-            )
-
-            confirmation = execution.confirm_order(submission.order_id, ORDER_CONFIRM_TIMEOUT_MS)
-            if not confirmation.confirmed or confirmation.result is None:
-                trade["execution"]["exit_submission_state"] = "FAILED"
-                trade["execution"]["exit_error"] = confirmation.error or "exit order not confirmed"
-                persistence.update_trade(
-                    trade["trade_id"],
-                    strip_none({"execution": trade["execution"], "updated_at": now_iso()}),
-                )
-                return ClosePositionResult(
-                    status="FAILED",
-                    trade_id=trade["trade_id"],
-                    summary=f"FAILED: {summarize_error_for_log(str(trade['execution']['exit_error']))}",
-                )
-
-            close_result = apply_confirmed_exit_result(
-                logger=logger,
-                persistence=persistence,
-                trade=trade,
-                execution_result=confirmation.result,
-                order_id=submission.order_id,
-                close_reason=input_data.close_reason,
-                close_price=input_data.close_price,
-            )
-            if close_result.status != "PARTIALLY_CLOSED":
-                return close_result
-            attempts += 1
-            remaining_lots = list(trade.get("position", {}).get("lots") or [])
-            current_total_size = sum(
-                _to_float(lot.get("size_sol")) or 0.0 for lot in remaining_lots
-            )
-            # Detect stall: if remaining size did not shrink meaningfully this attempt,
-            # we'd otherwise spin against a stuck order book — bail out.
-            if (
-                previous_total_size is not None
-                and previous_total_size - current_total_size <= POSITION_SIZE_EPSILON
-            ):
-                summary = "FAILED: partial close made no progress between attempts"
-                logger.error(
-                    "gmo close_position aborted due to no progress",
-                    {
-                        "trade_id": trade["trade_id"],
-                        "attempts": attempts,
-                        "previous_total_size_sol": previous_total_size,
-                        "current_total_size_sol": current_total_size,
-                    },
-                )
-                trade["execution"]["exit_submission_state"] = "FAILED"
-                trade["execution"]["exit_error"] = summary
-                persistence.update_trade(
-                    trade["trade_id"],
-                    strip_none({"execution": trade["execution"], "updated_at": now_iso()}),
-                )
-                return ClosePositionResult(status="FAILED", trade_id=trade["trade_id"], summary=summary)
-            previous_total_size = current_total_size
-
-        return ClosePositionResult(
-            status="FAILED",
-            trade_id=trade["trade_id"],
-            summary="FAILED: no position lots after sequential close attempts",
+        return _run_sequential_close_loop(
+            execution=execution,
+            logger=logger,
+            persistence=persistence,
+            trade=trade,
+            config=config,
+            input_data=input_data,
+            close_side=close_side,
+            initial_lots=lots,
         )
     except Exception as error:
         message = to_error_message(error)

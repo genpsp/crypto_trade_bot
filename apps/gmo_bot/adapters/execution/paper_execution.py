@@ -20,12 +20,16 @@ PAPER_INITIAL_MARGIN_JPY = 1_000_000.0
 DEFAULT_SYMBOL_RULE = SymbolRule(symbol="SOL_JPY", tick_size=1.0, size_step=0.01, min_order_size=0.01)
 # Bound the in-memory order cache so long-running PAPER processes don't leak.
 SUBMITTED_RESULTS_MAX_ENTRIES = 1024
+# 12.5: fallback mark price when no order has been simulated yet. Configurable
+# to keep paper-mode tests deterministic and avoid the stale ``20_000.0`` magic.
+DEFAULT_PAPER_MARK_PRICE_JPY = 20_000.0
 
 
 class PaperExecutionAdapter(ExecutionPort):
-    def __init__(self, logger: LoggerPort):
+    def __init__(self, logger: LoggerPort, *, default_mark_price_jpy: float = DEFAULT_PAPER_MARK_PRICE_JPY):
         self.logger = logger
         self._latest_price = 0.0
+        self._default_mark_price = default_mark_price_jpy
         self._submitted_results: "OrderedDict[int, dict]" = OrderedDict()
 
     def _store_submitted_result(self, order_id: int, result: dict) -> None:
@@ -123,7 +127,7 @@ class PaperExecutionAdapter(ExecutionPort):
     def get_mark_price(self, pair: str) -> float:
         if pair != "SOL/JPY":
             raise ValueError(f"Unsupported pair for paper price: {pair}")
-        return self._latest_price if self._latest_price > 0 else 20_000.0
+        return self._latest_price if self._latest_price > 0 else self._default_mark_price
 
     def get_available_margin_jpy(self) -> float:
         return PAPER_INITIAL_MARGIN_JPY

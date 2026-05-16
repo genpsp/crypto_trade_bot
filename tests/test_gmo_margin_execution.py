@@ -3,7 +3,10 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock, patch
 
-from apps.gmo_bot.adapters.execution.gmo_margin_execution import GmoMarginExecutionAdapter
+from apps.gmo_bot.adapters.execution.gmo_margin_execution import (
+    GmoMarginExecutionAdapter,
+    MARK_PRICE_RETRY_JITTER_SECONDS,
+)
 from apps.gmo_bot.app.ports.execution_port import SubmitProtectiveExitOrdersRequest, SymbolRule
 
 
@@ -123,7 +126,7 @@ class GmoMarginExecutionAdapterTest(unittest.TestCase):
                     type(
                         "Request",
                         (),
-                        {"side": "SELL", "lots": [{"position_id": 10, "size_sol": 0.2}, {"position_id": 11, "size_sol": 0.3}]},
+                        {"side": "SELL", "pair": "SOL/JPY", "lots": [{"position_id": 10, "size_sol": 0.2}, {"position_id": 11, "size_sol": 0.3}]},
                     )()
                 )
 
@@ -319,7 +322,12 @@ class GmoMarginExecutionAdapterTest(unittest.TestCase):
         self.assertEqual(15055.0, first)
         self.assertEqual(15055.0, second)
         self.assertEqual(2, client.get_ticker.call_count)
-        sleep_mock.assert_called_once_with(0.2)
+        # §1.17: rate-limit sleep is base delay (0.2s) + uniform jitter in
+        # [0, MARK_PRICE_RETRY_JITTER_SECONDS) to avoid thundering herd.
+        self.assertEqual(1, sleep_mock.call_count)
+        (actual_delay,), _kwargs = sleep_mock.call_args
+        self.assertGreaterEqual(actual_delay, 0.2)
+        self.assertLess(actual_delay, 0.2 + MARK_PRICE_RETRY_JITTER_SECONDS + 1e-9)
 
 
 if __name__ == "__main__":

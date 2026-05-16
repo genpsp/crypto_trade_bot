@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import threading
 import time
 from dataclasses import dataclass
@@ -7,6 +8,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Callable
 
 from apps.gmo_bot.app.ports.logger_port import LoggerPort
+
+# §3.3: small random delay added after the minute boundary so that, when
+# multiple model cycles share the scheduler, they don't all hit GMO's APIs at
+# exactly the same instant.
+_CRON_JITTER_MAX_SECONDS = 3.0
 
 
 @dataclass
@@ -28,7 +34,7 @@ def create_cron_cycle(task: Callable[[], None], logger: LoggerPort) -> CronContr
 
     def _runner() -> None:
         while not stop_event.is_set():
-            wait_seconds = _seconds_until_next_minute()
+            wait_seconds = _seconds_until_next_minute() + random.uniform(0, _CRON_JITTER_MAX_SECONDS)
             if stop_event.wait(wait_seconds):
                 break
             try:

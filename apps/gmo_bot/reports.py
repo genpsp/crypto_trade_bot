@@ -96,6 +96,9 @@ def main(argv: list[str] | None = None) -> int:
         "report generated",
         {"output": str(output_path), "size_bytes": output_path.stat().st_size, "headline": result.headline},
     )
+    # CLI surface: stdout is the contract for shell consumers
+    # (e.g. `python -m apps.gmo_bot.reports | grep ...`); logger output goes
+    # via structured JSON to Cloud Logging and would obscure the headline.
     print(result.headline)
     print(f"saved: {output_path}")
 
