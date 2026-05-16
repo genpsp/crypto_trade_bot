@@ -2,8 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from apps.dex_bot.infra.config.schema import _parse_exit, _parse_risk, _parse_strategy, _require
 from apps.gmo_bot.domain.model.types import BotConfig
+from shared.config.schema_primitives import (
+    parse_exit as _parse_exit,
+    parse_risk as _parse_risk,
+    parse_strategy as _parse_strategy,
+    require as _require,
+)
+
+# Soft bounds for additional sanity validation. These do not encode broker
+# limits; they catch obvious config typos before they reach a live cycle.
+MAX_TAKE_PROFIT_R_MULTIPLE = 10.0
+MAX_LOSS_PER_TRADE_PCT_UPPER_BOUND = 50.0
+MIN_LOSS_PER_TRADE_PCT_LOWER_BOUND = 0.01
+GMO_SOL_JPY_MIN_NOTIONAL_JPY_HINT = 100.0
 
 ALLOWED_TOP_LEVEL_KEYS = {
     "enabled",
@@ -69,6 +81,10 @@ def parse_config(data: Any) -> BotConfig:
         isinstance(execution.get("min_notional_jpy"), (int, float)) and execution["min_notional_jpy"] > 0,
         "execution.min_notional_jpy must be positive",
     )
+    _require(
+        float(execution["min_notional_jpy"]) >= GMO_SOL_JPY_MIN_NOTIONAL_JPY_HINT,
+        f"execution.min_notional_jpy must be >= {GMO_SOL_JPY_MIN_NOTIONAL_JPY_HINT} JPY (GMO SOL/JPY minimum)",
+    )
     leverage_multiplier = execution.get("leverage_multiplier", 1.0)
     margin_usage_ratio = execution.get("margin_usage_ratio", 0.99)
     _require(
@@ -81,6 +97,19 @@ def parse_config(data: Any) -> BotConfig:
     )
 
     exit_config = _parse_exit(data.get("exit"), "exit")
+    # 5.4: additional sanity bounds on key exit/risk numbers
+    take_profit_r = exit_config.get("take_profit_r_multiple")
+    if isinstance(take_profit_r, (int, float)):
+        _require(
+            0 < float(take_profit_r) <= MAX_TAKE_PROFIT_R_MULTIPLE,
+            f"exit.take_profit_r_multiple must be in (0, {MAX_TAKE_PROFIT_R_MULTIPLE}]",
+        )
+    max_loss_pct = risk.get("max_loss_per_trade_pct") if isinstance(risk, dict) else None
+    if isinstance(max_loss_pct, (int, float)):
+        _require(
+            MIN_LOSS_PER_TRADE_PCT_LOWER_BOUND <= float(max_loss_pct) <= MAX_LOSS_PER_TRADE_PCT_UPPER_BOUND,
+            f"risk.max_loss_per_trade_pct must be in [{MIN_LOSS_PER_TRADE_PCT_LOWER_BOUND}, {MAX_LOSS_PER_TRADE_PCT_UPPER_BOUND}]",
+        )
 
     meta = data.get("meta")
     _require(isinstance(meta, dict), "meta must be object")

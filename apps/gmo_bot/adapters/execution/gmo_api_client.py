@@ -10,6 +10,8 @@ from typing import Any
 
 import requests
 
+from apps.gmo_bot.domain.utils.numeric import decimal_str as _decimal_str
+
 PUBLIC_API_BASE_URL = "https://api.coin.z.com/public"
 PRIVATE_API_BASE_URL = "https://api.coin.z.com/private"
 DEFAULT_HTTP_TIMEOUT_SECONDS = 10
@@ -348,11 +350,6 @@ class GmoApiClient:
         if status != 0:
             raise RuntimeError(_build_gmo_error_message(payload_json))
         return payload_json
-
-
-def _decimal_str(value: float) -> str:
-    text = f"{value:.10f}".rstrip("0").rstrip(".")
-    return text if text else "0"
 
 
 def _build_gmo_error_message(payload: dict[str, Any]) -> str:

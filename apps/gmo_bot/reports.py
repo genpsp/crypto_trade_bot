@@ -12,7 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime
 from pathlib import Path
 import sys
 
@@ -21,12 +21,11 @@ from google.cloud.firestore import Client as FirestoreClient
 
 from apps.gmo_bot.adapters.persistence.firestore_repo import FirestoreRepository
 from apps.gmo_bot.app.reporting.generate_report import GenerateReportRequest, generate_report
+from apps.gmo_bot.domain.utils.time import JST
 from apps.gmo_bot.infra.alerting import SlackAlertConfig, SlackNotifier
 from apps.gmo_bot.infra.config.env import load_env
 from apps.gmo_bot.infra.config.firestore_config_repo import FirestoreConfigRepository
 from apps.gmo_bot.infra.logging.logger import create_logger
-
-JST = timezone(timedelta(hours=9))
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -114,9 +113,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"{result.headline}\n"
                 f"file: {output_path.resolve()}"
             )
-            # `_send` is intentionally used: SlackNotifier exposes only domain-specific
-            # notify_* helpers, and we want a plain headline post here.
-            notifier._send(message=message, dedupe_key=None)  # noqa: SLF001
+            notifier.send_plain_text(message)
 
     return 0
 

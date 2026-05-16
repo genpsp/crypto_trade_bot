@@ -9,10 +9,12 @@ from google.api_core.exceptions import AlreadyExists
 from google.cloud.firestore import Client
 from google.cloud.firestore_v1 import Increment, transactional
 from google.cloud.firestore_v1.base_query import FieldFilter
+from google.cloud.firestore_v1.query import Query
 
 from apps.gmo_bot.app.ports.logger_port import LoggerPort
 from apps.gmo_bot.app.ports.persistence_port import PersistencePort
 from apps.gmo_bot.domain.model.types import BotConfig, DailyBalanceRecord, Pair, RunRecord, TradeRecord
+from apps.gmo_bot.domain.utils.time import JST, format_iso_utc
 from apps.gmo_bot.infra.config.firestore_config_repo import FirestoreConfigRepository, MODELS_COLLECTION_ID
 
 
@@ -45,19 +47,31 @@ OPEN_TRADE_STATE_DOC_ID = "open_trade"
 RECENT_CLOSED_STATE_DOC_ID = "recent_closed_trades"
 RECENT_CLOSED_TRADES_MAX_ITEMS = 32
 TRADE_SNAPSHOT_CACHE_MAX_ITEMS = 256
+# 6.3: cap fallback open-trade scans to a recent window so cost is bounded
+# regardless of how many historical day documents exist.
+OPEN_TRADE_SCAN_LOOKBACK_DAYS = 30
+RECENT_CLOSED_SCAN_LOOKBACK_DAYS = 60
 DAILY_BALANCE_COLLECTION_NAME = "daily_balance"
-JST = timezone(timedelta(hours=9))
+# 6.1: throttle model metadata heartbeat writes (previously written on every
+# create_trade/update_trade/save_daily_balance call).
+MODEL_METADATA_TOUCH_INTERVAL_SECONDS = 60 * 60
 
 
-def _extract_run_date(run: RunRecord) -> str:
+def _extract_run_date(run: RunRecord) -> tuple[str, bool]:
+    """Return ``(run_date_jst, used_today_fallback)``.
+
+    6.5: callers should warn when ``used_today_fallback`` is true so silently
+    bucketing a run into "today's" day doc is visible in logs.
+    """
+
     value = run.get("bar_close_time_iso") or run.get("executed_at_iso")
     if isinstance(value, str):
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            return parsed.astimezone(JST).date().isoformat()
+            return parsed.astimezone(JST).date().isoformat(), False
         except ValueError:
             pass
-    return datetime.now(tz=JST).date().isoformat()
+    return datetime.now(tz=JST).date().isoformat(), True
 
 
 def _parse_iso_date(value: str, *, tz: timezone = JST) -> str | None:
@@ -171,21 +185,29 @@ class FirestoreRepository(PersistencePort):
         self._recent_closed_cache_initialized = False
         self._recent_closed_backfill_attempted = False
         self._recent_closed_backfill_complete = False
+        self._last_model_metadata_touch_at: datetime | None = None
 
     def _model_doc(self):
         return self.firestore.collection(MODELS_COLLECTION_ID).document(self.model_id)
 
     def _touch_model_metadata(self) -> None:
+        now = datetime.now(tz=UTC)
+        # Throttle heartbeat writes; previously every trade write produced a
+        # corresponding model metadata write (millions of writes per month).
+        last_touch = self._last_model_metadata_touch_at
+        if last_touch is not None and (now - last_touch).total_seconds() < MODEL_METADATA_TOUCH_INTERVAL_SECONDS:
+            return
         self._model_doc().set(
             sanitize_firestore_value(
                 {
                     "model_id": self.model_id,
                     "mode": self.mode,
-                    "updated_at_iso": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
+                    "updated_at_iso": format_iso_utc(now),
                 }
             ),
             merge=True,
         )
+        self._last_model_metadata_touch_at = now
 
     def _trades_collection(self):
         return self._model_doc().collection(self.trades_collection_name)
@@ -201,7 +223,7 @@ class FirestoreRepository(PersistencePort):
             sanitize_firestore_value(
                 {
                     "trade_date": trade_date,
-                    "updated_at_iso": updated_at_iso or datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
+                    "updated_at_iso": updated_at_iso or format_iso_utc(datetime.now(tz=UTC)),
                 }
             ),
             merge=True,
@@ -297,7 +319,7 @@ class FirestoreRepository(PersistencePort):
             "trade_id": trade_id,
             "trade_date": trade_date,
             "state": OPEN_TRADE_STATE,
-            "updated_at_iso": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
+            "updated_at_iso": format_iso_utc(datetime.now(tz=UTC)),
         }
         if isinstance(pair, str):
             payload["pair"] = pair
@@ -306,7 +328,7 @@ class FirestoreRepository(PersistencePort):
     def _set_no_open_trade_state(self, pair: str | None = None) -> None:
         payload: dict[str, Any] = {
             "state": NO_OPEN_TRADE_STATE,
-            "updated_at_iso": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
+            "updated_at_iso": format_iso_utc(datetime.now(tz=UTC)),
         }
         if isinstance(pair, str):
             payload["pair"] = pair
@@ -383,8 +405,13 @@ class FirestoreRepository(PersistencePort):
     def _scan_open_trade(self, pair: Pair) -> TradeRecord | None:
         candidates_by_trade_id: dict[str, TradeRecord] = {}
 
+        # 6.3: bound the scan to the recent N days. The state document is the
+        # primary path; this scan only runs when state is missing/corrupted, so
+        # an open trade older than the lookback window is exceptional and
+        # better escalated by alerting than auto-discovered here.
         day_snapshots = self._trades_collection().stream()
-        trade_day_ids = sorted((doc.id for doc in day_snapshots if _is_day_doc_id(doc.id)), reverse=True)
+        all_day_ids = sorted((doc.id for doc in day_snapshots if _is_day_doc_id(doc.id)), reverse=True)
+        trade_day_ids = all_day_ids[:OPEN_TRADE_SCAN_LOOKBACK_DAYS]
         for trade_date in trade_day_ids:
             snapshot = (
                 self._trade_items_collection_for_date(trade_date)
@@ -455,7 +482,7 @@ class FirestoreRepository(PersistencePort):
                 {
                     "items": trimmed,
                     "backfill_complete": True,
-                    "updated_at_iso": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
+                    "updated_at_iso": format_iso_utc(datetime.now(tz=UTC)),
                 }
             ),
             merge=True,
@@ -468,7 +495,7 @@ class FirestoreRepository(PersistencePort):
 
         doc_ref = self._recent_closed_state_doc()
         new_trade = deepcopy(trade)
-        updated_at_iso = datetime.now(tz=UTC).isoformat().replace("+00:00", "Z")
+        updated_at_iso = format_iso_utc(datetime.now(tz=UTC))
 
         @transactional
         def _commit(tx: Any) -> list[TradeRecord]:
@@ -513,7 +540,9 @@ class FirestoreRepository(PersistencePort):
 
         trades_by_id: dict[str, TradeRecord] = {}
         day_snapshots = self._trades_collection().stream()
-        trade_day_ids = sorted((doc.id for doc in day_snapshots if _is_day_doc_id(doc.id)), reverse=True)
+        all_day_ids = sorted((doc.id for doc in day_snapshots if _is_day_doc_id(doc.id)), reverse=True)
+        # 6.3: cap the historical scan window so cost is bounded.
+        trade_day_ids = all_day_ids[:RECENT_CLOSED_SCAN_LOOKBACK_DAYS]
 
         for trade_date in trade_day_ids:
             snapshot = (
@@ -538,8 +567,12 @@ class FirestoreRepository(PersistencePort):
                 self._cache_trade_day(trade_id, trade_date)
                 self._cache_trade_snapshot(trade_id, trade, merge=False)
 
+            # 6.4: Heuristic short-circuit to reduce read cost.
+            # The 3x multiplier (vs ``limit`` exactly) gives some slack for
+            # subsequent pair/state filters on the merged dict; we'd rather
+            # over-fetch a little than miss recent closed trades for a model
+            # that has had several pairs/states active on the same day.
             if len(trades_by_id) >= limit * 3:
-                # Heuristic short-circuit to reduce read cost.
                 break
 
         trades = [trade for trade in trades_by_id.values() if isinstance(trade, dict)]
@@ -722,7 +755,7 @@ class FirestoreRepository(PersistencePort):
         payload.setdefault("model_id", self.model_id)
         payload.setdefault(
             "snapshot_at_iso",
-            datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
+            format_iso_utc(datetime.now(tz=UTC)),
         )
         self._daily_balance_collection().document(snapshot_date_jst).set(
             sanitize_firestore_value(payload),
@@ -733,8 +766,15 @@ class FirestoreRepository(PersistencePort):
         if days <= 0:
             return []
 
+        # 6.2: use order_by + limit so cost is O(days) instead of O(all daily docs).
+        # Day doc IDs are YYYY-MM-DD which sort lexicographically.
+        query = (
+            self._daily_balance_collection()
+            .order_by("snapshot_date_jst", direction=Query.DESCENDING)
+            .limit(days)
+        )
         records: list[DailyBalanceRecord] = []
-        for snapshot in self._daily_balance_collection().stream():
+        for snapshot in query.stream():
             payload = snapshot.to_dict()
             if not isinstance(payload, dict):
                 continue
@@ -747,7 +787,7 @@ class FirestoreRepository(PersistencePort):
             records.append(deepcopy(payload))
 
         records.sort(key=lambda record: str(record.get("snapshot_date_jst") or ""))
-        return deepcopy(records[-days:])
+        return records
 
     def list_trades_in_range(self, from_date_jst: str, to_date_jst: str) -> list[TradeRecord]:
         if not _is_day_doc_id(from_date_jst) or not _is_day_doc_id(to_date_jst):
@@ -820,7 +860,18 @@ class FirestoreRepository(PersistencePort):
 
     def save_run(self, run: RunRecord) -> None:
         runs_collection = self._runs_collection()
-        run_date = _extract_run_date(run)
+        run_date, used_today_fallback = _extract_run_date(run)
+        if used_today_fallback and self.logger is not None:
+            self.logger.warn(
+                "save_run: bar_close_time_iso and executed_at_iso missing/unparseable; "
+                "bucketing into today's JST day doc",
+                {
+                    "model_id": self.model_id,
+                    "run_id": run.get("run_id"),
+                    "result": run.get("result"),
+                    "run_date_fallback": run_date,
+                },
+            )
         day_ref = runs_collection.document(run_date)
         day_ref.set(
             sanitize_firestore_value(

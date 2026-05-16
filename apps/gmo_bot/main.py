@@ -30,9 +30,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Logger created up-front so the except handler can reuse the same instance
+    # instead of constructing a second logger on the error path.
+    _startup_logger = create_logger("gmo-bot")
     try:
         raise SystemExit(main())
     except Exception as error:
-        logger = create_logger("gmo-bot")
-        logger.error("bot startup failed", {"error": str(error)})
+        _startup_logger.error("bot startup failed", {"error": str(error)})
         raise SystemExit(1) from error

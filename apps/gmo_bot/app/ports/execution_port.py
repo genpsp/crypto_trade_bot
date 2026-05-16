@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from apps.gmo_bot.domain.model.types import PositionLotSnapshot, TradeOrderSnapshot, TradeResultSnapshot
+from apps.gmo_bot.domain.model.types import Pair, PositionLotSnapshot, TradeOrderSnapshot, TradeResultSnapshot
 
 OrderSide = Literal["BUY", "SELL"]
 
@@ -14,6 +14,9 @@ class SubmitEntryOrderRequest:
     size_sol: float
     slippage_bps: int
     reference_price: float
+    # ``pair`` lets the adapter look up the GMO symbol via PAIR_SYMBOL_MAP[pair]
+    # instead of hard-coding SOL/JPY. Defaults preserve current single-pair behavior.
+    pair: Pair = "SOL/JPY"
 
 
 @dataclass
@@ -22,6 +25,7 @@ class SubmitCloseOrderRequest:
     lots: list[PositionLotSnapshot]
     slippage_bps: int
     reference_price: float
+    pair: Pair = "SOL/JPY"
 
 
 @dataclass
@@ -30,6 +34,7 @@ class SubmitProtectiveExitOrdersRequest:
     lots: list[PositionLotSnapshot]
     take_profit_price: float
     stop_price: float
+    pair: Pair = "SOL/JPY"
 
 
 @dataclass

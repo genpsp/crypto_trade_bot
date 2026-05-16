@@ -38,33 +38,22 @@ from apps.gmo_bot.app.usecases.protective_exit_orders import (
     has_active_protective_exit_orders,
     has_active_stop_loss_order,
 )
+from apps.gmo_bot.app.usecases.skip_markers import (
+    EXECUTION_ERROR_SKIP_MARKERS as _EXECUTION_ERROR_SKIP_MARKERS,
+    MARKET_DATA_MAINTENANCE_MARKERS as _MARKET_DATA_MAINTENANCE_MARKERS,
+    MARK_PRICE_RATE_LIMIT_MARKERS as _MARK_PRICE_RATE_LIMIT_MARKERS,
+)
 from apps.gmo_bot.app.usecases.usecase_utils import strip_none, to_error_message
 from apps.gmo_bot.domain.model.types import BotConfig, Direction, ModelDirection, RunRecord, TradeRecord
 from apps.gmo_bot.domain.strategy.registry import evaluate_strategy_for_model
 from shared.utils.math import round_to
-from apps.gmo_bot.domain.utils.time import build_run_id, get_bar_duration_seconds, get_jst_day_range, get_last_closed_bar_close
+from apps.gmo_bot.domain.utils.time import build_run_id, format_iso_utc, get_bar_duration_seconds, get_jst_day_range, get_last_closed_bar_close
 
 RUN_LOCK_TTL_SECONDS = 600
 MIN_REQUIRED_RUN_LOCK_TTL_SECONDS = 480
 ENTRY_IDEM_TTL_SECONDS = 12 * 60 * 60
 DEFAULT_OHLCV_LIMIT = 300
 OHLCV_LIMIT_FOR_15M_UPPER_TREND = 600
-_EXECUTION_ERROR_SKIP_MARKERS = (
-    "insufficient funds",
-    "slippage exceeded",
-    "route/liquidity unavailable",
-    "entry execution skipped",
-    "exit slippage exceeded",
-    "exit route/liquidity unavailable",
-)
-_MARKET_DATA_MAINTENANCE_MARKERS = (
-    "err-5201",
-    "maintenance",
-)
-_MARK_PRICE_RATE_LIMIT_MARKERS = (
-    "err-5003",
-    "requests are too many",
-)
 TAKE_PROFIT_LATCH_MAX_PULLBACK_R = 0.15
 PROTECTIVE_EXIT_ARMED_STATUSES = {"ARMED", "ARMED_STOP_ONLY"}
 
@@ -135,8 +124,11 @@ def _resolve_entry_direction(runtime_config: BotConfig, decision: Any) -> Direct
     raise RuntimeError("BOTH model requires diagnostics.entry_direction to be LONG or SHORT on ENTER decision")
 
 
-def _build_strategy_execution_bridge(runtime_config: BotConfig, reference_price: float) -> dict[str, Any]:
-    del reference_price
+def _build_strategy_execution_bridge(runtime_config: BotConfig, _reference_price: float) -> dict[str, Any]:
+    # Bridge into the dex_bot-derived strategy stack. The strategy code expects
+    # ``min_notional_usdc`` as its threshold key; we reuse that name with the JPY
+    # value because the strategy treats it as an opaque min-notional in the
+    # quote currency. Rename when the strategy gets a JPY-aware variant.
     return {
         "min_notional_usdc": max(float(runtime_config["execution"]["min_notional_jpy"]), 1.0),
     }
@@ -191,7 +183,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
     persistence = dependencies.persistence
     model_id = dependencies.model_id
     run_at = dependencies.now_provider() if dependencies.now_provider else datetime.now(tz=UTC)
-    run_at_iso = run_at.isoformat().replace("+00:00", "Z")
+    run_at_iso = format_iso_utc(run_at)
     provisional_bar_close_time_iso = run_at_iso
     run: RunRecord = {
         "run_id": _build_model_run_id(model_id, provisional_bar_close_time_iso, run_at),
@@ -223,7 +215,7 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
 
         timeframe = runtime_config["signal_timeframe"]
         bar_close_time = get_last_closed_bar_close(run_at, timeframe)
-        bar_close_time_iso = bar_close_time.isoformat().replace("+00:00", "Z")
+        bar_close_time_iso = format_iso_utc(bar_close_time)
         run["run_id"] = _build_model_run_id(model_id, bar_close_time_iso, run_at)
         run["bar_close_time_iso"] = bar_close_time_iso
         run["config_version"] = runtime_config["meta"]["config_version"]
@@ -447,8 +439,8 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             run["result"] = "SKIPPED"
             run["summary"] = f"SKIPPED: latest market bar is behind expected {timeframe} close"
             run["reason"] = (
-                f"EXPECTED_{bar_close_time.isoformat().replace('+00:00', 'Z')}"
-                f"_GOT_{latest_closed_bar.close_time.isoformat().replace('+00:00', 'Z')}"
+                f"EXPECTED_{format_iso_utc(bar_close_time)}"
+                f"_GOT_{format_iso_utc(latest_closed_bar.close_time)}"
             )
             return run
 

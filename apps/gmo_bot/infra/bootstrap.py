@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
+import json
+import functools
 import threading
 from typing import Any, Callable
 
@@ -18,6 +20,7 @@ from apps.gmo_bot.adapters.persistence.firestore_repo import FirestoreRepository
 from apps.gmo_bot.app.ports.execution_port import ExecutionPort
 from apps.gmo_bot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
 from apps.gmo_bot.domain.model.types import BotConfig, TradeRecord
+from apps.gmo_bot.domain.utils.coercion import as_dict as _coerce_as_dict, to_float as _coerce_to_float
 from apps.gmo_bot.infra.alerting import (
     SlackAlertConfig,
     SlackNotifier,
@@ -169,11 +172,23 @@ def bootstrap() -> AppRuntime:
                     {"error": str(error)},
                 )
 
-    def _mark_runtime_refresh_needed(reason: str) -> None:
-        if runtime_refresh_needed.is_set():
+    def _mark_refresh_needed(
+        flag: threading.Event, log_message: str, reason: str
+    ) -> None:
+        # 9.10: shared "set this flag, log once" helper replacing the two
+        # symmetric ``_mark_runtime_refresh_needed`` / ``_mark_pause_refresh_needed``
+        # implementations.
+        if flag.is_set():
             return
-        runtime_refresh_needed.set()
-        logger.info("runtime refresh scheduled from Firestore change", {"reason": reason})
+        flag.set()
+        logger.info(log_message, {"reason": reason})
+
+    def _mark_runtime_refresh_needed(reason: str) -> None:
+        _mark_refresh_needed(
+            runtime_refresh_needed,
+            "runtime refresh scheduled from Firestore change",
+            reason,
+        )
 
     def _on_models_collection_snapshot(_docs: Any, _changes: Any, _read_time: Any) -> None:
         _mark_runtime_refresh_needed("models_collection_changed")
@@ -182,10 +197,11 @@ def bootstrap() -> AppRuntime:
         _mark_runtime_refresh_needed(f"config_changed:{model_id}")
 
     def _mark_pause_refresh_needed(reason: str) -> None:
-        if pause_refresh_needed.is_set():
-            return
-        pause_refresh_needed.set()
-        logger.info("pause refresh scheduled from Firestore change", {"reason": reason})
+        _mark_refresh_needed(
+            pause_refresh_needed,
+            "pause refresh scheduled from Firestore change",
+            reason,
+        )
 
     def _on_global_control_snapshot(_docs: Any, _changes: Any, _read_time: Any) -> None:
         _mark_pause_refresh_needed("control_global_changed")
@@ -198,8 +214,10 @@ def bootstrap() -> AppRuntime:
                 _unsubscribe_watch(model_config_listeners.pop(removed_id, None))
             for added_id in sorted(target_ids - current_ids):
                 config_doc_ref = firestore.collection(MODELS_COLLECTION_ID).document(added_id).collection("config").document("current")
+                # functools.partial makes the per-model binding intent obvious;
+                # the lambda + default-arg form worked but was harder to read.
                 model_config_listeners[added_id] = config_doc_ref.on_snapshot(
-                    lambda docs, changes, read_time, mid=added_id: _on_model_config_snapshot(mid, docs, changes, read_time)
+                    functools.partial(_on_model_config_snapshot, added_id)
                 )
 
     def _start_firestore_watchers() -> None:
@@ -224,7 +242,10 @@ def bootstrap() -> AppRuntime:
             model_config_listeners.clear()
 
     def _active_model_contexts() -> list[ModelRuntimeContext]:
-        return [model_contexts[mid] for mid in sorted(model_contexts.keys())]
+        # Snapshot the dict to avoid "dictionary changed size during iteration"
+        # races with _refresh_runtime_specs() mutating model_contexts.
+        snapshot = dict(model_contexts)
+        return [snapshot[mid] for mid in sorted(snapshot.keys())]
 
     def _current_runtime_summaries() -> list[dict[str, str]]:
         return [_build_runtime_summary(runtime_specs[mid]) for mid in sorted(runtime_specs.keys())]
@@ -291,17 +312,9 @@ def bootstrap() -> AppRuntime:
             )
         failure_streaks_by_model[model_id] = 0
 
-    def _to_float(value: Any) -> float | None:
-        if isinstance(value, bool):
-            return None
-        if isinstance(value, (int, float)):
-            return float(value)
-        return None
-
-    def _as_dict(value: Any) -> dict[str, Any]:
-        if isinstance(value, dict):
-            return value
-        return {}
+    # 9.2: helpers come from the shared coercion module (imported at top of file).
+    _to_float = _coerce_to_float
+    _as_dict = _coerce_as_dict
 
     def _compute_gmo_close_metrics(trade: TradeRecord) -> tuple[float | None, float, float | None]:
         position = _as_dict(trade.get("position"))
@@ -414,7 +427,12 @@ def bootstrap() -> AppRuntime:
                 direction=metadata.direction,
                 strategy=strategy_name,
                 broker=config["broker"],
-                config_fingerprint=hashlib.sha1(repr(config).encode("utf-8")).hexdigest()[:12],
+                # Use a deterministic JSON serialization (sort keys, default=str)
+                # so the fingerprint is stable across Firestore SDK dict ordering
+                # quirks and float repr differences.
+                config_fingerprint=hashlib.sha1(
+                    json.dumps(config, sort_keys=True, default=str).encode("utf-8")
+                ).hexdigest()[:12],
             )
             desired_specs[model_id] = spec
             desired_configs[model_id] = config
@@ -584,6 +602,11 @@ def bootstrap() -> AppRuntime:
         _mark_cycle_completed()
 
     def _open_trade_poll_loop() -> None:
+        # Concurrency note: this poll and cron-driven `_run_all_models` can
+        # both target the same open trade. Redis runner_lock serialises them
+        # (see RedisLockAdapter), so the only artefact is occasional SKIPPED
+        # cycles with summary "SKIPPED: lock:runner already acquired", which
+        # `_should_persist_run_record` filters out before save_run.
         while not open_trade_poll_stop_event.wait(OPEN_TRADE_POLL_INTERVAL_SECONDS):
             try:
                 if not getattr(live_execution, "protective_exit_enabled", True):

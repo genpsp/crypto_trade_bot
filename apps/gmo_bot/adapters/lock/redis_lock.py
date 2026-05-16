@@ -34,6 +34,14 @@ class RedisLockAdapter(LockPort):
         return f"{INFLIGHT_TX_KEY_PREFIX}:{self.lock_namespace}:{signature}"
 
     def acquire_runner_lock(self, ttl_seconds: int) -> bool:
+        # Defensive guard: a double acquire would overwrite the previous token and
+        # leave the original Redis lock un-releasable until TTL.
+        if self.runner_lock_token is not None:
+            self.logger.warn(
+                "acquire_runner_lock called while a token is already held; refusing to overwrite",
+                {"lock_key": self._runner_lock_key()},
+            )
+            return False
         token = str(uuid4())
         result = self.redis.set(self._runner_lock_key(), token, nx=True, ex=ttl_seconds)
         if result:
@@ -53,7 +61,13 @@ class RedisLockAdapter(LockPort):
                 runner_lock_key,
                 runner_lock_token,
             )
-            if released != 1:
+            # Normalize to int for explicit comparison; redis-py may return either
+            # an int or a string depending on decode_responses configuration.
+            try:
+                released_int = int(released) if released is not None else 0
+            except (TypeError, ValueError):
+                released_int = 0
+            if released_int != 1:
                 self.logger.warn("Runner lock token mismatch on release")
         except Exception as error:
             self.logger.warn(

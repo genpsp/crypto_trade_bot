@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 import json
 from typing import Any, Callable
 
@@ -9,17 +9,24 @@ import requests
 
 from apps.dex_bot.domain.model.types import OhlcvBar
 from apps.gmo_bot.adapters.execution.gmo_api_client import GmoApiClient
+from apps.gmo_bot.adapters.symbol_map import PAIR_SYMBOL_MAP
 from apps.gmo_bot.app.ports.market_data_port import MarketDataPort
 from apps.gmo_bot.domain.model.types import Pair, SignalTimeframe
+from apps.gmo_bot.domain.utils.time import JST
 
-PAIR_SYMBOL_MAP: dict[Pair, str] = {"SOL/JPY": "SOL_JPY"}
+assert PAIR_SYMBOL_MAP  # re-exported for backwards compatibility; keep symbol referenced
+
+# 9.4: PAIR_SYMBOL_MAP lives in apps/gmo_bot/adapters/symbol_map.py and is
+# re-exported here so callers that previously imported from this module
+# continue to work.
+_ = Pair  # type-only import safety
+
 TIMEFRAME_TO_GMO_INTERVAL: dict[SignalTimeframe, str] = {
     "15m": "15min",
     "2h": "1hour",
     "4h": "4hour",
 }
 DEFAULT_OHLCV_CACHE_TTL_SECONDS = 30
-JST = timezone(timedelta(hours=9))
 
 
 class OhlcvProvider(MarketDataPort):

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 import time
-from typing import Any
+from typing import Any, Callable
 
 from apps.gmo_bot.app.ports.execution_port import ExecutionPort, SubmitCloseOrderRequest
 from apps.gmo_bot.app.ports.lock_port import LockPort
@@ -18,12 +18,13 @@ from apps.gmo_bot.app.usecases.protective_exit_orders import (
 from apps.gmo_bot.app.usecases.usecase_utils import now_iso, strip_none, summarize_error_for_log, to_error_message
 from apps.gmo_bot.domain.model.trade_state import assert_trade_state_transition
 from apps.gmo_bot.domain.model.types import BotConfig, CloseReason, TradeRecord, TradeState
+from apps.gmo_bot.domain.utils.coercion import to_float as _to_float, to_str as _to_str
+from apps.gmo_bot.domain.utils.numeric import POSITION_SIZE_EPSILON
 from shared.utils.math import round_to
 
 ORDER_CONFIRM_TIMEOUT_MS = 20_000
 PROTECTIVE_EXIT_CANCEL_CONFIRM_TIMEOUT_MS = 2_000
 PROTECTIVE_EXIT_CANCEL_CONFIRM_POLL_INTERVAL_SECONDS = 0.05
-POSITION_SIZE_EPSILON = 1e-9
 TERMINAL_ORDER_STATUSES = {"CANCELED", "EXECUTED", "EXPIRED", "FAILED"}
 # Maximum sequential close attempts when partial fills keep returning. Caps API
 # blast radius and runner_lock TTL consumption if GMO repeatedly fills tiny amounts.
@@ -51,6 +52,8 @@ class ClosePositionDependencies:
     lock: LockPort
     logger: LoggerPort
     persistence: PersistencePort
+    # 11.3: optional override for tests; ``None`` keeps existing now_iso() behavior.
+    now_provider: Callable[[], Any] | None = None
 
 
 @dataclass
@@ -61,26 +64,8 @@ class ProtectiveExitReconciliationResult:
     order_status: str | None = None
 
 
-def _to_float(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
-
-
-def _to_str(value: Any) -> str | None:
-    if isinstance(value, str):
-        stripped = value.strip()
-        return stripped if stripped else None
-    if value is None:
-        return None
-    return str(value)
+# §9.2: ``_to_float`` and ``_to_str`` now come from
+# ``apps.gmo_bot.domain.utils.coercion`` (single source of truth).
 
 
 def _extract_order_status(order: dict[str, Any] | None) -> str | None:
@@ -744,6 +729,17 @@ def close_position(dependencies: ClosePositionDependencies, input_data: ClosePos
                     status="PENDING",
                     trade_id=trade["trade_id"],
                     summary="PENDING: protective exit execution pending settlement details",
+                )
+            if reconciled_stop.status == "UNAVAILABLE" and reconciled_stop.order_id is not None:
+                # 1.21: surface the case where an expected protective stop order
+                # could not be located before we proceed to manual close.
+                logger.warn(
+                    "protective stop reconciliation returned UNAVAILABLE; proceeding with manual close",
+                    {
+                        "trade_id": trade["trade_id"],
+                        "protective_order_id": reconciled_stop.order_id,
+                        "protective_order_status": reconciled_stop.order_status,
+                    },
                 )
         trade["execution"]["exit_reference_price"] = round_to(input_data.close_price, 6)
         remaining_lots = list(lots)

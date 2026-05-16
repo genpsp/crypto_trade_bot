@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
+from decimal import Decimal, ROUND_FLOOR
+from typing import Any, Callable
 
 from apps.dex_bot.domain.risk.swing_low_stop import (
     calculate_max_loss_stop_price,
@@ -24,6 +25,7 @@ from apps.gmo_bot.app.usecases.usecase_utils import now_iso, strip_none, summari
 from apps.gmo_bot.domain.model.trade_state import assert_trade_state_transition
 from apps.gmo_bot.domain.model.types import BotConfig, Direction, EntrySignalDecision, TradeRecord, TradeState
 from apps.gmo_bot.domain.strategy.risk_constants import MIN_STOP_DISTANCE_PCT
+from apps.gmo_bot.domain.utils.numeric import POSITION_SIZE_EPSILON
 from shared.utils.math import round_to
 from apps.gmo_bot.domain.utils.time import build_trade_id
 
@@ -52,6 +54,8 @@ class OpenPositionDependencies:
     lock: LockPort
     logger: LoggerPort
     persistence: PersistencePort
+    # 11.3: optional time-injection seam for deterministic unit tests.
+    now_provider: Callable[[], Any] | None = None
 
 
 def _resolve_regime_and_multiplier(signal: EntrySignalDecision) -> tuple[str, float]:
@@ -67,8 +71,11 @@ def _resolve_regime_and_multiplier(signal: EntrySignalDecision) -> tuple[str, fl
 def _round_down_to_step(value: float, step: float) -> float:
     if value <= 0 or step <= 0:
         return 0.0
-    scaled = math.floor(value / step)
-    return round(scaled * step, 10)
+    # Decimal arithmetic to avoid binary-float drift like 0.029999999...
+    value_decimal = Decimal(str(value))
+    step_decimal = Decimal(str(step))
+    scaled = (value_decimal / step_decimal).to_integral_value(rounding=ROUND_FLOOR)
+    return float(scaled * step_decimal)
 
 
 def _build_plan_summary(
@@ -101,7 +108,25 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
     now = now_iso()
     volatility_regime, position_size_multiplier = _resolve_regime_and_multiplier(signal)
     if position_size_multiplier > 1.0:
-        raise RuntimeError("position_size_multiplier must be <= 1.0 for capped GMO notional sizing")
+        # Previously raised RuntimeError, which faulted the whole cycle and
+        # fed the consecutive-failure alert counter. Treat as an entry skip.
+        logger.warn(
+            "skipping entry: strategy requested position_size_multiplier > 1.0 which is unsupported for GMO sizing",
+            {
+                "trade_id": trade_id,
+                "model_id": model_id,
+                "position_size_multiplier": position_size_multiplier,
+                "volatility_regime": volatility_regime,
+            },
+        )
+        return OpenPositionResult(
+            status="CANCELED",
+            trade_id=trade_id,
+            summary=(
+                "CANCELED: position_size_multiplier must be <= 1.0 for capped GMO notional sizing; "
+                f"got {position_size_multiplier:.4f}"
+            ),
+        )
 
     trade: TradeRecord = {
         "trade_id": trade_id,
@@ -284,6 +309,12 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                     },
                 )
                 final_stop = pct_stop
+                # Re-derive the resulting distance and assert the invariant
+                # explicitly so future refactors don't silently violate it.
+                assert (
+                    ((resolved_entry_price - final_stop) / resolved_entry_price) * 100
+                    >= MIN_STOP_DISTANCE_PCT - POSITION_SIZE_EPSILON
+                ), "LONG final_stop violates MIN_STOP_DISTANCE_PCT after pct_stop fallback"
             recalculated_take_profit = calculate_take_profit_price(
                 resolved_entry_price,
                 final_stop,
@@ -321,6 +352,10 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
                     },
                 )
                 final_stop = pct_stop
+                assert (
+                    ((final_stop - resolved_entry_price) / resolved_entry_price) * 100
+                    >= MIN_STOP_DISTANCE_PCT - POSITION_SIZE_EPSILON
+                ), "SHORT final_stop violates MIN_STOP_DISTANCE_PCT after pct_stop fallback"
             recalculated_take_profit = calculate_take_profit_price_for_short(
                 resolved_entry_price,
                 final_stop,

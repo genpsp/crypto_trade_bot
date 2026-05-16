@@ -53,7 +53,19 @@ class FirestoreConfigRepository:
         payload = control_snapshot.to_dict()
         if not isinstance(payload, dict):
             return False
-        return payload.get(GLOBAL_CONTROL_PAUSE_FIELD) is True
+        raw_value = payload.get(GLOBAL_CONTROL_PAUSE_FIELD)
+        # Strict ``is True`` so a Firestore string "true" silently won't pause —
+        # log a warning rather than guessing, so operators can notice typos.
+        if raw_value is True:
+            return True
+        if raw_value not in (None, False):
+            print(
+                "[WARN] firestore_config_repo: ignoring non-boolean "
+                f"{GLOBAL_CONTROL_COLLECTION_ID}/{GLOBAL_CONTROL_DOC_ID}.{GLOBAL_CONTROL_PAUSE_FIELD}="
+                f"{raw_value!r} (must be boolean true to pause)",
+                flush=True,
+            )
+        return False
 
     def _load_model_payload(self, model_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
         model_ref = self.firestore.collection(MODELS_COLLECTION_ID).document(model_id)

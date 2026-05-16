@@ -9,7 +9,22 @@ TIMEFRAME_TO_SECONDS: dict[SignalTimeframe, int] = {
     "2h": 2 * 60 * 60,
     "4h": 4 * 60 * 60,
 }
+# Single source of truth for the gmo_bot JST constant. Other modules MUST
+# import this rather than re-defining `timezone(timedelta(hours=9))` locally.
 JST = timezone(timedelta(hours=9))
+
+
+def format_iso_utc(value: datetime) -> str:
+    """Format a ``datetime`` as ISO-8601 with a trailing ``Z`` for UTC.
+
+    Centralises the repeated ``isoformat().replace("+00:00", "Z")`` idiom that
+    used to live in firestore_repo.py, run_cycle.py, and similar modules.
+    Naive datetimes are treated as UTC for safety.
+    """
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def get_bar_duration_seconds(timeframe: SignalTimeframe) -> int:

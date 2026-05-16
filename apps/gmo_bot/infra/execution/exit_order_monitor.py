@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from apps.gmo_bot.adapters.execution.gmo_margin_execution import GmoMarginExecutionAdapter
 from apps.gmo_bot.adapters.execution.private_ws_client import GmoPrivateWebSocketClient
+from apps.gmo_bot.domain.utils.coercion import to_float as _to_float
 from apps.gmo_bot.app.usecases.close_position import (
     ClosePositionDependencies,
     ClosePositionInput,
@@ -133,6 +134,12 @@ class GmoExitOrderMonitor:
         if exit_kind == "stop_loss" and status == "EXPIRED":
             refreshed_trade = context.persistence.find_open_trade(context.pair)
             if not isinstance(refreshed_trade, dict):
+                # Normal race condition (trade closed between EXPIRED event and
+                # the persistence read), but worth noticing if it becomes frequent.
+                self.logger.warn(
+                    "stop order EXPIRED but no open trade was found; treating as already closed",
+                    {"order_id": order_id, "pair": context.pair, "model_id": context.model_id},
+                )
                 return
             if has_active_stop_loss_order(refreshed_trade):
                 return
@@ -296,14 +303,4 @@ def _to_int(value: Any) -> int | None:
     return None
 
 
-def _to_float(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
+# §9.2: ``_to_float`` is now imported from ``apps.gmo_bot.domain.utils.coercion``.

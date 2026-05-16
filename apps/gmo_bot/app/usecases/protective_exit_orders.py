@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Callable
 
 from apps.gmo_bot.app.ports.execution_port import (
     ExecutionPort,
@@ -10,24 +11,14 @@ from apps.gmo_bot.app.ports.logger_port import LoggerPort
 from apps.gmo_bot.app.ports.persistence_port import PersistencePort
 from apps.gmo_bot.app.usecases.usecase_utils import now_iso, strip_none, to_error_message
 from apps.gmo_bot.domain.model.types import BotConfig, TradeRecord
+from apps.gmo_bot.domain.utils.coercion import to_float as _to_float
+from apps.gmo_bot.domain.utils.numeric import POSITION_SIZE_EPSILON
 from shared.utils.math import round_to
 
 ACTIVE_EXIT_ORDER_STATUSES = {"SUBMITTED", "ORDERED", "WAITING"}
 INACTIVE_EXIT_ORDER_STATUSES = {"CANCELED", "EXECUTED", "EXPIRED", "FAILED", "INACTIVE"}
-POSITION_SIZE_EPSILON = 1e-9
 
-
-def _to_float(value: object) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
+# §9.2: ``_to_float`` is now imported from ``apps.gmo_bot.domain.utils.coercion``.
 
 
 def _tracked_lot_sizes(trade: TradeRecord) -> dict[int, float]:
@@ -213,6 +204,8 @@ class ArmProtectiveExitOrdersDependencies:
     execution: ExecutionPort
     logger: LoggerPort
     persistence: PersistencePort
+    # 11.3: optional clock injection for tests.
+    now_provider: Callable[[], Any] | None = None
 
 
 def arm_protective_exit_orders(
@@ -284,6 +277,14 @@ def arm_protective_exit_orders(
     if not stop_loss_orders:
         return ArmProtectiveExitOrdersResult(status="FAILED", summary="FAILED: protective stop order was not created")
 
+    # Defensive guard: callers already guard via has_active_protective_exit_orders,
+    # but never silently overwrite an EXECUTED take-profit status from this code path.
+    previous_tp_status = execution_snapshot.get("take_profit_order_status")
+    if previous_tp_status == "EXECUTED":
+        return ArmProtectiveExitOrdersResult(
+            status="SKIPPED",
+            summary="SKIPPED: take profit already executed; refusing to overwrite to CLIENT_MANAGED",
+        )
     execution_snapshot.pop("take_profit_order_id", None)
     execution_snapshot.pop("take_profit_order", None)
     execution_snapshot["take_profit_order_status"] = "CLIENT_MANAGED"

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
-JST = timezone(timedelta(hours=9))
-POSITION_SIZE_EPSILON = 1e-9
+from apps.gmo_bot.domain.utils.coercion import as_dict as _as_dict, to_float as _to_float
+from apps.gmo_bot.domain.utils.numeric import POSITION_SIZE_EPSILON
+from apps.gmo_bot.domain.utils.time import JST
 
 
 @dataclass(frozen=True)
@@ -362,15 +363,5 @@ def _parse_iso_datetime(value: Any) -> datetime | None:
     return _ensure_aware_utc(parsed)
 
 
-def _to_float(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    return None
-
-
-def _as_dict(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    return {}
+# §9.2: ``_to_float`` and ``_as_dict`` are now imported from
+# ``apps.gmo_bot.domain.utils.coercion`` (single source of truth).

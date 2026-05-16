@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -7,23 +8,20 @@ from typing import Any
 import requests
 
 from apps.gmo_bot.app.ports.logger_port import LoggerPort
+from apps.gmo_bot.app.usecases.skip_markers import (
+    EXECUTION_ERROR_SKIP_MARKERS as _EXECUTION_ERROR_SKIP_MARKERS,
+    MARKET_DATA_MAINTENANCE_MARKERS as _MARKET_DATA_MAINTENANCE_MARKERS,
+)
 from apps.gmo_bot.infra.alerting.daily_trade_summary import DailyTradeSummaryReport, ModelDailyTradeSummary
 
 _REQUEST_TIMEOUT_SECONDS = 5
 _DEFAULT_DUPLICATE_SUPPRESSION_SECONDS = 300
 _MODEL_ID_COLUMN_WIDTH = 28
-_EXECUTION_ERROR_SKIP_MARKERS = (
-    "insufficient funds",
-    "slippage exceeded",
-    "route/liquidity unavailable",
-    "entry execution skipped",
-    "exit slippage exceeded",
-    "exit route/liquidity unavailable",
-)
-_MARKET_DATA_MAINTENANCE_MARKERS = (
-    "err-5201",
-    "maintenance",
-)
+# Bound the in-memory dedupe cache so a long-running process doesn't grow it
+# unbounded. Redis dedupe is the source of truth when configured.
+_LOCAL_DEDUPE_CACHE_MAX_ENTRIES = 256
+# Truncate huge messages in error logs to keep Cloud Logging payloads small.
+_SLACK_LOG_MESSAGE_PREVIEW_CHARS = 200
 
 
 @dataclass(frozen=True)
@@ -74,7 +72,9 @@ class SlackNotifier:
         self._webhook_url = webhook_url if webhook_url else None
         self._logger = logger
         self._duplicate_suppression_seconds = max(config.duplicate_suppression_seconds, 0)
-        self._last_sent_by_key: dict[str, datetime] = {}
+        # OrderedDict with bounded size acts as a small LRU and prevents the
+        # in-memory dedupe cache from growing unbounded over weeks of uptime.
+        self._last_sent_by_key: "OrderedDict[str, datetime]" = OrderedDict()
         self._dedupe_store = dedupe_store
         normalized_namespace = dedupe_namespace.strip()
         self._dedupe_namespace = normalized_namespace or "bot"
@@ -323,6 +323,15 @@ class SlackNotifier:
         message = f"{header}\n{generated}\n```\n" + "\n".join(lines) + "\n```"
         self._send(message=message, dedupe_key=f"daily_summary_jst:{report.target_date_jst}")
 
+    def send_plain_text(self, message: str, *, dedupe_key: str | None = None) -> None:
+        """Post a plain text message without going through a notify_* helper.
+
+        9.6: callers like ``reports.py`` previously poked at ``_send`` via
+        ``# noqa: SLF001``. This is the public seam for ad-hoc one-off posts.
+        """
+
+        self._send(message=message, dedupe_key=dedupe_key)
+
     def _send(self, *, message: str, dedupe_key: str | None) -> None:
         if self._webhook_url is None:
             return
@@ -336,9 +345,14 @@ class SlackNotifier:
             )
             response.raise_for_status()
         except Exception as error:
+            # Truncate the message in the warn payload so Cloud Logging quota
+            # isn't consumed by oversized failure logs.
+            preview = message if len(message) <= _SLACK_LOG_MESSAGE_PREVIEW_CHARS else (
+                message[:_SLACK_LOG_MESSAGE_PREVIEW_CHARS] + "...(truncated)"
+            )
             self._logger.warn(
                 "failed to post slack alert",
-                {"error": str(error), "dedupe_key": dedupe_key, "message": message},
+                {"error": str(error), "dedupe_key": dedupe_key, "message_preview": preview},
             )
 
     def _should_send(self, dedupe_key: str) -> bool:
@@ -360,16 +374,20 @@ class SlackNotifier:
                     {"error": str(error), "dedupe_key": dedupe_key, "namespace": self._dedupe_namespace},
                 )
             else:
-                if claimed:
-                    self._last_sent_by_key[dedupe_key] = now
-                    return True
-                return False
+                # Redis dedupe is authoritative when available; do not also
+                # populate the in-memory cache (avoids unbounded growth).
+                return bool(claimed)
         last_sent_at = self._last_sent_by_key.get(dedupe_key)
         if last_sent_at is not None:
             elapsed = (now - last_sent_at).total_seconds()
             if elapsed < self._duplicate_suppression_seconds:
+                # Refresh recency for LRU ordering.
+                self._last_sent_by_key.move_to_end(dedupe_key)
                 return False
         self._last_sent_by_key[dedupe_key] = now
+        self._last_sent_by_key.move_to_end(dedupe_key)
+        while len(self._last_sent_by_key) > _LOCAL_DEDUPE_CACHE_MAX_ENTRIES:
+            self._last_sent_by_key.popitem(last=False)
         return True
 
     def _format_message(self, title: str, lines: list[str]) -> str:

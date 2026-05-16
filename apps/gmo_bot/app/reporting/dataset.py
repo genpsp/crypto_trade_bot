@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 
 from apps.gmo_bot.domain.model.types import DailyBalanceRecord, RunRecord, TradeRecord
+from apps.gmo_bot.domain.utils.coercion import to_float as _to_float
 
 JST = timezone(timedelta(hours=9))
 
@@ -55,12 +56,7 @@ def _nested_get(record: dict[str, Any], *path: str) -> Any:
     return cursor
 
 
-def _to_float(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    return None
+# §9.2: ``_to_float`` is now imported from ``apps.gmo_bot.domain.utils.coercion``.
 
 
 def build_trades_dataframe(trades: list[TradeRecord]) -> pd.DataFrame:

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import asdict
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
-import math
+import random
 import time
 from typing import Any
 
 from apps.gmo_bot.adapters.execution.gmo_api_client import GmoApiClient
+from apps.gmo_bot.adapters.symbol_map import PAIR_SYMBOL_MAP
 from apps.gmo_bot.app.ports.execution_port import (
     ExecutionPort,
     OrderConfirmation,
@@ -19,14 +19,18 @@ from apps.gmo_bot.app.ports.execution_port import (
     SymbolRule,
 )
 from apps.gmo_bot.app.ports.logger_port import LoggerPort
+from apps.gmo_bot.domain.model.types import Pair
+from apps.gmo_bot.domain.utils.coercion import to_float as _to_float
+from apps.gmo_bot.domain.utils.numeric import POSITION_SIZE_EPSILON, decimal_str
 
-PAIR_SYMBOL_MAP = {"SOL/JPY": "SOL_JPY"}
 POLL_INTERVAL_SECONDS = 0.4
 SYMBOL_RULE_CACHE_TTL_SECONDS = 300
 MARK_PRICE_CACHE_TTL_SECONDS = 2.0
+# Rate-limit retry delays; jitter applied at call site to avoid thundering herd
+# across concurrently retrying model cycles.
 MARK_PRICE_RATE_LIMIT_RETRY_DELAYS_SECONDS = (0.2, 0.4)
+MARK_PRICE_RETRY_JITTER_SECONDS = 0.15
 CLOSE_ORDER_ACTIVE_STATUSES = {"ORDERED", "WAITING", "MODIFYING", "CANCELLING"}
-POSITION_SIZE_EPSILON = 1e-9
 
 
 class GmoMarginExecutionAdapter(ExecutionPort):
@@ -41,8 +45,8 @@ class GmoMarginExecutionAdapter(ExecutionPort):
         self.protective_exit_enabled = enabled
 
     def submit_entry_order(self, request: SubmitEntryOrderRequest) -> OrderSubmission:
-        symbol = PAIR_SYMBOL_MAP["SOL/JPY"]
-        size = self._normalize_size(symbol, request.size_sol)
+        symbol = PAIR_SYMBOL_MAP[request.pair]
+        size = self._normalize_size(symbol, request.size_sol, pair=request.pair)
         if size <= 0:
             raise RuntimeError("entry size rounded to 0")
         order_id = self.client.create_order(
@@ -54,8 +58,8 @@ class GmoMarginExecutionAdapter(ExecutionPort):
         return OrderSubmission(order_id=order_id, order={"order_id": order_id})
 
     def submit_close_order(self, request: SubmitCloseOrderRequest) -> OrderSubmission:
-        symbol = PAIR_SYMBOL_MAP["SOL/JPY"]
-        settle_positions = self._build_requested_settle_positions(symbol, request.lots)
+        symbol = PAIR_SYMBOL_MAP[request.pair]
+        settle_positions = self._build_requested_settle_positions(symbol, request.lots, pair=request.pair)
         if not settle_positions:
             raise RuntimeError("no closeable position lots")
         if len(settle_positions) != 1:
@@ -70,16 +74,16 @@ class GmoMarginExecutionAdapter(ExecutionPort):
         return OrderSubmission(order_id=order_id, order={"order_id": order_id})
 
     def submit_protective_exit_orders(self, request: SubmitProtectiveExitOrdersRequest) -> ProtectiveExitOrdersSubmission:
-        symbol = PAIR_SYMBOL_MAP["SOL/JPY"]
-        rule = self.get_symbol_rule("SOL/JPY")
-        settle_positions = self._build_settle_positions(symbol, request.lots)
+        symbol = PAIR_SYMBOL_MAP[request.pair]
+        rule = self.get_symbol_rule(request.pair)
+        settle_positions = self._build_settle_positions(symbol, request.lots, pair=request.pair)
         if not settle_positions:
             canceled_orders = self._cancel_conflicting_close_orders(symbol=symbol, side=request.side)
             if canceled_orders > 0:
-                settle_positions = self._build_settle_positions(symbol, request.lots)
+                settle_positions = self._build_settle_positions(symbol, request.lots, pair=request.pair)
         if not settle_positions:
             raise RuntimeError("no settable position lots for protective stop order")
-        if not self._has_full_settle_coverage(symbol, request.lots, settle_positions):
+        if not self._has_full_settle_coverage(symbol, request.lots, settle_positions, pair=request.pair):
             raise RuntimeError("not all tracked lots are settable for protective stop order")
         normalized_stop_price = _round_stop_price(
             request.stop_price,
@@ -129,24 +133,33 @@ class GmoMarginExecutionAdapter(ExecutionPort):
         deadline = time.time() + (timeout_ms / 1000)
         last_error = "order confirmation timed out"
         while time.time() < deadline:
-            executions = self.client.get_executions(order_id)
-            if executions:
-                result = self._aggregate_executions(executions)
-                return OrderConfirmation(confirmed=True, result=result)
-            order = self.client.get_order(order_id)
-            if order is not None:
-                status = str(order.get("status") or "")
-                executed_size = _to_float(order.get("executedSize")) or 0.0
-                if executed_size > 0:
-                    executions = self.client.get_executions(order_id)
-                    if executions:
-                        result = self._aggregate_executions(executions)
-                        return OrderConfirmation(confirmed=True, result=result)
-                if status in {"CANCELED", "EXPIRED", "REJECTED"}:
-                    cancel_type = order.get("cancelType")
-                    last_error = f"order {status.lower()} ({cancel_type})"
-                    return OrderConfirmation(confirmed=False, error=last_error)
-                last_error = f"order status={status}"
+            try:
+                executions = self.client.get_executions(order_id)
+                if executions:
+                    result = self._aggregate_executions(executions)
+                    return OrderConfirmation(confirmed=True, result=result)
+                order = self.client.get_order(order_id)
+                if order is not None:
+                    status = str(order.get("status") or "")
+                    executed_size = _to_float(order.get("executedSize")) or 0.0
+                    if executed_size > 0:
+                        executions = self.client.get_executions(order_id)
+                        if executions:
+                            result = self._aggregate_executions(executions)
+                            return OrderConfirmation(confirmed=True, result=result)
+                    if status in {"CANCELED", "EXPIRED", "REJECTED"}:
+                        cancel_type = order.get("cancelType")
+                        last_error = f"order {status.lower()} ({cancel_type})"
+                        return OrderConfirmation(confirmed=False, error=last_error)
+                    last_error = f"order status={status}"
+            except Exception as error:
+                # Transient API errors here previously raised and abandoned an
+                # in-flight order; log and keep polling until the deadline.
+                last_error = f"transient confirm_order error: {error}"
+                self.logger.warn(
+                    "transient error while polling order confirmation; will retry",
+                    {"order_id": order_id, "error": str(error)},
+                )
             time.sleep(POLL_INTERVAL_SECONDS)
         return OrderConfirmation(confirmed=False, error=last_error)
 
@@ -161,7 +174,8 @@ class GmoMarginExecutionAdapter(ExecutionPort):
         last_error: Exception | None = None
         for index, delay in enumerate(delays):
             if delay > 0:
-                time.sleep(delay)
+                # Add jitter to prevent thundering herd across concurrent model retries.
+                time.sleep(delay + random.uniform(0, MARK_PRICE_RETRY_JITTER_SECONDS))
             try:
                 ticker = self.client.get_ticker(symbol)
             except Exception as error:
@@ -216,15 +230,21 @@ class GmoMarginExecutionAdapter(ExecutionPort):
             return rule
         raise RuntimeError(f"GMO symbol rule not found for {symbol}")
 
-    def _normalize_size(self, symbol: str, size_sol: float) -> float:
-        rule = self.get_symbol_rule("SOL/JPY")
+    def _normalize_size(self, symbol: str, size_sol: float, *, pair: Pair = "SOL/JPY") -> float:
+        rule = self.get_symbol_rule(pair)
         normalized = _round_down_to_step(size_sol, rule.size_step)
         if normalized < rule.min_order_size:
             return 0.0
         return normalized
 
-    def _build_settle_positions(self, symbol: str, lots: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        rule = self.get_symbol_rule("SOL/JPY")
+    def _build_settle_positions(
+        self,
+        symbol: str,
+        lots: list[dict[str, Any]],
+        *,
+        pair: Pair = "SOL/JPY",
+    ) -> list[dict[str, Any]]:
+        rule = self.get_symbol_rule(pair)
         open_positions = self.client.get_open_positions(symbol)
         open_position_map: dict[int, dict[str, Any]] = {}
         for position in open_positions:
@@ -238,7 +258,7 @@ class GmoMarginExecutionAdapter(ExecutionPort):
             requested_size = _to_float(lot.get("size_sol"))
             if not isinstance(position_id, int) or requested_size is None:
                 continue
-            normalized_requested_size = self._normalize_size(symbol, requested_size)
+            normalized_requested_size = self._normalize_size(symbol, requested_size, pair=pair)
             if normalized_requested_size <= 0:
                 continue
             open_position = open_position_map.get(position_id)
@@ -250,20 +270,26 @@ class GmoMarginExecutionAdapter(ExecutionPort):
             final_size = _round_down_to_step(min(normalized_requested_size, settable_size), rule.size_step)
             if final_size <= 0:
                 continue
-            settle_positions.append({"positionId": position_id, "size": _decimal_str(final_size)})
+            settle_positions.append({"positionId": position_id, "size": decimal_str(final_size)})
         return settle_positions
 
-    def _build_requested_settle_positions(self, symbol: str, lots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _build_requested_settle_positions(
+        self,
+        symbol: str,
+        lots: list[dict[str, Any]],
+        *,
+        pair: Pair = "SOL/JPY",
+    ) -> list[dict[str, Any]]:
         settle_positions: list[dict[str, Any]] = []
         for lot in lots:
             position_id = lot.get("position_id")
             requested_size = _to_float(lot.get("size_sol"))
             if not isinstance(position_id, int) or requested_size is None:
                 continue
-            normalized_requested_size = self._normalize_size(symbol, requested_size)
+            normalized_requested_size = self._normalize_size(symbol, requested_size, pair=pair)
             if normalized_requested_size <= 0:
                 continue
-            settle_positions.append({"positionId": position_id, "size": _decimal_str(normalized_requested_size)})
+            settle_positions.append({"positionId": position_id, "size": decimal_str(normalized_requested_size)})
         return settle_positions
 
     def _has_full_settle_coverage(
@@ -271,8 +297,10 @@ class GmoMarginExecutionAdapter(ExecutionPort):
         symbol: str,
         lots: list[dict[str, Any]],
         settle_positions: list[dict[str, Any]],
+        *,
+        pair: Pair = "SOL/JPY",
     ) -> bool:
-        requested_positions = self._build_requested_settle_positions(symbol, lots)
+        requested_positions = self._build_requested_settle_positions(symbol, lots, pair=pair)
         if len(requested_positions) != len(settle_positions):
             return False
 
@@ -358,22 +386,18 @@ class GmoMarginExecutionAdapter(ExecutionPort):
         return result
 
 
-def _to_float(value: Any) -> float | None:
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
+# §9.2: ``_to_float`` is now imported from ``apps.gmo_bot.domain.utils.coercion``.
 
 
 def _round_down_to_step(value: float, step: float) -> float:
     if value <= 0 or step <= 0:
         return 0.0
-    scaled = math.floor(value / step)
-    return round(scaled * step, 10)
+    # Use Decimal to avoid binary-float drift (e.g. 0.1 + 0.2 != 0.3) and stay
+    # consistent with _round_price_to_step.
+    value_decimal = Decimal(str(value))
+    step_decimal = Decimal(str(step))
+    scaled = (value_decimal / step_decimal).to_integral_value(rounding=ROUND_FLOOR)
+    return float(scaled * step_decimal)
 
 
 def _round_stop_price(value: float, step: float, side: str) -> float:
@@ -389,11 +413,6 @@ def _round_price_to_step(value: float, step: float, *, rounding: str) -> float:
     step_decimal = Decimal(str(step))
     scaled = (value_decimal / step_decimal).to_integral_value(rounding=rounding)
     return float(scaled * step_decimal)
-
-
-def _decimal_str(value: float) -> str:
-    text = f"{value:.10f}".rstrip("0").rstrip(".")
-    return text if text else "0"
 
 
 def _is_gmo_rate_limit_error(message: str) -> bool:
