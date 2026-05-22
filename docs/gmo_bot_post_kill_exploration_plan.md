@@ -1,6 +1,6 @@
 # SOL/JPY 15m 撤退後の戦略探索計画
 
-- 前提: [docs/gmo_bot_logic_exploration_plan.md](gmo_bot_logic_exploration_plan.md) §4 計画全体 kill criterion に該当（[S2](gmo_bot_logic_exploration_s2_findings.md) / [S3](gmo_bot_logic_exploration_s3_findings.md) / [S4](gmo_bot_logic_exploration_s4_findings.md) で検証済）
+- 前提: [docs/gmo_bot_logic_exploration_plan.md](gmo_bot_logic_exploration_plan.md) §4 計画全体 kill criterion に該当（詳細は [S4 総括](gmo_bot_logic_exploration_s4_findings.md) に集約。S2/S3 個別メモは 2026-05-22 に整理済み）
 - スコープ: SOL/JPY 15m + EMA pullback 系統を捨てた前提で、**どの軸の変更が edge を取り戻すか**を最短コストで特定する
 - 制約: LIVE は size 0.5x / LONG-only に縮退して並行運用（出血止血）。本探索はそれと独立に進む
 
@@ -246,10 +246,10 @@ S1〜S4 の作業はそのまま再利用可能:
 - データ: SOL/JPY 15m 1y を含む CSV 6 個
 - ドキュメント:
   - [docs/gmo_bot_logic_exploration_plan.md](gmo_bot_logic_exploration_plan.md)
-  - [docs/gmo_bot_logic_exploration_s2_findings.md](gmo_bot_logic_exploration_s2_findings.md)
-  - [docs/gmo_bot_logic_exploration_s3_findings.md](gmo_bot_logic_exploration_s3_findings.md)
-  - [docs/gmo_bot_logic_exploration_s4_findings.md](gmo_bot_logic_exploration_s4_findings.md)
+  - [docs/gmo_bot_logic_exploration_s4_findings.md](gmo_bot_logic_exploration_s4_findings.md) — S2〜S4 総括
   - [docs/gmo_bot_post_kill_exploration_plan.md](gmo_bot_post_kill_exploration_plan.md) ← 本ファイル
+
+  整理メモ (2026-05-22): S2/S3 個別メモは S4 総括に結論を集約済みのため削除。
 
 ## 9. 判断のためのフレーミング
 

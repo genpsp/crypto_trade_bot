@@ -77,7 +77,7 @@
 
 2. **Gate A 再評価**: 改修後 run で `compare_runs --run latest --gate-a` の PASS 行が >=1 になるかを判定。
 
-3. **方針ドキュメント参照**: `docs/gmo_bot_strategy_revision_plan.md` の数値根拠はすべてこの run。
+3. **方針ドキュメント参照**: 旧 `gmo_bot_strategy_revision_plan.md` は 2026-05-22 に整理済み。数値根拠はすべてこの baseline run に集約。
 
 ## 再現手順
 

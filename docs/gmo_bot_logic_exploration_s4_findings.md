@@ -197,10 +197,10 @@
 - partial close の portfolio_quote 二重更新会計バグ
 
 ### 6.4 ドキュメント
-- [docs/gmo_bot_logic_exploration_plan.md](gmo_bot_logic_exploration_plan.md) — 探索計画
-- [docs/gmo_bot_logic_exploration_s2_findings.md](gmo_bot_logic_exploration_s2_findings.md) — Track A
-- [docs/gmo_bot_logic_exploration_s3_findings.md](gmo_bot_logic_exploration_s3_findings.md) — Track B
-- [docs/gmo_bot_logic_exploration_s4_findings.md](gmo_bot_logic_exploration_s4_findings.md) — Track C/D + 総括（本ファイル）
+- [docs/gmo_bot_logic_exploration_plan.md](gmo_bot_logic_exploration_plan.md) — 探索計画・component 設計の記録
+- [docs/gmo_bot_logic_exploration_s4_findings.md](gmo_bot_logic_exploration_s4_findings.md) — Track C/D + S2〜S4 総括（本ファイル）
+
+整理メモ (2026-05-22): `gmo_bot_logic_exploration_s2_findings.md` / `gmo_bot_logic_exploration_s3_findings.md` は本ファイルに結論が集約済みのため削除。詳細が必要な場合は git history を参照。
 
 ### 6.5 これらの再利用先
 
