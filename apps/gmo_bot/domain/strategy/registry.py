@@ -27,6 +27,22 @@ from apps.gmo_bot.domain.strategy.models.mean_reversion_15m_v0 import (
     evaluate_mean_reversion_15m_v0,
 )
 
+# Per-strategy minimum 15m bar history required by run_cycle's OHLCV fetch.
+# Strategies that derive an upper timeframe (e.g. 4h EMA slow period = 34
+# requires 34 * 16 = 544 15m bars) need a larger window than the 300-bar default.
+# Keep this aligned with each strategy's evaluator: under-fetching produces a
+# silent permanent NO_SIGNAL ("UPPER_TREND_EMA_NOT_STABLE") loop in production.
+_DEFAULT_REQUIRED_HISTORY_BARS = 300
+_UPPER_TREND_REQUIRED_HISTORY_BARS = 600
+_REQUIRED_HISTORY_BARS_BY_STRATEGY: dict[str, int] = {
+    "ema_trend_pullback_15m_v0": _UPPER_TREND_REQUIRED_HISTORY_BARS,
+    "ema_trend_pullback_15m_v2": _UPPER_TREND_REQUIRED_HISTORY_BARS,
+}
+
+
+def resolve_required_history_bars(strategy: StrategyConfig) -> int:
+    return _REQUIRED_HISTORY_BARS_BY_STRATEGY.get(strategy["name"], _DEFAULT_REQUIRED_HISTORY_BARS)
+
 
 def evaluate_strategy_for_model(
     direction: ModelDirection,

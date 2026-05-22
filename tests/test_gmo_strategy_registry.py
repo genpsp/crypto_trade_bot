@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from apps.dex_bot.domain.model.types import NoSignalDecision, OhlcvBar
-from apps.gmo_bot.domain.strategy.registry import evaluate_strategy_for_model
+from apps.gmo_bot.domain.strategy.registry import evaluate_strategy_for_model, resolve_required_history_bars
 from research.src.domain.backtest_engine import run_backtest
 
 
@@ -115,6 +115,25 @@ class GmoStrategyRegistryTest(unittest.TestCase):
         self.assertEqual(2, report.summary.decision_no_signal_count)
         self.assertEqual(2, mocked_gmo_registry.call_count)
         self.assertEqual(0, mocked_dex_registry.call_count)
+
+
+class ResolveRequiredHistoryBarsTest(unittest.TestCase):
+    # Regression guard for the 2026-05-22 incident: a strategy.name rename
+    # (v0 -> v2) silently dropped the 15m fetch from 600 -> 300, producing a
+    # permanent NO_SIGNAL ("UPPER_TREND_EMA_NOT_STABLE") loop because the v2
+    # evaluator delegates to v0 and still needs ~544 bars to compute the 4h
+    # EMA slow (period 34). Any new strategy that derives an upper timeframe
+    # MUST be registered here.
+    def test_v0_requires_upper_trend_history(self) -> None:
+        self.assertEqual(600, resolve_required_history_bars({"name": "ema_trend_pullback_15m_v0"}))
+
+    def test_v2_requires_upper_trend_history(self) -> None:
+        self.assertEqual(600, resolve_required_history_bars({"name": "ema_trend_pullback_15m_v2"}))
+
+    def test_default_for_unregistered_strategy(self) -> None:
+        self.assertEqual(300, resolve_required_history_bars({"name": "donchian_breakout_15m_v0"}))
+        self.assertEqual(300, resolve_required_history_bars({"name": "supertrend_15m_v0"}))
+        self.assertEqual(300, resolve_required_history_bars({"name": "mean_reversion_15m_v0"}))
 
 
 if __name__ == "__main__":

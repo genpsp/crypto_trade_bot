@@ -45,15 +45,13 @@ from apps.gmo_bot.app.usecases.skip_markers import (
 )
 from apps.gmo_bot.app.usecases.usecase_utils import strip_none, to_error_message
 from apps.gmo_bot.domain.model.types import BotConfig, Direction, ModelDirection, RunRecord, TradeRecord
-from apps.gmo_bot.domain.strategy.registry import evaluate_strategy_for_model
+from apps.gmo_bot.domain.strategy.registry import evaluate_strategy_for_model, resolve_required_history_bars
 from shared.utils.math import round_to
 from apps.gmo_bot.domain.utils.time import build_run_id, format_iso_utc, get_bar_duration_seconds, get_jst_day_range, get_last_closed_bar_close
 
 RUN_LOCK_TTL_SECONDS = 600
 MIN_REQUIRED_RUN_LOCK_TTL_SECONDS = 480
 ENTRY_IDEM_TTL_SECONDS = 12 * 60 * 60
-DEFAULT_OHLCV_LIMIT = 300
-OHLCV_LIMIT_FOR_15M_UPPER_TREND = 600
 TAKE_PROFIT_LATCH_MAX_PULLBACK_R = 0.15
 PROTECTIVE_EXIT_ARMED_STATUSES = {"ARMED", "ARMED_STOP_ONLY"}
 
@@ -76,9 +74,7 @@ def _build_model_run_id(model_id: str, bar_close_time_iso: str, run_at: datetime
 
 
 def _resolve_ohlcv_limit(config: BotConfig) -> int:
-    if config["strategy"]["name"] == "ema_trend_pullback_15m_v0":
-        return OHLCV_LIMIT_FOR_15M_UPPER_TREND
-    return DEFAULT_OHLCV_LIMIT
+    return resolve_required_history_bars(config["strategy"])
 
 
 def _resolve_effective_max_trades_per_day(*, runtime_config: BotConfig, recent_closed_trades: list[TradeRecord]) -> tuple[int, int, str]:
