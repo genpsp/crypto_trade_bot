@@ -5,7 +5,7 @@ from typing import Any, Sequence
 
 from apps.dex_bot.domain.model.types import TradeRecord
 
-SHORT_REGIME_GUARD_STRATEGY_NAMES = frozenset({"ema_trend_pullback_15m_v0"})
+SHORT_REGIME_GUARD_STRATEGY_NAMES = frozenset({"ema_trend_pullback_15m_v0", "ema_trend_pullback_15m_v2"})
 SHORT_REGIME_GUARD_REASON = "SHORT_REGIME_GUARD_ACTIVE"
 
 SHORT_REGIME_GUARD_LOOKBACK_SHORT_TRADES = 8

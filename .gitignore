@@ -11,4 +11,8 @@ __pycache__/
 research/data/raw/*.csv
 research/data/processed/*.json
 research/data/processed/*.csv
+research/data/cache/
+# Old logic-search run outputs (large parquet, superseded by Phase 1-3 work).
+# Keep manifest.json + sweep YAML if a future run needs to be reproduced.
+research/data/runs/20260520-*/
 research/notebooks/.ipynb_checkpoints/

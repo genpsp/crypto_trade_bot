@@ -1,0 +1,108 @@
+# Track A (exit policy) exploration sweep for the v2 component bundle.
+#
+# Each case overrides `strategy.name` to the v2 framework and supplies a
+# different `strategy.components.exit_policy` block. Apart from exit policy,
+# every case shares the same base_config so PnL deltas isolate the exit logic.
+#
+# Sweep entry-point (after `windows` produces walk_forward windows):
+#   uv run python -m research.scripts.run_sweep \
+#       research/sweeps/gmo_15m_exit_policy_track_a_v1.yaml \
+#       --keep-trades all
+#
+# See docs/gmo_bot_logic_exploration_plan.md §S2 for the Done basis (rolling
+# 13 windows: pos_rate ≥ 90% and min PnL ≥ 0%).
+
+name: gmo_15m_exit_policy_track_a_v1
+model_id: gmo_ema_pullback_15m_both_v0
+base_config: research/models/gmo_ema_pullback_15m_both_v0/config/current.json
+
+min_trades: 30
+holdout:
+  type: time_split
+  train_end: 2025-11-30T23:59:59Z
+  test_start: 2025-12-01T00:00:00Z
+
+execution_model:
+  id: stochastic_v1
+  profile: research/data/execution_profiles/gmo_soljpy.json
+  seeds: [1, 2, 3, 4, 5]
+  additional_slippage_bps: 1.0
+
+dataset:
+  broker: GMO_COIN
+  pair: SOL/JPY
+  timeframe: 15m
+  bars_path: research/data/raw/soljpy_15m_1y.csv
+
+windows:
+  - type: walk_forward
+    train_days: 180
+    test_days: 90
+    step_days: 90
+    gap_tolerance_bars: 16
+
+# Listed cases let each row pin the full strategy.components subtree.
+# `name:` here is preserved (see grid.ExpandedCase) and surfaces as
+# `case_name` in trial parquet for easy diffing.
+combinations: listed
+cases:
+  - name: L_combo_v1_baseline
+    values:
+      strategy.name: ema_trend_pullback_15m_v2
+      # No `strategy.components` block → default bundle reproduces v0 trades.
+
+  - name: A1_break_even_1r
+    values:
+      strategy.name: ema_trend_pullback_15m_v2
+      strategy.components:
+        exit_policy:
+          type: break_even
+          trigger_r: 1.0
+          offset_pct: 0.0
+
+  - name: A1_break_even_0_8r
+    values:
+      strategy.name: ema_trend_pullback_15m_v2
+      strategy.components:
+        exit_policy:
+          type: break_even
+          trigger_r: 0.8
+
+  - name: A3_chandelier_atr2_5
+    values:
+      strategy.name: ema_trend_pullback_15m_v2
+      strategy.components:
+        exit_policy:
+          type: chandelier
+          atr_multiple: 2.5
+
+  - name: A4_time_exit_60bar
+    values:
+      strategy.name: ema_trend_pullback_15m_v2
+      strategy.components:
+        exit_policy:
+          type: time_exit
+          max_holding_bars: 60
+          prefer_breakeven: false
+
+  - name: A4_time_exit_120bar_be_cap
+    values:
+      strategy.name: ema_trend_pullback_15m_v2
+      strategy.components:
+        exit_policy:
+          type: time_exit
+          max_holding_bars: 120
+          prefer_breakeven: true
+
+  - name: A1_plus_A4_composite
+    values:
+      strategy.name: ema_trend_pullback_15m_v2
+      strategy.components:
+        exit_policy:
+          type: composite
+          policies:
+            - type: break_even
+              trigger_r: 1.0
+            - type: time_exit
+              max_holding_bars: 120
+              prefer_breakeven: true

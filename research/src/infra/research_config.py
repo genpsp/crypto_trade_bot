@@ -34,7 +34,7 @@ def _normalize_gmo_config_for_research(config: dict[str, Any]) -> dict[str, Any]
             "margin_usage_ratio": float(execution["margin_usage_ratio"]),
         },
         "exit": dict(config["exit"]),
-        "meta": dict(config["meta"]),
+        "meta": dict(config["meta"]),  # carries variant_id when present
     }
 
 

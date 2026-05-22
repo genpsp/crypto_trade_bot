@@ -288,6 +288,48 @@ def _load_profile(raw: Any) -> dict[str, Any]:
     return {}
 
 
+def _profile_has_stochastic_signal(profile: dict[str, Any]) -> bool:
+    """Return True iff the profile carries at least one stochastic dimension.
+
+    Without any of reject / latency / slippage-dist signal the StochasticExecutionModel
+    degenerates to deterministic behaviour identical to IdealExecutionModel.
+    """
+    if not isinstance(profile, dict) or not profile:
+        return False
+
+    def _bucket_has_signal(bucket: dict[str, Any]) -> bool:
+        for key in ("p_reject", "reject_probability", "reject_rate"):
+            try:
+                if float(bucket.get(key, 0.0)) > 0:
+                    return True
+            except (TypeError, ValueError):
+                continue
+        for key in ("latency_seconds", "mean_latency_seconds"):
+            try:
+                if float(bucket.get(key, 0.0)) > 0:
+                    return True
+            except (TypeError, ValueError):
+                continue
+        slippage = bucket.get("slippage_bps")
+        if isinstance(slippage, dict):
+            for key in ("std", "std_bps"):
+                try:
+                    if float(slippage.get(key, 0.0)) > 0:
+                        return True
+                except (TypeError, ValueError):
+                    continue
+        return False
+
+    if _bucket_has_signal(profile):
+        return True
+    by_direction = profile.get("by_direction")
+    if isinstance(by_direction, dict):
+        for sub in by_direction.values():
+            if isinstance(sub, dict) and _bucket_has_signal(sub):
+                return True
+    return False
+
+
 def build_execution_model(execution: dict[str, Any]) -> ExecutionModel:
     raw_model_id = (
         execution.get("model_id")
@@ -311,5 +353,12 @@ def build_execution_model(execution: dict[str, Any]) -> ExecutionModel:
         for key in ("p_reject", "reject_probability", "reject_rate", "latency_seconds", "mean_latency_seconds", "slippage_bps"):
             if key in execution and key not in profile:
                 profile[key] = execution[key]
+        if not _profile_has_stochastic_signal(profile):
+            raise ValueError(
+                "stochastic_v1 execution model requires a non-empty profile "
+                "(any of p_reject/reject_probability/reject_rate, latency_seconds/mean_latency_seconds, "
+                "or slippage_bps dict, optionally under by_direction). "
+                "Without these the model is equivalent to ideal_v1 and seeds produce identical trades."
+            )
         return StochasticExecutionModel(profile=profile, additional_slippage_bps=float(execution.get("additional_slippage_bps", 0.0)))
     raise ValueError(f"unsupported execution model_id: {raw_model_id}")

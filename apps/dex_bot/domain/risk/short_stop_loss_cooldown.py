@@ -5,7 +5,7 @@ from typing import Any, Sequence
 
 from apps.dex_bot.domain.model.types import TradeRecord
 
-SHORT_STOP_LOSS_COOLDOWN_STRATEGY_NAMES = frozenset({"ema_trend_pullback_15m_v0"})
+SHORT_STOP_LOSS_COOLDOWN_STRATEGY_NAMES = frozenset({"ema_trend_pullback_15m_v0", "ema_trend_pullback_15m_v2"})
 SHORT_STOP_LOSS_COOLDOWN_BARS = 8
 SHORT_STOP_LOSS_COOLDOWN_LOOKBACK_CLOSED_TRADES = 20
 SHORT_STOP_LOSS_COOLDOWN_REASON = "SHORT_COOLDOWN_AFTER_STOP_LOSS_ACTIVE"

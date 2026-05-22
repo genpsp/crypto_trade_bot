@@ -55,6 +55,10 @@ ATR_PERIOD = 14
 ATR_STOP_MULTIPLIER = 1.5
 # LONG は高ATR帯での追随が崩れやすいため上限を置く
 LONG_ATR_PCT_MAX = 0.7
+# LOW_VOL 帯では holdout で勝率が落ちるため、下限カットオフを任意で設定できる（0 = 無効）
+LONG_ATR_PCT_MIN = 0.0
+SHORT_ATR_PCT_MIN = 0.0
+SHORT_ATR_PCT_MAX = math.inf
 UPPER_TREND_TIMEFRAME_MINUTES = 240
 UPPER_TREND_EMA_FAST_PERIOD = 9
 UPPER_TREND_EMA_SLOW_PERIOD = 34
@@ -250,6 +254,9 @@ def evaluate_ema_trend_pullback_15m_v0(
     atr_period = _strategy_int(strategy, "atr_period", ATR_PERIOD)
     atr_stop_multiplier = _strategy_float(strategy, "atr_stop_multiplier", ATR_STOP_MULTIPLIER)
     long_atr_pct_max = _strategy_float(strategy, "long_atr_pct_max", LONG_ATR_PCT_MAX)
+    long_atr_pct_min = _strategy_float(strategy, "long_atr_pct_min", LONG_ATR_PCT_MIN)
+    short_atr_pct_min = _strategy_float(strategy, "short_atr_pct_min", SHORT_ATR_PCT_MIN)
+    short_atr_pct_max = _strategy_float(strategy, "short_atr_pct_max", SHORT_ATR_PCT_MAX)
     upper_trend_timeframe_minutes = _strategy_int(
         strategy,
         "upper_trend_timeframe_minutes",
@@ -612,6 +619,45 @@ def evaluate_ema_trend_pullback_15m_v0(
         return build_no_signal(
             f"NO_SIGNAL: long ATR regime is too hot (atr_pct={atr_pct:.4f})",
             "LONG_ATR_REGIME_TOO_HOT",
+            ema_fast=ema_fast,
+            ema_slow=ema_slow,
+            diagnostics=diagnostics,
+        )
+    if (
+        entry_direction == "LONG"
+        and long_atr_pct_min > 0
+        and atr_pct is not None
+        and atr_pct < long_atr_pct_min
+    ):
+        return build_no_signal(
+            f"NO_SIGNAL: long ATR regime is too cold (atr_pct={atr_pct:.4f})",
+            "LONG_ATR_REGIME_TOO_COLD",
+            ema_fast=ema_fast,
+            ema_slow=ema_slow,
+            diagnostics=diagnostics,
+        )
+    if (
+        entry_direction == "SHORT"
+        and short_atr_pct_min > 0
+        and atr_pct is not None
+        and atr_pct < short_atr_pct_min
+    ):
+        return build_no_signal(
+            f"NO_SIGNAL: short ATR regime is too cold (atr_pct={atr_pct:.4f})",
+            "SHORT_ATR_REGIME_TOO_COLD",
+            ema_fast=ema_fast,
+            ema_slow=ema_slow,
+            diagnostics=diagnostics,
+        )
+    if (
+        entry_direction == "SHORT"
+        and math.isfinite(short_atr_pct_max)
+        and atr_pct is not None
+        and atr_pct >= short_atr_pct_max
+    ):
+        return build_no_signal(
+            f"NO_SIGNAL: short ATR regime is too hot (atr_pct={atr_pct:.4f})",
+            "SHORT_ATR_REGIME_TOO_HOT",
             ema_fast=ema_fast,
             ema_slow=ema_slow,
             diagnostics=diagnostics,

@@ -1,0 +1,76 @@
+name: gmo_15m_logic_search_v3_live
+model_id: gmo_ema_pullback_15m_both_v0
+base_config: research/models/gmo_ema_pullback_15m_both_v0/config/current.json
+
+# 2026-03-12 ~ 2026-05-20 を holdout として、LIVE 期間と重なる本物のシャドウ検証
+min_trades: 20
+holdout:
+  type: time_split
+  train_end: 2026-03-11T23:59:59Z
+  test_start: 2026-03-12T00:00:00Z
+
+execution_model:
+  id: ideal_v1
+
+dataset:
+  broker: GMO_COIN
+  pair: SOL/JPY
+  timeframe: 15m
+  bars_path: research/data/raw/soljpy_15m_to_2026_05.csv
+
+windows:
+  - type: rolling
+    length_days: 90
+    step_days: 30
+
+combinations: listed
+
+cases:
+  - name: A_baseline_BOTH
+    values: {}
+  - name: B_LONG_only
+    values:
+      direction: LONG
+  - name: C_SHORT_only
+    values:
+      direction: SHORT
+  - name: D_long_low_vol_025
+    values:
+      direction: LONG
+      strategy.long_atr_pct_min: 0.25
+  - name: E_long_tight_tp18
+    values:
+      direction: LONG
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 1.8
+  - name: E_long_tight_tp22
+    values:
+      direction: LONG
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.2
+  - name: F_long_combo025_tight_tp22
+    values:
+      direction: LONG
+      strategy.long_atr_pct_min: 0.25
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.2
+  - name: F_long_combo025_tight_tp18
+    values:
+      direction: LONG
+      strategy.long_atr_pct_min: 0.25
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 1.8
+  - name: G_short_strict_tp20
+    values:
+      direction: SHORT
+      strategy.short_atr_pct_min: 0.40
+      strategy.short_upper_trend_min_gap_pct: 0.30
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.0
+  - name: G_short_strict_tp24
+    values:
+      direction: SHORT
+      strategy.short_atr_pct_min: 0.40
+      strategy.short_upper_trend_min_gap_pct: 0.30
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.4

@@ -19,10 +19,13 @@ class BackfillOhlcvProviderProtocol(OhlcvProviderProtocol, Protocol):
     def fetch_bars_backfill(self, pair: str, timeframe: str, total_limit: int) -> list[OhlcvBar]: ...
 
 
+_GMO_PAIRS: tuple[str, ...] = ("SOL/JPY", "BTC/JPY", "ETH/JPY")
+
+
 def infer_broker(pair: str) -> Broker:
     if pair == "SOL/USDC":
         return "DEX"
-    if pair == "SOL/JPY":
+    if pair in _GMO_PAIRS:
         return "GMO_COIN"
     raise ValueError(f"unsupported pair: {pair}")
 
@@ -34,7 +37,7 @@ def get_provider(broker: Broker | str | None = None, pair: str | None = None) ->
             raise ValueError(f"DEX provider does not support pair: {pair}")
         return DexOhlcvProvider()
     if resolved_broker == "GMO_COIN":
-        if pair is not None and pair != "SOL/JPY":
+        if pair is not None and pair not in _GMO_PAIRS:
             raise ValueError(f"GMO_COIN provider does not support pair: {pair}")
         return GmoOhlcvProvider(client=GmoApiClient(api_key="", api_secret=""))
     raise ValueError(f"unsupported broker: {broker}")

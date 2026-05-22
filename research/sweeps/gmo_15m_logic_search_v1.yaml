@@ -1,0 +1,135 @@
+name: gmo_15m_logic_search_v1
+model_id: gmo_ema_pullback_15m_both_v0
+base_config: research/models/gmo_ema_pullback_15m_both_v0/config/current.json
+
+min_trades: 25
+holdout:
+  type: time_split
+  train_end: 2025-11-30T23:59:59Z
+  test_start: 2025-12-01T00:00:00Z
+
+execution_model:
+  id: ideal_v1
+
+dataset:
+  broker: GMO_COIN
+  pair: SOL/JPY
+  timeframe: 15m
+  bars_path: research/data/raw/soljpy_15m_1y.csv
+
+windows:
+  - type: walk_forward
+    train_days: 180
+    test_days: 90
+    step_days: 90
+
+combinations: listed
+
+cases:
+  # === A. Baseline (BOTH, current default) ===
+  - name: baseline_both
+    values: {}
+
+  - name: baseline_long_only
+    values:
+      direction: LONG
+  - name: baseline_short_only
+    values:
+      direction: SHORT
+
+  # === B. LOW_VOL gate (LONG-only) ===
+  - name: long_low_vol_cut_025
+    values:
+      direction: LONG
+      strategy.long_atr_pct_min: 0.25
+  - name: long_low_vol_cut_040
+    values:
+      direction: LONG
+      strategy.long_atr_pct_min: 0.40
+  - name: long_low_vol_cut_055
+    values:
+      direction: LONG
+      strategy.long_atr_pct_min: 0.55
+
+  # === C. SHORT-only with ATR floor & tighter regime ===
+  - name: short_low_vol_cut_040
+    values:
+      direction: SHORT
+      strategy.short_atr_pct_min: 0.40
+  - name: short_strict_regime
+    values:
+      direction: SHORT
+      strategy.short_upper_trend_min_gap_pct: 0.30
+      strategy.short_atr_pct_min: 0.40
+
+  # === D. R:R redesign (LONG, tighter stops + larger TP) ===
+  - name: long_rr_tight_stop_tp22
+    values:
+      direction: LONG
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.2
+  - name: long_rr_tight_stop_tp26
+    values:
+      direction: LONG
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.6
+  - name: long_rr_wide_stop_tp14
+    values:
+      direction: LONG
+      strategy.atr_stop_multiplier: 1.8
+      exit.take_profit_r_multiple: 1.4
+
+  # === E. Anti-chase: tighten max distance / shorten pullback ===
+  - name: long_anti_chase_dist045
+    values:
+      direction: LONG
+      strategy.max_distance_from_ema_fast_pct: 0.45
+  - name: long_anti_chase_pullback3
+    values:
+      direction: LONG
+      strategy.pullback_lookback_bars: 3
+      strategy.max_distance_from_ema_fast_pct: 0.45
+
+  # === F. Stricter regime gate (LONG) ===
+  - name: long_strong_trend_gap05
+    values:
+      direction: LONG
+      strategy.long_weak_upper_trend_min_gap_pct: 0.5
+
+  # === G. Combined hypotheses ===
+  - name: long_combo_low_vol_anti_chase
+    values:
+      direction: LONG
+      strategy.long_atr_pct_min: 0.40
+      strategy.max_distance_from_ema_fast_pct: 0.45
+  - name: long_combo_low_vol_rr26
+    values:
+      direction: LONG
+      strategy.long_atr_pct_min: 0.40
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.6
+  - name: long_combo_full
+    values:
+      direction: LONG
+      strategy.long_atr_pct_min: 0.40
+      strategy.max_distance_from_ema_fast_pct: 0.45
+      strategy.long_weak_upper_trend_min_gap_pct: 0.5
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.4
+  - name: short_combo_strict
+    values:
+      direction: SHORT
+      strategy.short_atr_pct_min: 0.40
+      strategy.short_upper_trend_min_gap_pct: 0.30
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.4
+
+  # === H. Anti-baseline: do nothing different but raise TP only ===
+  - name: long_tp_only_2_4
+    values:
+      direction: LONG
+      exit.take_profit_r_multiple: 2.4
+  - name: long_tp_only_3_0
+    values:
+      direction: LONG
+      exit.take_profit_r_multiple: 3.0

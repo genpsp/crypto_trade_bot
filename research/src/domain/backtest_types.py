@@ -3,7 +3,14 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
-ExitReason = Literal["TAKE_PROFIT", "STOP_LOSS", "STOP_LOSS_AND_TP_SAME_BAR", "OPEN"]
+ExitReason = Literal[
+    "TAKE_PROFIT",
+    "STOP_LOSS",
+    "STOP_LOSS_AND_TP_SAME_BAR",
+    "OPEN",
+    "PARTIAL_TAKE_PROFIT",
+    "TIME_EXIT",
+]
 
 
 @dataclass

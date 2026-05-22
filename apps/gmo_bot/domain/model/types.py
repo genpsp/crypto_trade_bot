@@ -15,7 +15,7 @@ from apps.dex_bot.domain.model.types import (
     StrategyDecision,
 )
 
-Pair = Literal["SOL/JPY"]
+Pair = Literal["SOL/JPY", "BTC/JPY", "ETH/JPY"]
 Broker = Literal["GMO_COIN"]
 
 
@@ -28,9 +28,14 @@ class ExecutionConfig(TypedDict):
     margin_usage_ratio: float
 
 
-class MetaConfig(TypedDict):
+class MetaConfig(TypedDict, total=False):
     config_version: int
     note: str
+    # Stable, human-readable identifier of the strategy variant in production.
+    # Persisted to TradeRecord at create-time so that historical trades can be
+    # attributed to a specific variant even after config_version is reused.
+    # Optional for backwards compatibility with older configs.
+    variant_id: str
 
 
 class BotConfig(TypedDict):
@@ -160,6 +165,11 @@ class TradeRecord(TypedDict, total=False):
     direction: Direction
     state: TradeState
     config_version: int
+    # Stable identifier of the strategy variant that produced this trade.
+    # Copied from `meta.variant_id` at trade creation; never updated after.
+    # Older trades may lack this field — readers must treat missing as
+    # "pre-variant_id era" (= v0 baseline by convention).
+    variant_id: str
     signal: TradeSignalSnapshot
     plan: TradePlanSnapshot
     execution: TradeExecutionSnapshot

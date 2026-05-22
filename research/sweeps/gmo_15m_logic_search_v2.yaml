@@ -1,0 +1,144 @@
+name: gmo_15m_logic_search_v2
+model_id: gmo_ema_pullback_15m_both_v0
+base_config: research/models/gmo_ema_pullback_15m_both_v0/config/current.json
+
+min_trades: 20
+holdout:
+  type: time_split
+  train_end: 2025-11-30T23:59:59Z
+  test_start: 2025-12-01T00:00:00Z
+
+execution_model:
+  id: ideal_v1
+
+dataset:
+  broker: GMO_COIN
+  pair: SOL/JPY
+  timeframe: 15m
+  bars_path: research/data/raw/soljpy_15m_1y.csv
+
+windows:
+  # rolling は contiguous segment を要求せず、CSV のギャップに強い。
+  # 90日 / 30日step で ~10 window の安定性を見る
+  - type: rolling
+    length_days: 90
+    step_days: 30
+
+combinations: listed
+
+cases:
+  # ---- Top survivors from v1 ----
+  - name: top_baseline_long
+    values:
+      direction: LONG
+  - name: top_long_tight_rr_tp22
+    values:
+      direction: LONG
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.2
+  - name: top_long_low_vol_025
+    values:
+      direction: LONG
+      strategy.long_atr_pct_min: 0.25
+  - name: top_long_low_vol_055
+    values:
+      direction: LONG
+      strategy.long_atr_pct_min: 0.55
+  - name: top_long_strong_trend
+    values:
+      direction: LONG
+      strategy.long_weak_upper_trend_min_gap_pct: 0.5
+  - name: top_short_strict_combo
+    values:
+      direction: SHORT
+      strategy.short_atr_pct_min: 0.40
+      strategy.short_upper_trend_min_gap_pct: 0.30
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.4
+
+  # ---- Sensitivity grid around best (tight_rr_tp22) ----
+  - name: sens_tight_stop10_tp18
+    values:
+      direction: LONG
+      strategy.atr_stop_multiplier: 1.0
+      exit.take_profit_r_multiple: 1.8
+  - name: sens_tight_stop10_tp22
+    values:
+      direction: LONG
+      strategy.atr_stop_multiplier: 1.0
+      exit.take_profit_r_multiple: 2.2
+  - name: sens_tight_stop12_tp18
+    values:
+      direction: LONG
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 1.8
+  - name: sens_tight_stop12_tp20
+    values:
+      direction: LONG
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.0
+  - name: sens_tight_stop12_tp24
+    values:
+      direction: LONG
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.4
+  - name: sens_tight_stop14_tp22
+    values:
+      direction: LONG
+      strategy.atr_stop_multiplier: 1.4
+      exit.take_profit_r_multiple: 2.2
+  - name: sens_tight_stop15_tp18
+    values:
+      direction: LONG
+      strategy.atr_stop_multiplier: 1.5
+      exit.take_profit_r_multiple: 1.8
+
+  # ---- Combined: low_vol + tight RR ----
+  - name: combo_long_low_vol025_tight_tp22
+    values:
+      direction: LONG
+      strategy.long_atr_pct_min: 0.25
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.2
+  - name: combo_long_low_vol025_strong_trend
+    values:
+      direction: LONG
+      strategy.long_atr_pct_min: 0.25
+      strategy.long_weak_upper_trend_min_gap_pct: 0.5
+  - name: combo_long_low_vol025_strong_trend_tight_tp22
+    values:
+      direction: LONG
+      strategy.long_atr_pct_min: 0.25
+      strategy.long_weak_upper_trend_min_gap_pct: 0.5
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.2
+
+  # ---- SHORT sensitivity ----
+  - name: short_sens_atr035_gap025
+    values:
+      direction: SHORT
+      strategy.short_atr_pct_min: 0.35
+      strategy.short_upper_trend_min_gap_pct: 0.25
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.4
+  - name: short_sens_atr050_gap040
+    values:
+      direction: SHORT
+      strategy.short_atr_pct_min: 0.50
+      strategy.short_upper_trend_min_gap_pct: 0.40
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.4
+  - name: short_sens_tp20
+    values:
+      direction: SHORT
+      strategy.short_atr_pct_min: 0.40
+      strategy.short_upper_trend_min_gap_pct: 0.30
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.0
+  - name: short_sens_tp28
+    values:
+      direction: SHORT
+      strategy.short_atr_pct_min: 0.40
+      strategy.short_upper_trend_min_gap_pct: 0.30
+      strategy.atr_stop_multiplier: 1.2
+      exit.take_profit_r_multiple: 2.8

@@ -38,18 +38,27 @@ def parse_config(data: Any) -> BotConfig:
 
     _require(isinstance(data.get("enabled"), bool), "enabled must be boolean")
     _require(data.get("broker") == "GMO_COIN", "broker must be 'GMO_COIN'")
-    _require(data.get("pair") == "SOL/JPY", "pair must be 'SOL/JPY'")
+    _require(
+        data.get("pair") in ("SOL/JPY", "BTC/JPY", "ETH/JPY"),
+        "pair must be one of 'SOL/JPY', 'BTC/JPY', 'ETH/JPY'",
+    )
     _require(data.get("direction") in ("LONG", "SHORT", "BOTH"), "direction must be LONG, SHORT or BOTH")
     _require(
-        data.get("signal_timeframe") in ("15m", "2h", "4h"),
-        "signal_timeframe must be '15m', '2h' or '4h'",
+        data.get("signal_timeframe") in ("15m", "1h", "2h", "4h"),
+        "signal_timeframe must be '15m', '1h', '2h' or '4h'",
     )
 
     strategy = _parse_strategy(data.get("strategy"), "strategy")
-    if strategy["name"] == "ema_trend_pullback_15m_v0":
+    if strategy["name"] in (
+        "ema_trend_pullback_15m_v0",
+        "ema_trend_pullback_15m_v2",
+        "supertrend_15m_v0",
+        "donchian_breakout_15m_v0",
+        "mean_reversion_15m_v0",
+    ):
         _require(
-            data["signal_timeframe"] == "15m",
-            "ema_trend_pullback_15m_v0 requires signal_timeframe='15m'",
+            data["signal_timeframe"] in ("15m", "1h", "4h"),
+            f"{strategy['name']} requires signal_timeframe in ('15m','1h','4h')",
         )
     if strategy["name"] == "ema_trend_pullback_v0":
         _require(
@@ -118,6 +127,12 @@ def parse_config(data: Any) -> BotConfig:
         "meta.config_version must be positive int",
     )
     _require(isinstance(meta.get("note"), str) and len(meta["note"]) > 0, "meta.note must be non-empty")
+    variant_id = meta.get("variant_id")
+    if variant_id is not None:
+        _require(
+            isinstance(variant_id, str) and len(variant_id) > 0,
+            "meta.variant_id must be a non-empty string when present",
+        )
 
     return {
         "enabled": data["enabled"],
@@ -139,5 +154,6 @@ def parse_config(data: Any) -> BotConfig:
         "meta": {
             "config_version": meta["config_version"],
             "note": meta["note"],
+            **({"variant_id": meta["variant_id"]} if meta.get("variant_id") else {}),
         },
     }

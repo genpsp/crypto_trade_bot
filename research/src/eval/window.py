@@ -65,14 +65,19 @@ def infer_bar_minutes(close_times: list[datetime]) -> int:
     return inferred
 
 
-def split_contiguous_segments(close_times: list[datetime], expected_minutes: int) -> list[tuple[int, int]]:
+def split_contiguous_segments(
+    close_times: list[datetime],
+    expected_minutes: int,
+    gap_tolerance_bars: int = 16,
+) -> list[tuple[int, int]]:
     if not close_times:
         return []
+    max_gap_minutes = max(expected_minutes, expected_minutes * int(gap_tolerance_bars))
     segments: list[tuple[int, int]] = []
     segment_start = 0
     for index in range(1, len(close_times)):
         delta_minutes = int((_to_utc(close_times[index]) - _to_utc(close_times[index - 1])).total_seconds() / 60)
-        if delta_minutes != expected_minutes:
+        if delta_minutes <= 0 or delta_minutes > max_gap_minutes:
             segments.append((segment_start, index - 1))
             segment_start = index
     segments.append((segment_start, len(close_times) - 1))
@@ -161,10 +166,11 @@ def _build_walk_forward_windows(
     test_bars = int(round(test_days * bars_per_day))
     step_bars = int(round(step_days * bars_per_day))
     max_windows = spec.get("max_windows")
+    gap_tolerance_bars = int(spec.get("gap_tolerance_bars", 16))
     if train_bars <= 0 or test_bars <= 0 or step_bars <= 0:
         raise ValueError("walk_forward bars must be positive")
     window_bars = train_bars + test_bars
-    segments = split_contiguous_segments(close_times, bar_minutes)
+    segments = split_contiguous_segments(close_times, bar_minutes, gap_tolerance_bars=gap_tolerance_bars)
     windows: list[ConcreteWindow] = []
     produced_windows = 0
     for segment_index, (segment_start, segment_end) in enumerate(segments):

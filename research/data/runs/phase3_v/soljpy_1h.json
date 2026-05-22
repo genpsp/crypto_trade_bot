@@ -1,0 +1,276 @@
+{
+  "pair": "SOL/JPY",
+  "timeframe": "1h",
+  "windows": 10,
+  "window_bars": 1000,
+  "bars_path": "research/data/raw/soljpy_1h_to_2026_05.csv",
+  "variants": [
+    {
+      "variant": "mean_reversion_default",
+      "per_window": [
+        {
+          "scaled_pnl_pct": -4.1665,
+          "trades": 48,
+          "win_rate_pct": 33.33,
+          "window_index": 0,
+          "first_open": "2025-03-24T20:00:00Z",
+          "last_open": "2025-05-05T23:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -9.3737,
+          "trades": 37,
+          "win_rate_pct": 21.62,
+          "window_index": 1,
+          "first_open": "2025-05-06T00:00:00Z",
+          "last_open": "2025-06-17T04:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -4.4197,
+          "trades": 57,
+          "win_rate_pct": 38.6,
+          "window_index": 2,
+          "first_open": "2025-06-17T05:00:00Z",
+          "last_open": "2025-07-29T10:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 1.6465,
+          "trades": 48,
+          "win_rate_pct": 37.5,
+          "window_index": 3,
+          "first_open": "2025-07-29T11:00:00Z",
+          "last_open": "2025-09-09T14:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -4.5376,
+          "trades": 39,
+          "win_rate_pct": 35.9,
+          "window_index": 4,
+          "first_open": "2025-09-09T15:00:00Z",
+          "last_open": "2025-10-21T17:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -7.6355,
+          "trades": 43,
+          "win_rate_pct": 30.23,
+          "window_index": 5,
+          "first_open": "2025-10-21T18:00:00Z",
+          "last_open": "2025-12-02T20:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 9.6261,
+          "trades": 55,
+          "win_rate_pct": 47.27,
+          "window_index": 6,
+          "first_open": "2025-12-02T21:00:00Z",
+          "last_open": "2026-01-14T00:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -5.9626,
+          "trades": 41,
+          "win_rate_pct": 26.83,
+          "window_index": 7,
+          "first_open": "2026-01-14T01:00:00Z",
+          "last_open": "2026-02-25T05:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -6.141,
+          "trades": 44,
+          "win_rate_pct": 29.55,
+          "window_index": 8,
+          "first_open": "2026-02-25T06:00:00Z",
+          "last_open": "2026-04-08T09:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -4.9197,
+          "trades": 47,
+          "win_rate_pct": 36.17,
+          "window_index": 9,
+          "first_open": "2026-04-08T10:00:00Z",
+          "last_open": "2026-05-20T13:00:00Z"
+        }
+      ],
+      "min": -9.3737,
+      "mean": -3.5884,
+      "pos_rate_pct": 20.0,
+      "verdict": "REJECT (pos_rate>=60 mean>=+3 min>=-5)"
+    },
+    {
+      "variant": "mean_reversion_bb30_chop20",
+      "per_window": [
+        {
+          "scaled_pnl_pct": -2.6711,
+          "trades": 13,
+          "win_rate_pct": 30.77,
+          "window_index": 0,
+          "first_open": "2025-03-24T20:00:00Z",
+          "last_open": "2025-05-05T23:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -2.4242,
+          "trades": 6,
+          "win_rate_pct": 16.67,
+          "window_index": 1,
+          "first_open": "2025-05-06T00:00:00Z",
+          "last_open": "2025-06-17T04:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -4.3424,
+          "trades": 12,
+          "win_rate_pct": 25.0,
+          "window_index": 2,
+          "first_open": "2025-06-17T05:00:00Z",
+          "last_open": "2025-07-29T10:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -4.7189,
+          "trades": 16,
+          "win_rate_pct": 31.25,
+          "window_index": 3,
+          "first_open": "2025-07-29T11:00:00Z",
+          "last_open": "2025-09-09T14:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -3.5854,
+          "trades": 15,
+          "win_rate_pct": 26.67,
+          "window_index": 4,
+          "first_open": "2025-09-09T15:00:00Z",
+          "last_open": "2025-10-21T17:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 1.1317,
+          "trades": 10,
+          "win_rate_pct": 50.0,
+          "window_index": 5,
+          "first_open": "2025-10-21T18:00:00Z",
+          "last_open": "2025-12-02T20:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -4.217,
+          "trades": 19,
+          "win_rate_pct": 26.32,
+          "window_index": 6,
+          "first_open": "2025-12-02T21:00:00Z",
+          "last_open": "2026-01-14T00:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -4.1434,
+          "trades": 8,
+          "win_rate_pct": 12.5,
+          "window_index": 7,
+          "first_open": "2026-01-14T01:00:00Z",
+          "last_open": "2026-02-25T05:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -5.2673,
+          "trades": 20,
+          "win_rate_pct": 25.0,
+          "window_index": 8,
+          "first_open": "2026-02-25T06:00:00Z",
+          "last_open": "2026-04-08T09:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -0.5538,
+          "trades": 21,
+          "win_rate_pct": 47.62,
+          "window_index": 9,
+          "first_open": "2026-04-08T10:00:00Z",
+          "last_open": "2026-05-20T13:00:00Z"
+        }
+      ],
+      "min": -5.2673,
+      "mean": -3.0792,
+      "pos_rate_pct": 10.0,
+      "verdict": "REJECT (pos_rate>=60 mean>=+3 min>=-5)"
+    },
+    {
+      "variant": "mean_reversion_bb20_std2_5",
+      "per_window": [
+        {
+          "scaled_pnl_pct": -5.2688,
+          "trades": 14,
+          "win_rate_pct": 28.57,
+          "window_index": 0,
+          "first_open": "2025-03-24T20:00:00Z",
+          "last_open": "2025-05-05T23:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -4.3702,
+          "trades": 19,
+          "win_rate_pct": 26.32,
+          "window_index": 1,
+          "first_open": "2025-05-06T00:00:00Z",
+          "last_open": "2025-06-17T04:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -3.3059,
+          "trades": 21,
+          "win_rate_pct": 28.57,
+          "window_index": 2,
+          "first_open": "2025-06-17T05:00:00Z",
+          "last_open": "2025-07-29T10:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -5.5406,
+          "trades": 19,
+          "win_rate_pct": 26.32,
+          "window_index": 3,
+          "first_open": "2025-07-29T11:00:00Z",
+          "last_open": "2025-09-09T14:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -6.597,
+          "trades": 13,
+          "win_rate_pct": 15.38,
+          "window_index": 4,
+          "first_open": "2025-09-09T15:00:00Z",
+          "last_open": "2025-10-21T17:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -2.0125,
+          "trades": 9,
+          "win_rate_pct": 33.33,
+          "window_index": 5,
+          "first_open": "2025-10-21T18:00:00Z",
+          "last_open": "2025-12-02T20:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 1.8405,
+          "trades": 26,
+          "win_rate_pct": 38.46,
+          "window_index": 6,
+          "first_open": "2025-12-02T21:00:00Z",
+          "last_open": "2026-01-14T00:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -3.9048,
+          "trades": 13,
+          "win_rate_pct": 23.08,
+          "window_index": 7,
+          "first_open": "2026-01-14T01:00:00Z",
+          "last_open": "2026-02-25T05:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -3.7186,
+          "trades": 25,
+          "win_rate_pct": 28.0,
+          "window_index": 8,
+          "first_open": "2026-02-25T06:00:00Z",
+          "last_open": "2026-04-08T09:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": -6.0268,
+          "trades": 26,
+          "win_rate_pct": 23.08,
+          "window_index": 9,
+          "first_open": "2026-04-08T10:00:00Z",
+          "last_open": "2026-05-20T13:00:00Z"
+        }
+      ],
+      "min": -6.597,
+      "mean": -3.8905,
+      "pos_rate_pct": 10.0,
+      "verdict": "REJECT (pos_rate>=60 mean>=+3 min>=-5)"
+    }
+  ]
+}

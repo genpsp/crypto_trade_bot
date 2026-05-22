@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-LOSS_STREAK_DYNAMIC_CAP_STRATEGY_NAMES = frozenset({"ema_trend_pullback_15m_v0"})
+LOSS_STREAK_DYNAMIC_CAP_STRATEGY_NAMES = frozenset({"ema_trend_pullback_15m_v0", "ema_trend_pullback_15m_v2"})
 LOSS_STREAK_LOOKBACK_CLOSED_TRADES = 20
 LOSS_STREAK_CAP_LEVEL_1_THRESHOLD = 2
 LOSS_STREAK_CAP_LEVEL_2_THRESHOLD = 3

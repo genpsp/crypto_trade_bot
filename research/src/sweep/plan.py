@@ -66,7 +66,8 @@ def build_plan(spec: SweepSpec, dataset: MarketDataset) -> list[TrialSpec]:
     seeds: list[int | None] = [int(seed) for seed in seeds_raw] if isinstance(seeds_raw, list) and seeds_raw else [None]
     trials: list[TrialSpec] = []
     for case_index, case in enumerate(cases):
-        case_config = apply_overrides(base_config, case)
+        case_overrides = case.overrides
+        case_config = apply_overrides(base_config, case_overrides)
         case_name = format_case_name(case)
         for seed in seeds:
             config = _apply_execution_model(case_config, spec.execution_model, seed)
@@ -81,7 +82,7 @@ def build_plan(spec: SweepSpec, dataset: MarketDataset) -> list[TrialSpec]:
                             "spec_name": spec.name,
                             "case_index": case_index,
                             "case_name": case_name,
-                            "axis_values": case,
+                            "axis_values": case_overrides,
                             "window_role": window.role,
                             "min_trades": spec.min_trades,
                             "execution_model_id": config.get("execution", {}).get("model_id", "ideal_v1"),

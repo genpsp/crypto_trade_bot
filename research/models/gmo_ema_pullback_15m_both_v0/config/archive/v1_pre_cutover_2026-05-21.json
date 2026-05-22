@@ -1,0 +1,58 @@
+{
+  "enabled": true,
+  "broker": "GMO_COIN",
+  "pair": "SOL/JPY",
+  "direction": "BOTH",
+  "signal_timeframe": "15m",
+  "strategy": {
+    "name": "ema_trend_pullback_15m_v0",
+    "ema_fast_period": 9,
+    "ema_slow_period": 34,
+    "swing_low_lookback_bars": 12,
+    "entry": "ON_BAR_CLOSE",
+    "pullback_lookback_bars": 6,
+    "max_distance_from_ema_fast_pct": 0.9,
+    "short_breakdown_lookback_bars": 6,
+    "rsi_period": 14,
+    "rsi_long_lower_bound": 50.0,
+    "rsi_long_upper_bound": 68.0,
+    "rsi_short_lower_bound": 32.0,
+    "rsi_short_upper_bound": 50.0,
+    "long_weak_upper_trend_min_gap_pct": 0.05,
+    "long_weak_trend_confirm_timeframe_minutes": 120,
+    "short_upper_trend_min_gap_pct": 0.05,
+    "short_reversal_guard_min_upper_trend_gap_pct": 3.0,
+    "short_upper_fast_slope_max_pct": 1000000000.0,
+    "short_upper_close_drift_max_pct": 0.5,
+    "atr_period": 14,
+    "atr_stop_multiplier": 1.5,
+    "long_atr_pct_max": 0.7,
+    "upper_trend_timeframe_minutes": 240,
+    "upper_trend_ema_fast_period": 9,
+    "upper_trend_ema_slow_period": 34
+  },
+  "risk": {
+    "max_loss_per_trade_pct": 1.2,
+    "max_trades_per_day": 4,
+    "volatile_atr_pct_threshold": 0.9,
+    "storm_atr_pct_threshold": 1.4,
+    "volatile_size_multiplier": 0.7,
+    "storm_size_multiplier": 0.35
+  },
+  "execution": {
+    "mode": "LIVE",
+    "broker": "GMO_COIN",
+    "slippage_bps": 3,
+    "min_notional_jpy": 5000,
+    "leverage_multiplier": 1.0,
+    "margin_usage_ratio": 0.99
+  },
+  "exit": {
+    "stop": "SWING_LOW",
+    "take_profit_r_multiple": 1.8
+  },
+  "meta": {
+    "config_version": 1,
+    "note": "v0 baseline — archived 2026-05-21 immediately before the v2 cutover. See docs/runbook/gmo_v2_cutover.md."
+  }
+}

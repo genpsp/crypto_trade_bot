@@ -64,8 +64,20 @@ def _parse_strategy(strategy: Any, prefix: str) -> StrategyConfig:
     _require(isinstance(strategy, dict), f"{prefix} must be object")
     _require(
         strategy.get("name")
-        in ("ema_trend_pullback_v0", "ema_trend_pullback_15m_v0", "storm_short_v0"),
-        f"{prefix}.name must be ema_trend_pullback_v0, ema_trend_pullback_15m_v0 or storm_short_v0",
+        in (
+            "ema_trend_pullback_v0",
+            "ema_trend_pullback_15m_v0",
+            "ema_trend_pullback_15m_v2",
+            "supertrend_15m_v0",
+            "donchian_breakout_15m_v0",
+            "mean_reversion_15m_v0",
+            "storm_short_v0",
+        ),
+        (
+            f"{prefix}.name must be ema_trend_pullback_v0, ema_trend_pullback_15m_v0, "
+            "ema_trend_pullback_15m_v2, supertrend_15m_v0, donchian_breakout_15m_v0, "
+            "mean_reversion_15m_v0 or storm_short_v0"
+        ),
     )
     _require(
         isinstance(strategy.get("ema_fast_period"), int) and strategy["ema_fast_period"] > 0,
@@ -119,6 +131,17 @@ def _parse_strategy(strategy: Any, prefix: str) -> StrategyConfig:
             f"{prefix}.{key} must be number between 0 and 100",
         )
         parsed[key] = float(value)  # type: ignore[literal-required]
+
+    # Preserve the optional v2 component bundle. resolve_strategy_bundle accepts
+    # any plain dict; per-component validation happens inside its factory
+    # (`bundle._build_regime_gate` etc.) so we forward the raw structure.
+    if "components" in strategy:
+        components = strategy["components"]
+        _require(
+            isinstance(components, dict),
+            f"{prefix}.components must be an object when present",
+        )
+        parsed["components"] = components  # type: ignore[literal-required]
 
     return parsed
 
@@ -203,10 +226,15 @@ def parse_config(data: Any) -> BotConfig:
     )
 
     strategy = _parse_strategy(data.get("strategy"), "strategy")
-    if strategy["name"] == "ema_trend_pullback_15m_v0":
+    if strategy["name"] in (
+        "ema_trend_pullback_15m_v0",
+        "ema_trend_pullback_15m_v2",
+        "supertrend_15m_v0",
+        "donchian_breakout_15m_v0",
+    ):
         _require(
             data["signal_timeframe"] == "15m",
-            "ema_trend_pullback_15m_v0 requires signal_timeframe='15m'",
+            f"{strategy['name']} requires signal_timeframe='15m'",
         )
     if strategy["name"] == "ema_trend_pullback_v0":
         _require(

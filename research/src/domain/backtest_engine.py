@@ -27,12 +27,22 @@ from apps.dex_bot.domain.risk.swing_low_stop import (
     tighten_stop_for_short,
 )
 from apps.dex_bot.domain.strategy.registry import evaluate_strategy_for_model as dex_evaluate_strategy_for_model
+from apps.gmo_bot.domain.strategy.components import (
+    BreakEvenAction,
+    CloseAction,
+    HoldAction,
+    PartialTpAction,
+    PositionContext,
+    StrategyBundle,
+    TrailAction,
+    resolve_strategy_bundle,
+)
 from apps.gmo_bot.domain.strategy.registry import evaluate_strategy_for_model as gmo_evaluate_strategy_for_model
 from shared.utils.math import round_to
 from apps.dex_bot.domain.utils.time import get_bar_duration_seconds
 
 from research.src.domain.backtest_types import BacktestReport, BacktestSummary, BacktestTrade
-from research.src.data.regime_tagger import get_bar_regime
+from research.src.data.regime_tagger import attach_regime_tags, get_bar_regime
 from research.src.eval.execution_model import RejectedEntry, build_execution_model, buy_fill_price, sell_fill_price
 
 
@@ -51,6 +61,15 @@ class _OpenPosition:
     entry_regime: dict[str, str]
     execution_model_id: str
     execution_seed: int | None
+    # ── component-bundle accounting (defaults preserve v0 numerics) ──
+    initial_stop_price: float = 0.0
+    initial_take_profit_price: float = 0.0
+    atr_at_entry: float = 0.0
+    initial_quantity_sol: float = 0.0
+    initial_effective_notional_usdc: float = 0.0
+    initial_base_notional_usdc: float = 0.0
+    remaining_fraction: float = 1.0
+    partial_pnl_accrued_usdc: float = 0.0
 
 
 def _to_utc_iso(value: datetime) -> str:
@@ -122,10 +141,22 @@ def _simulate_sell_fill_price(trigger_price: float, slippage_bps: int) -> float:
     return sell_fill_price(trigger_price, slippage_bps)
 
 
+_STRATEGIES_REQUIRING_15M_UPPER_TREND_LIMIT = {
+    "ema_trend_pullback_15m_v0",
+    "ema_trend_pullback_15m_v2",
+    "supertrend_15m_v0",
+    "donchian_breakout_15m_v0",
+}
+
+
 def _resolve_ohlcv_limit(config: BotConfig) -> int:
-    if config["strategy"]["name"] == "ema_trend_pullback_15m_v0":
+    if config["strategy"]["name"] in _STRATEGIES_REQUIRING_15M_UPPER_TREND_LIMIT:
         return OHLCV_LIMIT_FOR_15M_UPPER_TREND
     return DEFAULT_OHLCV_LIMIT
+
+
+def _strategy_uses_component_bundle(config: BotConfig) -> bool:
+    return config["strategy"]["name"] == "ema_trend_pullback_15m_v2"
 
 
 def _evaluate_strategy_for_backtest(
@@ -160,7 +191,16 @@ def _evaluate_strategy_for_backtest(
 def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
     if len(bars) < 2:
         raise ValueError("Backtest requires at least 2 OHLCV bars")
+    # Ensure regime tags are present. When bars are shipped to worker processes via
+    # ProcessPoolExecutor, dynamic attributes set by attach_regime_tags() do not survive
+    # the default dataclass pickling, leaving entry_regime empty in trade parquet output.
+    if not hasattr(bars[0], "regime"):
+        attach_regime_tags(bars)
     direction = config["direction"]
+    uses_components = _strategy_uses_component_bundle(config)
+    strategy_bundle: StrategyBundle | None = (
+        resolve_strategy_bundle(config["strategy"]) if uses_components else None
+    )
     configured_min_notional_usdc = float(config["execution"]["min_notional_usdc"])
     slippage_bps = int(config["execution"]["slippage_bps"])
     max_trades_per_day = config["risk"]["max_trades_per_day"]
@@ -184,11 +224,202 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
     daily_entry_counts: dict[str, int] = {}
     enter_count = 0
     no_signal_count = 0
+    gate_state: dict[str, Any] = {"recent_r_multiples": []}
+
+    def _record_close(
+        *,
+        position: _OpenPosition,
+        current_bar: OhlcvBar,
+        exit_price: float,
+        exit_reason: str,
+        bar_index: int,
+    ) -> float:
+        is_long_local = position.direction == "LONG"
+        if is_long_local:
+            risk_per_unit = position.entry_price - position.stop_price
+            pnl_per_unit = exit_price - position.entry_price
+        else:
+            risk_per_unit = position.stop_price - position.entry_price
+            pnl_per_unit = position.entry_price - exit_price
+        position_pnl_usdc = position.quantity_sol * pnl_per_unit
+        portfolio_after_exit = position.base_notional_usdc + position_pnl_usdc
+        pnl_pct_local = (pnl_per_unit / position.entry_price) * 100
+        scaled_pnl_pct_local = (
+            ((portfolio_after_exit / position.base_notional_usdc) - 1) * 100
+            if position.base_notional_usdc > 0
+            else 0.0
+        )
+        r_multiple_local = (pnl_per_unit / risk_per_unit) if risk_per_unit > 0 else 0.0
+        trades.append(
+            BacktestTrade(
+                entry_time=_to_utc_iso(position.entry_time),
+                exit_time=_to_utc_iso(current_bar.close_time),
+                entry_price=round_to(position.entry_price, 6),
+                stop_price=round_to(position.stop_price, 6),
+                take_profit_price=round_to(position.take_profit_price, 6),
+                exit_price=round_to(exit_price, 6),
+                exit_reason=exit_reason,
+                pnl_pct=round_to(pnl_pct_local, 6),
+                scaled_pnl_pct=round_to(scaled_pnl_pct_local, 6),
+                r_multiple=round_to(r_multiple_local, 6),
+                position_size_multiplier=round_to(position.position_size_multiplier, 4),
+                base_notional_usdc=round_to(position.base_notional_usdc, 2),
+                effective_notional_usdc=round_to(position.effective_notional_usdc, 2),
+                holding_bars=bar_index - position.entry_index,
+                entry_regime=dict(position.entry_regime),
+                execution_model_id=position.execution_model_id,
+                execution_seed=position.execution_seed,
+            )
+        )
+        return portfolio_after_exit
 
     for index, current_bar in enumerate(bars):
         if open_position is not None:
             if index <= open_position.entry_index:
                 continue
+
+            if strategy_bundle is not None:
+                context = PositionContext(
+                    direction=open_position.direction,
+                    entry_index=open_position.entry_index,
+                    entry_price=open_position.entry_price,
+                    stop_price=open_position.stop_price,
+                    take_profit_price=open_position.take_profit_price,
+                    atr_at_entry=open_position.atr_at_entry,
+                    initial_stop_price=open_position.initial_stop_price,
+                    initial_take_profit_price=open_position.initial_take_profit_price,
+                )
+                action = strategy_bundle.exit_policy.update(
+                    position=context,
+                    bar=current_bar,
+                    bar_index=index,
+                    config=config,
+                )
+                if isinstance(action, BreakEvenAction):
+                    new_stop = open_position.entry_price * (1.0 + action.offset_pct / 100.0) \
+                        if open_position.direction == "LONG" \
+                        else open_position.entry_price * (1.0 - action.offset_pct / 100.0)
+                    if (open_position.direction == "LONG" and new_stop > open_position.stop_price) or (
+                        open_position.direction == "SHORT" and new_stop < open_position.stop_price
+                    ):
+                        open_position.stop_price = new_stop
+                elif isinstance(action, TrailAction):
+                    if (open_position.direction == "LONG" and action.new_stop_price > open_position.stop_price) or (
+                        open_position.direction == "SHORT" and action.new_stop_price < open_position.stop_price
+                    ):
+                        open_position.stop_price = action.new_stop_price
+                elif isinstance(action, CloseAction):
+                    portfolio_after_exit = _record_close(
+                        position=open_position,
+                        current_bar=current_bar,
+                        exit_price=float(action.price),
+                        exit_reason=action.reason,
+                        bar_index=index,
+                    )
+                    closed_exit_reasons.append(action.reason)
+                    normalized = (
+                        "STOP_LOSS" if action.reason == "STOP_LOSS_AND_TP_SAME_BAR" else action.reason
+                    )
+                    close_time_iso = _to_utc_iso(current_bar.close_time)
+                    recent_closed_trades.insert(
+                        0,
+                        {
+                            "direction": open_position.direction,
+                            "close_reason": normalized,
+                            "position": {"exit_time_iso": close_time_iso},
+                            "updated_at": close_time_iso,
+                        },
+                    )
+                    if len(recent_closed_trades) > LOSS_STREAK_LOOKBACK_CLOSED_TRADES:
+                        recent_closed_trades = recent_closed_trades[:LOSS_STREAK_LOOKBACK_CLOSED_TRADES]
+                    if open_position.direction == "SHORT":
+                        latest_short_close_reason = action.reason
+                        latest_short_close_index = index
+                    portfolio_quote_usdc = round_to(
+                        portfolio_after_exit + open_position.partial_pnl_accrued_usdc, 10
+                    )
+                    gate_state["recent_r_multiples"].append(trades[-1].r_multiple or 0.0)
+                    open_position = None
+                    continue
+                elif isinstance(action, PartialTpAction):
+                    fraction = max(0.0, min(1.0, float(action.fraction)))
+                    if fraction <= 0 or fraction >= open_position.remaining_fraction:
+                        # Treat as no-op if the requested partial is degenerate.
+                        pass
+                    else:
+                        initial_qty = (
+                            open_position.initial_quantity_sol
+                            if open_position.initial_quantity_sol > 0
+                            else open_position.quantity_sol
+                        )
+                        partial_qty = initial_qty * fraction
+                        if partial_qty > open_position.quantity_sol:
+                            partial_qty = open_position.quantity_sol
+                        if open_position.direction == "LONG":
+                            risk_per_unit = open_position.entry_price - open_position.stop_price
+                            pnl_per_unit = float(action.price) - open_position.entry_price
+                        else:
+                            risk_per_unit = open_position.stop_price - open_position.entry_price
+                            pnl_per_unit = open_position.entry_price - float(action.price)
+                        partial_pnl_usdc = partial_qty * pnl_per_unit
+                        initial_base = (
+                            open_position.initial_base_notional_usdc
+                            if open_position.initial_base_notional_usdc > 0
+                            else open_position.base_notional_usdc
+                        )
+                        initial_eff = (
+                            open_position.initial_effective_notional_usdc
+                            if open_position.initial_effective_notional_usdc > 0
+                            else open_position.effective_notional_usdc
+                        )
+                        partial_base = initial_base * fraction
+                        partial_eff = initial_eff * fraction
+                        pnl_pct_local = (pnl_per_unit / open_position.entry_price) * 100
+                        # Use the original base_notional as the denominator so the
+                        # row's scaled_pnl_pct is directly additive with the
+                        # runner's eventual scaled_pnl_pct: both express change
+                        # against the same deployed capital, and their sum equals
+                        # the portfolio multiplier change for this entry.
+                        scaled_pnl_pct_local = (
+                            (partial_pnl_usdc / initial_base) * 100
+                            if initial_base > 0
+                            else 0.0
+                        )
+                        r_multiple_local = (
+                            pnl_per_unit / risk_per_unit if risk_per_unit > 0 else 0.0
+                        )
+                        trades.append(
+                            BacktestTrade(
+                                entry_time=_to_utc_iso(open_position.entry_time),
+                                exit_time=_to_utc_iso(current_bar.close_time),
+                                entry_price=round_to(open_position.entry_price, 6),
+                                stop_price=round_to(open_position.stop_price, 6),
+                                take_profit_price=round_to(open_position.take_profit_price, 6),
+                                exit_price=round_to(float(action.price), 6),
+                                exit_reason=action.reason,
+                                pnl_pct=round_to(pnl_pct_local, 6),
+                                scaled_pnl_pct=round_to(scaled_pnl_pct_local, 6),
+                                r_multiple=round_to(r_multiple_local, 6),
+                                position_size_multiplier=round_to(
+                                    open_position.position_size_multiplier, 4
+                                ),
+                                base_notional_usdc=round_to(partial_base, 2),
+                                effective_notional_usdc=round_to(partial_eff, 2),
+                                holding_bars=index - open_position.entry_index,
+                                entry_regime=dict(open_position.entry_regime),
+                                execution_model_id=open_position.execution_model_id,
+                                execution_seed=open_position.execution_seed,
+                            )
+                        )
+                        # Reduce only quantity_sol; keep base_notional / effective
+                        # at their initial values so the runner's `_record_close`
+                        # returns initial_base + runner_pnl. The partial portion's
+                        # capital is reflected via partial_pnl_accrued, which is
+                        # added to portfolio_quote when the runner exits.
+                        open_position.quantity_sol -= partial_qty
+                        open_position.remaining_fraction -= fraction
+                        open_position.partial_pnl_accrued_usdc += partial_pnl_usdc
+                # HoldAction or stop adjustment: fall through to standard touch check.
 
             is_long = open_position.direction == "LONG"
             if is_long:
@@ -222,44 +453,12 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
                     )
                 exit_reason = exit_fill.reason
                 exit_price = exit_fill.price
-
-                if is_long:
-                    risk_per_unit = open_position.entry_price - open_position.stop_price
-                    pnl_per_unit = exit_price - open_position.entry_price
-                else:
-                    risk_per_unit = open_position.stop_price - open_position.entry_price
-                    pnl_per_unit = open_position.entry_price - exit_price
-
-                position_pnl_usdc = open_position.quantity_sol * pnl_per_unit
-                portfolio_after_exit = open_position.base_notional_usdc + position_pnl_usdc
-                pnl_pct = (pnl_per_unit / open_position.entry_price) * 100
-                scaled_pnl_pct = (
-                    ((portfolio_after_exit / open_position.base_notional_usdc) - 1) * 100
-                    if open_position.base_notional_usdc > 0
-                    else 0.0
-                )
-                r_multiple = (pnl_per_unit / risk_per_unit) if risk_per_unit > 0 else 0.0
-
-                trades.append(
-                    BacktestTrade(
-                        entry_time=_to_utc_iso(open_position.entry_time),
-                        exit_time=_to_utc_iso(current_bar.close_time),
-                        entry_price=round_to(open_position.entry_price, 6),
-                        stop_price=round_to(open_position.stop_price, 6),
-                        take_profit_price=round_to(open_position.take_profit_price, 6),
-                        exit_price=round_to(exit_price, 6),
-                        exit_reason=exit_reason,
-                        pnl_pct=round_to(pnl_pct, 6),
-                        scaled_pnl_pct=round_to(scaled_pnl_pct, 6),
-                        r_multiple=round_to(r_multiple, 6),
-                        position_size_multiplier=round_to(open_position.position_size_multiplier, 4),
-                        base_notional_usdc=round_to(open_position.base_notional_usdc, 2),
-                        effective_notional_usdc=round_to(open_position.effective_notional_usdc, 2),
-                        holding_bars=index - open_position.entry_index,
-                        entry_regime=dict(open_position.entry_regime),
-                        execution_model_id=open_position.execution_model_id,
-                        execution_seed=open_position.execution_seed,
-                    )
+                portfolio_after_exit = _record_close(
+                    position=open_position,
+                    current_bar=current_bar,
+                    exit_price=exit_price,
+                    exit_reason=exit_reason,
+                    bar_index=index,
                 )
                 closed_exit_reasons.append(exit_reason)
                 normalized_close_reason = (
@@ -280,7 +479,10 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
                 if not is_long:
                     latest_short_close_reason = exit_reason
                     latest_short_close_index = index
-                portfolio_quote_usdc = round_to(portfolio_after_exit, 10)
+                portfolio_quote_usdc = round_to(
+                    portfolio_after_exit + open_position.partial_pnl_accrued_usdc, 10
+                )
+                gate_state["recent_r_multiples"].append(trades[-1].r_multiple or 0.0)
                 open_position = None
             continue
 
@@ -295,6 +497,16 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
         if trades_today >= effective_max_trades_per_day:
             no_signal_count += 1
             no_signal_reasons["MAX_TRADES_PER_DAY_REACHED"] += 1
+            continue
+
+        if strategy_bundle is not None and not strategy_bundle.regime_gate.allow(
+            bars=bars,
+            index=index,
+            config=config,
+            gate_state=gate_state,
+        ):
+            no_signal_count += 1
+            no_signal_reasons[strategy_bundle.regime_gate.reject_reason()] += 1
             continue
 
         decision_window_start = max(0, index + 1 - ohlcv_limit)
@@ -315,6 +527,18 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             continue
 
         entry_direction = _resolve_entry_direction(direction, decision.diagnostics)
+        if strategy_bundle is not None and not strategy_bundle.regime_gate.allow_for_direction(
+            direction=entry_direction,
+            bars=bars,
+            index=index,
+            config=config,
+            gate_state=gate_state,
+        ):
+            no_signal_count += 1
+            no_signal_reasons[
+                strategy_bundle.regime_gate.reject_reason() + "_DIR"
+            ] += 1
+            continue
         if (
             entry_direction == "SHORT"
             and is_short_stop_loss_cooldown_enabled(config["strategy"]["name"])
@@ -348,7 +572,12 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
         # Live run_cycle counts each ENTER attempt toward max_trades_per_day even if execution later fails.
         daily_entry_counts[day_key] = trades_today + 1
 
-        size_multiplier = _resolve_position_size_multiplier(decision.diagnostics)
+        if strategy_bundle is not None:
+            size_multiplier = strategy_bundle.sizing_policy.size_multiplier(
+                decision=decision, config=config
+            )
+        else:
+            size_multiplier = _resolve_position_size_multiplier(decision.diagnostics)
         base_notional_usdc = round_to(portfolio_quote_usdc, 6)
         if base_notional_usdc < configured_min_notional_usdc:
             no_signal_count += 1
@@ -386,46 +615,75 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             no_signal_reasons["INVALID_ENTRY_QUANTITY"] += 1
             continue
 
-        swing_stop = float(decision.stop_price)
-        if entry_direction == "LONG":
-            pct_stop = calculate_max_loss_stop_price(resolved_entry_price, max_loss_per_trade_pct)
-            final_stop = tighten_stop_for_long(
-                resolved_entry_price,
-                swing_stop,
-                max_loss_per_trade_pct,
+        if strategy_bundle is not None:
+            stop_candidate = strategy_bundle.stop_policy.compute_initial_stop(
+                decision=decision,
+                direction=entry_direction,
+                entry_price=resolved_entry_price,
+                max_loss_per_trade_pct=max_loss_per_trade_pct,
+                config=config,
             )
-            if final_stop >= resolved_entry_price:
-                final_stop = pct_stop
-            if final_stop >= resolved_entry_price:
+            if stop_candidate is None:
                 no_signal_count += 1
                 no_signal_reasons["INVALID_RISK_AFTER_FILL"] += 1
                 continue
-            take_profit_price = calculate_take_profit_price(
-                resolved_entry_price,
-                final_stop,
-                take_profit_r_multiple,
-            )
+            final_stop = stop_candidate
+            if entry_direction == "LONG":
+                take_profit_price = calculate_take_profit_price(
+                    resolved_entry_price, final_stop, take_profit_r_multiple
+                )
+            else:
+                take_profit_price = calculate_take_profit_price_for_short(
+                    resolved_entry_price, final_stop, take_profit_r_multiple
+                )
         else:
-            pct_stop = calculate_max_loss_stop_price_for_short(
-                resolved_entry_price,
-                max_loss_per_trade_pct,
-            )
-            final_stop = tighten_stop_for_short(
-                resolved_entry_price,
-                swing_stop,
-                max_loss_per_trade_pct,
-            )
-            if final_stop <= resolved_entry_price:
-                final_stop = pct_stop
-            if final_stop <= resolved_entry_price:
-                no_signal_count += 1
-                no_signal_reasons["INVALID_RISK_AFTER_FILL"] += 1
-                continue
-            take_profit_price = calculate_take_profit_price_for_short(
-                resolved_entry_price,
-                final_stop,
-                take_profit_r_multiple,
-            )
+            swing_stop = float(decision.stop_price)
+            if entry_direction == "LONG":
+                pct_stop = calculate_max_loss_stop_price(resolved_entry_price, max_loss_per_trade_pct)
+                final_stop = tighten_stop_for_long(
+                    resolved_entry_price,
+                    swing_stop,
+                    max_loss_per_trade_pct,
+                )
+                if final_stop >= resolved_entry_price:
+                    final_stop = pct_stop
+                if final_stop >= resolved_entry_price:
+                    no_signal_count += 1
+                    no_signal_reasons["INVALID_RISK_AFTER_FILL"] += 1
+                    continue
+                take_profit_price = calculate_take_profit_price(
+                    resolved_entry_price,
+                    final_stop,
+                    take_profit_r_multiple,
+                )
+            else:
+                pct_stop = calculate_max_loss_stop_price_for_short(
+                    resolved_entry_price,
+                    max_loss_per_trade_pct,
+                )
+                final_stop = tighten_stop_for_short(
+                    resolved_entry_price,
+                    swing_stop,
+                    max_loss_per_trade_pct,
+                )
+                if final_stop <= resolved_entry_price:
+                    final_stop = pct_stop
+                if final_stop <= resolved_entry_price:
+                    no_signal_count += 1
+                    no_signal_reasons["INVALID_RISK_AFTER_FILL"] += 1
+                    continue
+                take_profit_price = calculate_take_profit_price_for_short(
+                    resolved_entry_price,
+                    final_stop,
+                    take_profit_r_multiple,
+                )
+
+        atr_at_entry = 0.0
+        diagnostics = getattr(decision, "diagnostics", None)
+        if isinstance(diagnostics, dict):
+            raw_atr = diagnostics.get("atr")
+            if isinstance(raw_atr, (int, float)) and raw_atr > 0:
+                atr_at_entry = float(raw_atr)
 
         enter_count += 1
         open_position = _OpenPosition(
@@ -442,6 +700,13 @@ def run_backtest(bars: list[OhlcvBar], config: BotConfig) -> BacktestReport:
             entry_regime=get_bar_regime(bars[entry_fill.bar_index]),
             execution_model_id=execution_model.model_id,
             execution_seed=execution_seed,
+            initial_stop_price=final_stop,
+            initial_take_profit_price=take_profit_price,
+            atr_at_entry=atr_at_entry,
+            initial_quantity_sol=quantity_sol,
+            initial_effective_notional_usdc=effective_notional_usdc,
+            initial_base_notional_usdc=base_notional_usdc,
+            remaining_fraction=1.0,
         )
 
     if open_position is not None:

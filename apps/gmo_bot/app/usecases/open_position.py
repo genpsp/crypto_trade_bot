@@ -136,6 +136,10 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
         "direction": direction,
         "state": "CREATED",
         "config_version": config["meta"]["config_version"],
+        # Snapshot the strategy variant_id at trade creation. Empty string when
+        # the running config predates the variant_id era (pre-cutover trades).
+        # See docs/runbook/gmo_v2_cutover.md for the cutover protocol.
+        "variant_id": str(config["meta"].get("variant_id", "") or ""),
         "signal": {
             "summary": signal.summary,
             "bar_close_time_iso": input_data.bar_close_time_iso,

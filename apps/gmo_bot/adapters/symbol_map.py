@@ -9,4 +9,8 @@ from __future__ import annotations
 
 from apps.gmo_bot.domain.model.types import Pair
 
-PAIR_SYMBOL_MAP: dict[Pair, str] = {"SOL/JPY": "SOL_JPY"}
+PAIR_SYMBOL_MAP: dict[Pair, str] = {
+    "SOL/JPY": "SOL_JPY",
+    "BTC/JPY": "BTC_JPY",
+    "ETH/JPY": "ETH_JPY",
+}

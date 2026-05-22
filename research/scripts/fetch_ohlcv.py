@@ -16,7 +16,11 @@ def _build_provider(pair: str):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fetch OHLCV data for research")
-    parser.add_argument("--pair", default="SOL/USDC", choices=["SOL/USDC", "SOL/JPY"])
+    parser.add_argument(
+        "--pair",
+        default="SOL/USDC",
+        choices=["SOL/USDC", "SOL/JPY", "BTC/JPY", "ETH/JPY"],
+    )
     parser.add_argument("--broker", default=None, choices=["DEX", "GMO_COIN"])
     parser.add_argument("--timeframe", default="2h", choices=["15m", "2h", "4h"])
     parser.add_argument(
