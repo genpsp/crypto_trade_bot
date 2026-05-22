@@ -71,7 +71,7 @@
     "broker": "GMO_COIN",
     "slippage_bps": 3,
     "min_notional_jpy": 5000,
-    "leverage_multiplier": 0.5,
+    "leverage_multiplier": 1.0,
     "margin_usage_ratio": 0.99
   },
   "exit": {
@@ -81,6 +81,6 @@
   "meta": {
     "config_version": 2,
     "variant_id": "v2_dir_session_vol_time120",
-    "note": "v2 cutover 2026-05-21: post-mortem-derived components (directional_session + volume_confirmed >= 0.4 + time_exit 120 bars). Phase 1 mean +5.57 / pos_rate 69.2%, stochastic_v1 50-seed p05=+62.13%. leverage_multiplier=0.5x for first 14-30 days. See docs/runbook/gmo_v2_cutover.md."
+    "note": "v2 cutover 2026-05-22: post-mortem-derived components (directional_session + volume_confirmed >= 0.4 + time_exit 120 bars). Phase 1 mean +5.57 / pos_rate 69.2%, stochastic_v1 50-seed p05=+62.13%. direction=BOTH (re-enables SHORT halted in Phase 0 retreat). leverage_multiplier=1.0 retained from pre-cutover LIVE. See docs/runbook/gmo_v2_cutover.md."
   }
 }
