@@ -9,7 +9,15 @@ Pair = Literal["SOL/USDC"]
 Direction = Literal["LONG", "SHORT"]
 ModelDirection = Literal["LONG", "SHORT", "BOTH"]
 SignalTimeframe = Literal["15m", "1h", "2h", "4h"]
-StrategyName = Literal["ema_trend_pullback_v0", "ema_trend_pullback_15m_v0", "storm_short_v0"]
+StrategyName = Literal[
+    "ema_trend_pullback_v0",
+    "ema_trend_pullback_15m_v0",
+    "ema_trend_pullback_15m_v2",
+    "supertrend_15m_v0",
+    "donchian_breakout_15m_v0",
+    "mean_reversion_15m_v0",
+    "storm_short_v0",
+]
 
 
 class StrategyConfig(TypedDict):
@@ -66,6 +74,7 @@ class ExitConfig(TypedDict):
 class MetaConfig(TypedDict):
     config_version: int
     note: str
+    variant_id: NotRequired[str]
 
 
 class BotConfig(TypedDict):
@@ -232,6 +241,7 @@ class TradeRecord(TypedDict, total=False):
     direction: Direction
     state: TradeState
     config_version: int
+    variant_id: str
     signal: TradeSignalSnapshot
     plan: TradePlanSnapshot
     execution: TradeExecutionSnapshot

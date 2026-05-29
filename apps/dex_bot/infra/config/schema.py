@@ -280,6 +280,12 @@ def parse_config(data: Any) -> BotConfig:
         "meta.config_version must be positive int",
     )
     _require(isinstance(meta.get("note"), str) and len(meta["note"]) > 0, "meta.note must be non-empty")
+    variant_id = meta.get("variant_id")
+    if variant_id is not None:
+        _require(
+            isinstance(variant_id, str) and len(variant_id) > 0,
+            "meta.variant_id must be a non-empty string when present",
+        )
     parsed: BotConfig = {
         "enabled": data["enabled"],
         "network": data["network"],
@@ -299,6 +305,7 @@ def parse_config(data: Any) -> BotConfig:
         "meta": {
             "config_version": meta["config_version"],
             "note": meta["note"],
+            **({"variant_id": meta["variant_id"]} if meta.get("variant_id") else {}),
         },
     }
     return parsed

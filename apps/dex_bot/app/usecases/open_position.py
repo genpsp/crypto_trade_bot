@@ -207,6 +207,7 @@ def open_position(dependencies: OpenPositionDependencies, input_data: OpenPositi
         "direction": direction,
         "state": "CREATED",
         "config_version": config["meta"]["config_version"],
+        "variant_id": str(config["meta"].get("variant_id", "") or ""),
         "signal": {
             "summary": signal.summary,
             "bar_close_time_iso": bar_close_time_iso,

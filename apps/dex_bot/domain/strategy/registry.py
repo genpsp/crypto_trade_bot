@@ -14,6 +14,12 @@ from apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0 import (
 )
 from apps.dex_bot.domain.strategy.models.ema_trend_pullback_v0 import evaluate_ema_trend_pullback_v0
 from apps.dex_bot.domain.strategy.models.storm_short_v0 import evaluate_storm_short_v0
+from apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v2 import (
+    evaluate_ema_trend_pullback_15m_v2,
+)
+from apps.gmo_bot.domain.strategy.models.supertrend_15m_v0 import evaluate_supertrend_15m_v0
+from apps.gmo_bot.domain.strategy.models.donchian_breakout_15m_v0 import evaluate_donchian_breakout_15m_v0
+from apps.gmo_bot.domain.strategy.models.mean_reversion_15m_v0 import evaluate_mean_reversion_15m_v0
 
 # run_cycle が OHLCV を取得する際に必要な最小 15m バー数を戦略ごとに宣言する
 # 上位足を導出する戦略（例: 4h EMA slow=34 → 34 * 16 = 544 本必要）はデフォルトの 300 では不足し
@@ -46,6 +52,46 @@ def evaluate_strategy_for_model(
 
     if strategy["name"] == "ema_trend_pullback_15m_v0":
         return evaluate_ema_trend_pullback_15m_v0(
+            bars=bars,
+            direction=direction,
+            strategy=strategy,
+            risk=risk,
+            exit=exit,
+            execution=execution,
+        )
+
+    if strategy["name"] == "ema_trend_pullback_15m_v2":
+        return evaluate_ema_trend_pullback_15m_v2(
+            bars=bars,
+            direction=direction,
+            strategy=strategy,
+            risk=risk,
+            exit=exit,
+            execution=execution,
+        )
+
+    if strategy["name"] == "supertrend_15m_v0":
+        return evaluate_supertrend_15m_v0(
+            bars=bars,
+            direction=direction,
+            strategy=strategy,
+            risk=risk,
+            exit=exit,
+            execution=execution,
+        )
+
+    if strategy["name"] == "donchian_breakout_15m_v0":
+        return evaluate_donchian_breakout_15m_v0(
+            bars=bars,
+            direction=direction,
+            strategy=strategy,
+            risk=risk,
+            exit=exit,
+            execution=execution,
+        )
+
+    if strategy["name"] == "mean_reversion_15m_v0":
+        return evaluate_mean_reversion_15m_v0(
             bars=bars,
             direction=direction,
             strategy=strategy,
