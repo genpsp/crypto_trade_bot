@@ -15,6 +15,21 @@ from apps.dex_bot.domain.strategy.models.ema_trend_pullback_15m_v0 import (
 from apps.dex_bot.domain.strategy.models.ema_trend_pullback_v0 import evaluate_ema_trend_pullback_v0
 from apps.dex_bot.domain.strategy.models.storm_short_v0 import evaluate_storm_short_v0
 
+# run_cycle が OHLCV を取得する際に必要な最小 15m バー数を戦略ごとに宣言する
+# 上位足を導出する戦略（例: 4h EMA slow=34 → 34 * 16 = 544 本必要）はデフォルトの 300 では不足し
+# サイレントに NO_SIGNAL ("UPPER_TREND_EMA_NOT_STABLE") を返し続ける本番事故になる
+# gmo_bot 側の 2026-05-22 インシデント（cd5b5a8）と同じ pitfall が dex_bot にも残っていたので合わせて移植
+_DEFAULT_REQUIRED_HISTORY_BARS = 300
+_UPPER_TREND_REQUIRED_HISTORY_BARS = 600
+_REQUIRED_HISTORY_BARS_BY_STRATEGY: dict[str, int] = {
+    "ema_trend_pullback_15m_v0": _UPPER_TREND_REQUIRED_HISTORY_BARS,
+    "ema_trend_pullback_15m_v2": _UPPER_TREND_REQUIRED_HISTORY_BARS,
+}
+
+
+def resolve_required_history_bars(strategy: StrategyConfig) -> int:
+    return _REQUIRED_HISTORY_BARS_BY_STRATEGY.get(strategy["name"], _DEFAULT_REQUIRED_HISTORY_BARS)
+
 
 def evaluate_strategy_for_model(
     direction: ModelDirection,

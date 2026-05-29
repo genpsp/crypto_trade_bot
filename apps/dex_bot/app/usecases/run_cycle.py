@@ -40,7 +40,7 @@ from apps.dex_bot.domain.risk.short_stop_loss_cooldown import (
     SHORT_STOP_LOSS_COOLDOWN_REASON,
     resolve_short_stop_loss_cooldown_state,
 )
-from apps.dex_bot.domain.strategy.registry import evaluate_strategy_for_model
+from apps.dex_bot.domain.strategy.registry import evaluate_strategy_for_model, resolve_required_history_bars
 from shared.utils.math import round_to
 from apps.dex_bot.domain.utils.time import (
     build_run_id,
@@ -52,8 +52,6 @@ from apps.dex_bot.domain.utils.time import (
 RUN_LOCK_TTL_SECONDS = 600
 MIN_REQUIRED_RUN_LOCK_TTL_SECONDS = 480
 ENTRY_IDEM_TTL_SECONDS = 12 * 60 * 60
-DEFAULT_OHLCV_LIMIT = 300
-OHLCV_LIMIT_FOR_15M_UPPER_TREND = 600
 _EXECUTION_ERROR_SKIP_MARKERS = (
     "insufficient funds",
     "slippage exceeded",
@@ -88,9 +86,7 @@ def _build_model_run_id(model_id: str, bar_close_time_iso: str, run_at: datetime
 
 
 def _resolve_ohlcv_limit(config: BotConfig) -> int:
-    if config["strategy"]["name"] == "ema_trend_pullback_15m_v0":
-        return OHLCV_LIMIT_FOR_15M_UPPER_TREND
-    return DEFAULT_OHLCV_LIMIT
+    return resolve_required_history_bars(config["strategy"])
 
 
 def _resolve_effective_max_trades_per_day(
