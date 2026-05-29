@@ -547,17 +547,25 @@ def bootstrap() -> AppRuntime:
                     {"model_id": model_id, "error": str(error)},
                 )
                 continue
+            snapshot: dict[str, Any] = {
+                "snapshot_date_jst": target_date_jst,
+                "snapshot_at_iso": snapshot_at_iso,
+                "balance_jpy": float(balance_jpy),
+                "source": "GMO_AVAILABLE_MARGIN",
+                "model_id": model_id,
+            }
+            # equity_jpy = actualProfitLoss: 評価損益込み時価総額。API が同じ /account/margin を
+            # 返すのでほぼ追加コストなし。ポジション保有中も正しい equity をグラフに反映させるために追加
+            try:
+                snapshot["equity_jpy"] = float(gmo_live_execution.get_equity_jpy())
+            except Exception as error:
+                logger.warn(
+                    "daily gmo equity snapshot skipped because actualProfitLoss fetch failed",
+                    {"model_id": model_id, "error": str(error)},
+                )
             try:
                 repo = GmoFirestoreRepository(firestore, gmo_config_repo, mode="LIVE", model_id=model_id)
-                repo.save_daily_balance(
-                    {
-                        "snapshot_date_jst": target_date_jst,
-                        "snapshot_at_iso": snapshot_at_iso,
-                        "balance_jpy": float(balance_jpy),
-                        "source": "GMO_AVAILABLE_MARGIN",
-                        "model_id": model_id,
-                    }
-                )
+                repo.save_daily_balance(snapshot)
             except Exception as error:
                 logger.warn(
                     "daily gmo balance snapshot save failed",

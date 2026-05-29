@@ -201,6 +201,14 @@ class GmoMarginExecutionAdapter(ExecutionPort):
             raise RuntimeError("GMO availableAmount is invalid")
         return float(available_amount)
 
+    def get_equity_jpy(self) -> float:
+        """actualProfitLoss: 評価損益込みの時価総額。ポジション保有中も正しい equity を返す"""
+        payload = self.client.get_margin()
+        actual_profit_loss = payload.get("actualProfitLoss")
+        if not isinstance(actual_profit_loss, str):
+            raise RuntimeError("GMO actualProfitLoss is invalid")
+        return float(actual_profit_loss)
+
     def cancel_order(self, order_id: int) -> None:
         self.client.cancel_order(order_id)
 

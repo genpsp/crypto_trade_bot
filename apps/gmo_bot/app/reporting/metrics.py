@@ -237,7 +237,9 @@ def compute_metrics(
 
 
 def _pick_balance_column(balances_df: pd.DataFrame) -> str | None:
-    for column in ("balance_jpy", "balance_total_usdc"):
+    # equity_jpy を最優先: actualProfitLoss（評価損益込み時価総額）で正しい equity を使う
+    # balance_jpy は availableAmount（取引余力のみ）なので SHORT/LONG 中に歪む
+    for column in ("equity_jpy", "balance_jpy", "balance_total_usdc"):
         if column in balances_df.columns and balances_df[column].notna().any():
             return column
     return None

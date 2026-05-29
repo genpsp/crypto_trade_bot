@@ -54,7 +54,8 @@ class BotConfig(TypedDict):
 class DailyBalanceRecord(TypedDict, total=False):
     snapshot_date_jst: str
     snapshot_at_iso: str
-    balance_jpy: float
+    balance_jpy: float  # GMO: availableAmount（取引余力のみ、ポジション評価額を含まない）
+    equity_jpy: float   # GMO: actualProfitLoss（評価損益込み時価総額、グラフ用）
     balance_usdc: float
     balance_native_sol: float
     balance_native_sol_in_usdc: float

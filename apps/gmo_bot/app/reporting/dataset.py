@@ -171,6 +171,7 @@ def build_balances_dataframe(balances: list[DailyBalanceRecord]) -> pd.DataFrame
             {
                 "snapshot_date_jst": record.get("snapshot_date_jst"),
                 "snapshot_at_iso": record.get("snapshot_at_iso"),
+                "equity_jpy": _to_float(record.get("equity_jpy")),
                 "balance_jpy": _to_float(record.get("balance_jpy")),
                 "balance_total_usdc": _to_float(record.get("balance_total_usdc")),
                 "cumulative_realized_pnl_jpy": _to_float(record.get("cumulative_realized_pnl_jpy")),
