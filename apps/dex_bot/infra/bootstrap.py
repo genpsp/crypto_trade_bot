@@ -587,14 +587,26 @@ def bootstrap() -> AppRuntime:
         _save_gmo_daily_balance_snapshots(target_date_jst=target_date_jst, now_utc=now_utc)
 
 
-    def _balance_points(records: list[dict[str, Any]], balance_key: str) -> list[tuple[str, float]]:
+    def _balance_points(
+        records: list[dict[str, Any]],
+        balance_key: str | tuple[str, ...],
+    ) -> list[tuple[str, float]]:
+        # tuple を渡すとレコードごとに先頭から最初に存在するキーを採用する
+        # 例: ("equity_jpy", "balance_jpy") なら equity_jpy が無い旧 snapshot は balance_jpy にフォールバック
+        keys = (balance_key,) if isinstance(balance_key, str) else balance_key
         points: list[tuple[str, float]] = []
         for record in records:
             snapshot_date_jst = record.get("snapshot_date_jst")
-            value = record.get(balance_key)
             if not isinstance(snapshot_date_jst, str):
                 continue
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
+            value: Any = None
+            for key in keys:
+                candidate = record.get(key)
+                if isinstance(candidate, bool) or not isinstance(candidate, (int, float)):
+                    continue
+                value = candidate
+                break
+            if value is None:
                 continue
             points.append((snapshot_date_jst, float(value)))
         return points
@@ -648,7 +660,10 @@ def bootstrap() -> AppRuntime:
                     {"model_id": source.model_id, "error": str(error)},
                 )
                 continue
-            points = _balance_points(records, "balance_jpy")
+            # equity_jpy（actualProfitLoss = 評価損益込み時価総額）を優先
+            # balance_jpy（availableAmount）は SHORT/LONG 中に拘束証拠金と評価損益が抜けて歪むため
+            # 旧 snapshot に equity_jpy が無いケースは balance_jpy へフォールバック
+            points = _balance_points(records, ("equity_jpy", "balance_jpy"))
             if points:
                 series.append(BalanceChartSeries(label=source.model_id, unit="JPY", points=points))
         try:
