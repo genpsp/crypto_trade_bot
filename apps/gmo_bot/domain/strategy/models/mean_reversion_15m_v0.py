@@ -1,9 +1,10 @@
 """Mean reversion (Bollinger Band reversal) entry signal.
 
-P3-V from docs/gmo_bot_post_kill_exploration_plan.md §2.4 — chop-focused
-counter-trend entry. Trend-following systems (EMA pullback, Supertrend,
-Donchian) failed across all Phase 1 axes; this strategy bets on price
-returning to the BB midline when far from it.
+P3-V chop-focused counter-trend entry (results in
+docs/gmo_bot_exploration_findings.md §3 — REJECTED, systematic adverse
+selection). Trend-following systems (EMA pullback, Supertrend, Donchian)
+failed across all Phase 1 axes; this strategy bets on price returning to the
+BB midline when far from it.
 
 Entry:
 - LONG when close < lower_band AND chop confirmed (ADX < adx_chop_max)

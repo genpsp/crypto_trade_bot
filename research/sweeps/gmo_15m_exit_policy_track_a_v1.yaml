@@ -9,8 +9,8 @@
 #       research/sweeps/gmo_15m_exit_policy_track_a_v1.yaml \
 #       --keep-trades all
 #
-# See docs/gmo_bot_logic_exploration_plan.md §S2 for the Done basis (rolling
-# 13 windows: pos_rate ≥ 90% and min PnL ≥ 0%).
+# See docs/gmo_bot_exploration_findings.md §3 (Track A row) for the Done basis
+# (rolling 13 windows: pos_rate ≥ 90% and min PnL ≥ 0%).
 
 name: gmo_15m_exit_policy_track_a_v1
 model_id: gmo_ema_pullback_15m_both_v0

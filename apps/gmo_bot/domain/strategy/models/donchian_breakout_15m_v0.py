@@ -1,8 +1,8 @@
 """Donchian breakout(N) entry signal for SOL/JPY 15m.
 
-C2 from docs/gmo_bot_logic_exploration_plan.md §Track C — pullback-free
-breakout entry: LONG when close > max(high) of last N bars; SHORT when close
-< min(low) of last N bars.
+Track C pullback-free breakout entry (results in
+docs/gmo_bot_exploration_findings.md §3 — REJECTED): LONG when close > max(high)
+of last N bars; SHORT when close < min(low) of last N bars.
 
 Stop = the opposite-side Donchian level (LONG: most-recent N-bar low; SHORT:
 most-recent N-bar high). TP = R-multiple of risk.

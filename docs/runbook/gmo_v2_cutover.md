@@ -2,7 +2,7 @@
 
 > **目的**: 現行 v0 戦略から v2 (`v2_dir_session_vol_time120`) へ LIVE cutover を実施する手順、ロールバック手順、kill-switch 基準、事後評価フローを定義する。
 >
-> **背景**: [docs/gmo_bot_post_kill_phase2_findings.md](../gmo_bot_post_kill_phase2_findings.md) で stochastic_v1 p05 +62.13% / Phase 2 mean 基準クリアを確認。LIVE 30日で実環境 edge を検証する。
+> **背景**: [docs/gmo_bot_exploration_findings.md](../gmo_bot_exploration_findings.md) §1 で stochastic_v1 p05 +62.13% / Phase 2 mean 基準クリアを確認。LIVE 30日で実環境 edge を検証する。
 
 ## 0. TL;DR
 
@@ -72,7 +72,7 @@ cutover commit に tag を打つ:
 git add -A
 git commit -m "v2 cutover: dir_session+vol+time120 (config_version=2)
 
-Phase 2 findings (docs/gmo_bot_post_kill_phase2_findings.md):
+Phase 2 findings (docs/gmo_bot_exploration_findings.md §1):
 - ideal_v1 mean +5.57% / pos_rate 69.2% / break-even WR margin +8.63pt
 - stochastic_v1 50-seed p05 = +62.13% (100% seeds positive)
 - holdout walk-forward total +12.73%
@@ -265,11 +265,8 @@ python -m research.scripts.build_execution_profile \
 
 ## 9. 関連ドキュメント
 
-- [計画書 (post-kill exploration plan)](../gmo_bot_post_kill_exploration_plan.md)
-- [Phase 1 findings](../gmo_bot_post_kill_phase1_findings.md)
-- [Phase 2 findings](../gmo_bot_post_kill_phase2_findings.md)
-- [Post-mortem findings](../gmo_bot_post_kill_postmortem_findings.md)
-- [Phase 3-V findings (mean reversion 失敗)](../gmo_bot_post_kill_phase3_v_findings.md)
+- [探索結果サマリ (採用根拠 / Phase 1・2・3-V / post-mortem)](../gmo_bot_exploration_findings.md)
+- [新エッジ探索計画 (LIVE 後の後続探索)](../gmo_bot_new_edge_exploration_plan.md)
 
 ---
 

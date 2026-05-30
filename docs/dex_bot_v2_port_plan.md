@@ -210,7 +210,7 @@ dex_bot で実際に LIVE 切り替えを行う段階で、[docs/runbook/gmo_v2_
 
 ## 8. 参考
 
-- gmo_bot 側 cutover の経緯: [docs/gmo_bot_post_kill_postmortem_findings.md](gmo_bot_post_kill_postmortem_findings.md)
+- gmo_bot 側 cutover の経緯（v2 edge 発見の post-mortem）: [docs/gmo_bot_exploration_findings.md](gmo_bot_exploration_findings.md) §2
 - v2 framework の設計意図: [docs/gmo_bot_logic_exploration_plan.md](gmo_bot_logic_exploration_plan.md) §2
 - bar-fetch 不足インシデント（移植済バグ）: gmo_bot commit `cd5b5a8`
 - gmo_bot LIVE cutover runbook: [docs/runbook/gmo_v2_cutover.md](runbook/gmo_v2_cutover.md)

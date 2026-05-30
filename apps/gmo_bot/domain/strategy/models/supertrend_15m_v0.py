@@ -1,8 +1,8 @@
 """Supertrend(period, atr_multiple) entry signal for SOL/JPY 15m.
 
-C1 from docs/gmo_bot_logic_exploration_plan.md §Track C — alternative trend
-detection replacing the EMA-pullback signal. Uses an ATR-band Supertrend whose
-flip direction defines the entry direction.
+Track C alternative trend detection replacing the EMA-pullback signal (results
+in docs/gmo_bot_exploration_findings.md §3 — REJECTED, catastrophic in chop).
+Uses an ATR-band Supertrend whose flip direction defines the entry direction.
 
 Decision contract is identical to the v0 strategy so the existing engine
 machinery (StopPolicy / ExitPolicy / RegimeGate via the component bundle)

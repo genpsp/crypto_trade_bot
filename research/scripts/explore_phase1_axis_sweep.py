@@ -1,8 +1,8 @@
 """Phase 1 axis-sweep: evaluate v0 / v2-best / Supertrend / Donchian variants
 across timeframe & pair axes.
 
-Implements §2.2 (Phase 1) of docs/gmo_bot_post_kill_exploration_plan.md. The
-script runs rolling-window backtests on a single bars CSV and prints a
+Phase 1 axis-sweep (results summarised in docs/gmo_bot_exploration_findings.md
+§3). The script runs rolling-window backtests on a single bars CSV and prints a
 markdown table summarising per-window scaled PnL.
 
 Usage:
