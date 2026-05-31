@@ -26,6 +26,12 @@ from apps.gmo_bot.domain.strategy.models.donchian_breakout_15m_v0 import (
 from apps.gmo_bot.domain.strategy.models.mean_reversion_15m_v0 import (
     evaluate_mean_reversion_15m_v0,
 )
+from apps.gmo_bot.domain.strategy.models.regime_router_15m_v0 import (
+    evaluate_regime_router_15m_v0,
+)
+from apps.gmo_bot.domain.strategy.models.btc_leadlag_15m_v0 import (
+    evaluate_btc_leadlag_15m_v0,
+)
 
 # Per-strategy minimum 15m bar history required by run_cycle's OHLCV fetch.
 # Strategies that derive an upper timeframe (e.g. 4h EMA slow period = 34
@@ -37,6 +43,8 @@ _UPPER_TREND_REQUIRED_HISTORY_BARS = 600
 _REQUIRED_HISTORY_BARS_BY_STRATEGY: dict[str, int] = {
     "ema_trend_pullback_15m_v0": _UPPER_TREND_REQUIRED_HISTORY_BARS,
     "ema_trend_pullback_15m_v2": _UPPER_TREND_REQUIRED_HISTORY_BARS,
+    # router は trend regime で ema(上位足)に委譲しうるため同じ history が要る
+    "regime_router_15m_v0": _UPPER_TREND_REQUIRED_HISTORY_BARS,
 }
 
 
@@ -99,6 +107,26 @@ def evaluate_strategy_for_model(
 
     if strategy["name"] == "mean_reversion_15m_v0":
         return evaluate_mean_reversion_15m_v0(
+            bars=bars,
+            direction=direction,
+            strategy=strategy,
+            risk=risk,
+            exit=exit,
+            execution=execution,
+        )
+
+    if strategy["name"] == "regime_router_15m_v0":
+        return evaluate_regime_router_15m_v0(
+            bars=bars,
+            direction=direction,
+            strategy=strategy,
+            risk=risk,
+            exit=exit,
+            execution=execution,
+        )
+
+    if strategy["name"] == "btc_leadlag_15m_v0":
+        return evaluate_btc_leadlag_15m_v0(
             bars=bars,
             direction=direction,
             strategy=strategy,

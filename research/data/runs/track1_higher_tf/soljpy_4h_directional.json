@@ -1,0 +1,155 @@
+{
+  "pair": "SOL/JPY",
+  "timeframe": "4h",
+  "windows": 8,
+  "window_bars": 300,
+  "bars_path": "research/data/raw/soljpy_4h_to_2026_05.csv",
+  "variants": [
+    {
+      "variant": "v0_baseline",
+      "per_window": [
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 0,
+          "first_open": "2025-04-15T12:00:00Z",
+          "last_open": "2025-06-04T08:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 1,
+          "first_open": "2025-06-04T12:00:00Z",
+          "last_open": "2025-07-24T08:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 2,
+          "first_open": "2025-07-24T12:00:00Z",
+          "last_open": "2025-09-12T08:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 3,
+          "first_open": "2025-09-12T12:00:00Z",
+          "last_open": "2025-11-01T08:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 4,
+          "first_open": "2025-11-01T12:00:00Z",
+          "last_open": "2025-12-21T08:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 5,
+          "first_open": "2025-12-21T12:00:00Z",
+          "last_open": "2026-02-09T08:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 6,
+          "first_open": "2026-02-09T12:00:00Z",
+          "last_open": "2026-03-31T08:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 7,
+          "first_open": "2026-03-31T12:00:00Z",
+          "last_open": "2026-05-20T08:00:00Z"
+        }
+      ],
+      "min": 0,
+      "mean": 0.0,
+      "pos_rate_pct": 0.0,
+      "verdict": "REJECT (pos_rate>=65 mean>=+4 min>=-5)"
+    },
+    {
+      "variant": "v2_dir_session+vol+time120",
+      "per_window": [
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 0,
+          "first_open": "2025-04-15T12:00:00Z",
+          "last_open": "2025-06-04T08:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 1,
+          "first_open": "2025-06-04T12:00:00Z",
+          "last_open": "2025-07-24T08:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 2,
+          "first_open": "2025-07-24T12:00:00Z",
+          "last_open": "2025-09-12T08:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 3,
+          "first_open": "2025-09-12T12:00:00Z",
+          "last_open": "2025-11-01T08:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 4,
+          "first_open": "2025-11-01T12:00:00Z",
+          "last_open": "2025-12-21T08:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 5,
+          "first_open": "2025-12-21T12:00:00Z",
+          "last_open": "2026-02-09T08:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 6,
+          "first_open": "2026-02-09T12:00:00Z",
+          "last_open": "2026-03-31T08:00:00Z"
+        },
+        {
+          "scaled_pnl_pct": 0,
+          "trades": 0,
+          "win_rate_pct": 0.0,
+          "window_index": 7,
+          "first_open": "2026-03-31T12:00:00Z",
+          "last_open": "2026-05-20T08:00:00Z"
+        }
+      ],
+      "min": 0,
+      "mean": 0.0,
+      "pos_rate_pct": 0.0,
+      "verdict": "REJECT (pos_rate>=65 mean>=+4 min>=-5)"
+    }
+  ]
+}

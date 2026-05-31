@@ -66,6 +66,7 @@ from apps.gmo_bot.domain.strategy.components.regime_gates import (
     DirectionalSessionGate,
     DonchianWidthGate,
     EquityCurveGate,
+    FundingGate,
     NullRegimeGate,
     SessionGate,
     VolumeConfirmedGate,
@@ -165,6 +166,14 @@ def _build_regime_gate(spec: dict[str, Any]) -> RegimeGate:
             ),
             lookback_bars=int(spec.get("lookback_bars", 4)),
             min_abs_return_pct=float(spec.get("min_abs_return_pct", 0.3)),
+        )
+    if type_id == "funding":
+        return FundingGate(
+            funding_path=str(
+                spec.get("funding_path", "research/data/raw/sol_funding_binance_8h.csv")
+            ),
+            low_threshold=float(spec.get("low_threshold", -0.0002)),
+            high_threshold=float(spec.get("high_threshold", 0.0001)),
         )
     if type_id == "composite":
         sub_specs = spec.get("gates") or []

@@ -146,6 +146,8 @@ _STRATEGIES_REQUIRING_15M_UPPER_TREND_LIMIT = {
     "ema_trend_pullback_15m_v2",
     "supertrend_15m_v0",
     "donchian_breakout_15m_v0",
+    # router は trend regime で ema の上位足 EMA を評価するため同じ窓長が要る
+    "regime_router_15m_v0",
 }
 
 
@@ -155,8 +157,17 @@ def _resolve_ohlcv_limit(config: BotConfig) -> int:
     return DEFAULT_OHLCV_LIMIT
 
 
+_COMPONENT_BUNDLE_STRATEGIES = frozenset(
+    {
+        "ema_trend_pullback_15m_v2",
+        "regime_router_15m_v0",
+        "btc_leadlag_15m_v0",
+    }
+)
+
+
 def _strategy_uses_component_bundle(config: BotConfig) -> bool:
-    return config["strategy"]["name"] == "ema_trend_pullback_15m_v2"
+    return config["strategy"]["name"] in _COMPONENT_BUNDLE_STRATEGIES
 
 
 def _evaluate_strategy_for_backtest(

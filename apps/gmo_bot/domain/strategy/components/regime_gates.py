@@ -15,6 +15,7 @@ module-level dicts. The lookup hits a precomputed array indexed by bar index.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC as UTC_TZ
 from typing import Any
 
 from apps.dex_bot.domain.model.types import OhlcvBar
@@ -420,6 +421,81 @@ class BtcMomentumGate(RegimeGate):
         return ret_pct >= self.min_abs_return_pct
 
 
+_FUNDING_CACHE: dict[str, tuple[list[int], list[float]]] = {}
+
+
+def _load_funding_series(path: str) -> tuple[list[int], list[float]]:
+    """funding CSV(funding_time,funding_rate,..)を (epoch_ms 昇順, rate) で lazy load"""
+    if path in _FUNDING_CACHE:
+        return _FUNDING_CACHE[path]
+    import csv as _csv
+    from datetime import datetime as _dt
+
+    times: list[int] = []
+    rates: list[float] = []
+    with open(path) as f:
+        for row in _csv.DictReader(f):
+            ts = _dt.strptime(row["funding_time"], "%Y-%m-%dT%H:%M:%SZ")
+            times.append(int(ts.replace(tzinfo=UTC_TZ).timestamp() * 1000))
+            rates.append(float(row["funding_rate"]))
+    _FUNDING_CACHE[path] = (times, rates)
+    return times, rates
+
+
+@dataclass(frozen=True)
+class FundingGate(RegimeGate):
+    """Track ⑤: 外部取引所(Binance) SOL perp funding を逆張り filter にする
+
+    funding > high_threshold（long 過密）→ LONG をブロック
+    funding < low_threshold（short 過密）→ SHORT をブロック
+    bar 時刻以前で最新の funding(8h)値を参照（lookahead 無し）
+    research 専用 GMO に funding 系列が無いため外部 proxy を CSV で読む
+    """
+
+    funding_path: str = "research/data/raw/sol_funding_binance_8h.csv"
+    low_threshold: float = -0.0002
+    high_threshold: float = 0.0001
+    name: str = "funding_gate"
+
+    def _funding_at(self, bar_ms: int) -> float | None:
+        import bisect
+
+        times, rates = _load_funding_series(self.funding_path)
+        pos = bisect.bisect_right(times, bar_ms) - 1
+        if pos < 0:
+            return None
+        return rates[pos]
+
+    def allow(
+        self,
+        *,
+        bars: list[OhlcvBar],
+        index: int,
+        config: dict[str, Any],
+        gate_state: dict[str, Any] | None = None,
+    ) -> bool:
+        return True  # 方向別判定は allow_for_direction で行う
+
+    def allow_for_direction(
+        self,
+        *,
+        direction: Any,
+        bars: list[OhlcvBar],
+        index: int,
+        config: dict[str, Any],
+        gate_state: dict[str, Any] | None = None,
+    ) -> bool:
+        bar_ms = int(bars[index].close_time.astimezone(UTC_TZ).timestamp() * 1000)
+        funding = self._funding_at(bar_ms)
+        if funding is None:
+            return True
+        if direction == "LONG" and funding > self.high_threshold:
+            return False
+        if direction == "SHORT" and funding < self.low_threshold:
+            return False
+        return True
+
+
 @dataclass(frozen=True)
 class ATRPctRangeGate(RegimeGate):
     """Allow entry only when ATR(period)/close is within [min_atr_pct, max_atr_pct].
@@ -557,6 +633,7 @@ __all__ = [
     "DirectionalSessionGate",
     "DonchianWidthGate",
     "EquityCurveGate",
+    "FundingGate",
     "NullRegimeGate",
     "SessionGate",
     "VolumeConfirmedGate",

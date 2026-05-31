@@ -60,7 +60,10 @@
 
 優先順位は「基盤再利用度 × 期待 EV ÷ 実装コスト」で決める。
 
-### Track ①: 上位足（最優先・最小コスト）
+### Track ①: 上位足（最優先・最小コスト） — ✅ 実施済み / REJECT（2026-05-30）
+
+> 結果は [gmo_bot_new_edge_findings.md §Track ①](gmo_bot_new_edge_findings.md#track--上位足1h--4h-reject2026-05-30)。
+> 1h は directional v2（LIVE 構成）でも mean +0.98 / pos 50%（15m v2 = +5.57 / 69.2%）でエッジ消失。4h は param 緩和でも 0 trade。撤退条件に該当 → 上位足での復活は無し。
 
 **仮説**: v0/v2 の構造は 15m の noise に弱いだけで、1h/4h なら edge が残る。
 
@@ -71,7 +74,10 @@
 
 **Done 基準**: rolling pos_rate ≥ 85% かつ min PnL ≥ 0%、holdout `total_scaled_pnl_pct_ci_low > 0`
 
-### Track ②: レジーム切替メタ戦略（小コスト）
+### Track ②: レジーム切替メタ戦略（小コスト） — ✅ 実施済み / REJECT（2026-05-31）
+
+> 結果は [gmo_bot_new_edge_findings.md §Track ②](gmo_bot_new_edge_findings.md#track--レジーム切替メタ--reject2026-05-31)。
+> `regime_router_15m_v0`（ADX で trend→ema / chop→MR を排他ルーティング）を実装。router_live mean +0.13（v2 +5.57）。v2 のエッジは direction×hour で ADX レジームと直交しており、chop を MR に回すと二重に劣化。撤退条件に該当。
 
 **仮説**: 単一ロジックでは chop と trend の両立ができない。レジームで entry を切り替える上位層なら両取りできる。
 
@@ -81,7 +87,10 @@
 
 **Done 基準**: 各レジーム window で構成戦略 single の PnL を下回らず、全体 mean が現行 v2 を上回る
 
-### Track ③: クロスセクション / 相対強弱（中コスト）
+### Track ③: クロスセクション / 相対強弱（中コスト） — ✅ 実施済み / REJECT(net)・gross edge あり（2026-05-31）
+
+> 結果は [gmo_bot_new_edge_findings.md §Track ③](gmo_bot_new_edge_findings.md#track--クロスセクション--相対強弱--rejectnet--探索唯一の-gross-edge2026-05-31)。
+> SOL/BTC/ETH の short-term cross-sectional reversal が **gross で ann Sharpe +7.07 / DSR p≈0.000 / 全窓 positive**（探索全体で唯一の本物の edge）。だが損益分岐は片道 ~1.5bps で、GMO 小売コスト ~7bps では全構成が SOL buy&hold 以下。net では撤退条件に該当。低コスト執行を持てた場合のみ再訪価値。
 
 **仮説**: SOL/BTC/ETH の相対強弱・ペアスプレッドに、単一資産では見えない edge がある。
 
@@ -91,7 +100,10 @@
 
 **Done 基準**: バスケット/スプレッドの rolling Sharpe が単一 SOL/JPY を上回り、DSR p < 0.10
 
-### Track ④: クロスアセット先行（リード/ラグ）（小〜中コスト）
+### Track ④: クロスアセット先行（リード/ラグ）（小〜中コスト） — ✅ 実施済み / REJECT（2026-05-31）
+
+> 結果は [gmo_bot_new_edge_findings.md §Track ④](gmo_bot_new_edge_findings.md#track--btc-リードラグ-entry--reject2026-05-31)。
+> `btc_leadlag_15m_v0`（BTC N bar リターン符号で SOL entry 起動）を実装。最良 mean +0.22（v2 +5.57、Done=+6.57 に遠く及ばず）。BtcMomentum は SOL 自身の setup への確認 gate としてのみ有効で primary entry にならない。撤退条件に該当。
 
 **仮説**: BTC の動きが SOL/JPY に先行する。
 
@@ -100,7 +112,10 @@
 
 **Done 基準**: lead-lag entry が v2 baseline の rolling mean を +1pt 以上
 
-### Track ⑤: 新データ次元（最大 EV・最大コスト・本命）
+### Track ⑤: 新データ次元（最大 EV・最大コスト・本命） — ✅ 実施済み / REJECT・filter は marginal+（2026-05-31）
+
+> 結果は [gmo_bot_new_edge_findings.md §Track ⑤](gmo_bot_new_edge_findings.md#track--新データ次元funding--basis--rejectdone-未達--filter-は-marginal2026-05-31)。
+> GMO native に funding/basis は無い（外部 Binance proxy を取得・キャッシュ）。funding 単体は corr -0.03 / DSR p>0.6 で edge 無し。`FundingGate`(逆張り tail filter) を v2 に重ねると mean +0.23pt・pos_rate 69%→85% だが Done(+2pt) 未達。新エッジではないが pos_rate を基準まで上げる軽量 robustness filter 候補。
 
 **仮説**: OHLCV 系が原理的に見えない **funding / ベーシス（perp-spot 乖離）** に構造的に別の α源がある（Phase3-V §4E で未踏と明記）。
 
