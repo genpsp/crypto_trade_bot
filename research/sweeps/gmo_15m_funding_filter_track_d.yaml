@@ -1,0 +1,44 @@
+name: gmo_15m_funding_filter_track_d
+model_id: gmo_ema_pullback_15m_both_v0
+base_config: research/models/gmo_ema_pullback_15m_both_v0/config/current.json
+
+# Track D: funding tail-filter を v2 に重ねた variant を Gate A(holdout) で再現確認
+# 期待: holdout total_scaled_pnl_pct_ci_low > 0 維持 + pos_rate 改善の再現
+min_trades: 20
+holdout:
+  type: time_split
+  train_end: 2026-03-11T23:59:59Z
+  test_start: 2026-03-12T00:00:00Z
+
+execution_model:
+  id: ideal_v1
+
+dataset:
+  broker: GMO_COIN
+  pair: SOL/JPY
+  timeframe: 15m
+  bars_path: research/data/raw/soljpy_15m_to_2026_05.csv
+
+windows:
+  - type: rolling
+    length_days: 90
+    step_days: 30
+
+combinations: listed
+
+cases:
+  - name: A_v2_baseline
+    values: {}
+  - name: B_v2_funding_default
+    values:
+      strategy.components.regime_gate.gates:
+        - type: directional_session
+          long_allowed_utc_hours: [15, 16, 17, 18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8]
+          short_allowed_utc_hours: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        - type: volume_confirmed
+          period: 20
+          volume_multiplier: 0.4
+        - type: funding
+          funding_path: research/data/raw/sol_funding_binance_8h.csv
+          high_threshold: 0.0001
+          low_threshold: -0.0002

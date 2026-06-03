@@ -15,4 +15,12 @@ research/data/cache/
 # Old logic-search run outputs (large parquet, superseded by Phase 1-3 work).
 # Keep manifest.json + sweep YAML if a future run needs to be reproduced.
 research/data/runs/20260520-*/
+research/data/runs/20260602-*/
+research/data/runs/track_b_xs/
+research/data/runs/track_c_carry/
+research/data/raw/altdata/
+research/data/raw/binance15m/
+research/data/raw/funding/
+research/data/raw/funding_long/
+research/data/altdata/
 research/notebooks/.ipynb_checkpoints/
