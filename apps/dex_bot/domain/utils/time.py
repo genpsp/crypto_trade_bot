@@ -9,6 +9,7 @@ TIMEFRAME_TO_SECONDS: dict[SignalTimeframe, int] = {
     "1h": 60 * 60,
     "2h": 2 * 60 * 60,
     "4h": 4 * 60 * 60,
+    "1d": 24 * 60 * 60,
 }
 JST = timezone(timedelta(hours=9))
 

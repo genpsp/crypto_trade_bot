@@ -46,6 +46,16 @@ class _Variant:
 
 
 def _build_variants() -> list[_Variant]:
+    _daily = {
+        "max_distance_from_ema_fast_pct": 8.0,
+        "short_upper_close_drift_max_pct": 5.0,
+        "long_atr_pct_max": 8.0,
+        "upper_trend_timeframe_minutes": 1440,
+        "long_weak_trend_confirm_timeframe_minutes": 1440,
+        "long_weak_upper_trend_min_gap_pct": 0.5,
+        "short_upper_trend_min_gap_pct": 0.5,
+        "short_reversal_guard_min_upper_trend_gap_pct": 20.0,
+    }
     return [
         _Variant("v0_baseline", "ema_trend_pullback_15m_v0", components=None),
         _Variant(
@@ -265,6 +275,44 @@ def _build_variants() -> list[_Variant]:
                             "allowed_utc_hours": [
                                 15, 16, 17, 18, 19, 20, 21, 22, 23,
                                 0, 1, 2, 3, 4, 5, 6, 7, 8,
+                            ],
+                        },
+                        {
+                            "type": "volume_confirmed",
+                            "period": 20,
+                            "volume_multiplier": 0.4,
+                        },
+                        {
+                            "type": "atr_pct_range",
+                            "period": 14,
+                            "min_atr_pct": 0.46,
+                            "max_atr_pct": 100.0,
+                        },
+                    ],
+                },
+                "exit_policy": {
+                    "type": "time_exit",
+                    "max_holding_bars": 120,
+                    "prefer_breakeven": False,
+                },
+            },
+        ),
+        # directional_session + vol + ATR floor (未検証: dirセッションにATR下限を追加)
+        _Variant(
+            "v2_dir_session+vol+atr_min+time120",
+            "ema_trend_pullback_15m_v2",
+            components={
+                "regime_gate": {
+                    "type": "composite",
+                    "gates": [
+                        {
+                            "type": "directional_session",
+                            "long_allowed_utc_hours": [
+                                15, 16, 17, 18, 19, 20, 21, 22, 23,
+                                0, 1, 2, 3, 4, 5, 6, 7, 8,
+                            ],
+                            "short_allowed_utc_hours": [
+                                3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
                             ],
                         },
                         {
@@ -794,6 +842,171 @@ def _build_variants() -> list[_Variant]:
                 },
             },
         ),
+        # ── Daily variants ────────────────────────────────────────────────
+        _Variant(
+            "1d_donchian_20",
+            "donchian_breakout_15m_v0",
+            components=None,
+            extra_strategy_params={"donchian_period": 20, "atr_period": 14},
+        ),
+        _Variant(
+            "1d_donchian_10",
+            "donchian_breakout_15m_v0",
+            components=None,
+            extra_strategy_params={"donchian_period": 10, "atr_period": 14},
+        ),
+        _Variant(
+            "1d_donchian_30",
+            "donchian_breakout_15m_v0",
+            components=None,
+            extra_strategy_params={"donchian_period": 30, "atr_period": 14},
+        ),
+        _Variant(
+            "1d_donchian_20_vol",
+            "donchian_breakout_15m_v0",
+            components={
+                "regime_gate": {"type": "volume_confirmed", "period": 20, "volume_multiplier": 0.4},
+            },
+            extra_strategy_params={"donchian_period": 20, "atr_period": 14},
+        ),
+        # trailing stop（Chandelier）でトレンドを引っ張る
+        _Variant(
+            "1d_donchian_20_chandelier",
+            "donchian_breakout_15m_v0",
+            components={
+                "exit_policy": {"type": "chandelier", "atr_period": 14, "atr_multiplier": 3.0},
+            },
+            extra_strategy_params={"donchian_period": 20, "atr_period": 14},
+        ),
+        _Variant(
+            "1d_donchian_30_chandelier",
+            "donchian_breakout_15m_v0",
+            components={
+                "exit_policy": {"type": "chandelier", "atr_period": 14, "atr_multiplier": 3.0},
+            },
+            extra_strategy_params={"donchian_period": 30, "atr_period": 14},
+        ),
+        # time exit（N日保有）
+        _Variant(
+            "1d_donchian_20_time20",
+            "donchian_breakout_15m_v0",
+            components={
+                "exit_policy": {"type": "time_exit", "max_holding_bars": 20, "prefer_breakeven": False},
+            },
+            extra_strategy_params={"donchian_period": 20, "atr_period": 14},
+        ),
+        # ATR stop（max_loss 5%）+ 各種 exit — 日足用に再スケール
+        # Chandelier 2.0 ATR（タイト）
+        _Variant(
+            "1d_don20_atr2_chan2_ml5",
+            "donchian_breakout_15m_v0",
+            components={
+                "exit_policy": {"type": "chandelier", "atr_period": 14, "atr_multiplier": 2.0},
+            },
+            extra_strategy_params={"donchian_period": 20, "atr_period": 14, "atr_stop_multiplier": 2.0,
+                                   "max_loss_per_trade_pct_override": 5.0},
+        ),
+        # Volume filter でチョッピー除外
+        _Variant(
+            "1d_don20_atr2_chan3_vol_ml5",
+            "donchian_breakout_15m_v0",
+            components={
+                "regime_gate": {"type": "volume_confirmed", "period": 20, "volume_multiplier": 0.6},
+                "exit_policy": {"type": "chandelier", "atr_period": 14, "atr_multiplier": 3.0},
+            },
+            extra_strategy_params={"donchian_period": 20, "atr_period": 14, "atr_stop_multiplier": 2.0,
+                                   "max_loss_per_trade_pct_override": 5.0},
+        ),
+        _Variant(
+            "1d_don20_atr2_chan_ml5",
+            "donchian_breakout_15m_v0",
+            components={
+                "exit_policy": {"type": "chandelier", "atr_period": 14, "atr_multiplier": 3.0},
+            },
+            extra_strategy_params={"donchian_period": 20, "atr_period": 14, "atr_stop_multiplier": 2.0,
+                                   "max_loss_per_trade_pct_override": 5.0},
+        ),
+        _Variant(
+            "1d_don30_atr2_chan_ml5",
+            "donchian_breakout_15m_v0",
+            components={
+                "exit_policy": {"type": "chandelier", "atr_period": 14, "atr_multiplier": 3.0},
+            },
+            extra_strategy_params={"donchian_period": 30, "atr_period": 14, "atr_stop_multiplier": 2.0,
+                                   "max_loss_per_trade_pct_override": 5.0},
+        ),
+        _Variant(
+            "1d_don55_atr2_chan_ml5",
+            "donchian_breakout_15m_v0",
+            components={
+                "exit_policy": {"type": "chandelier", "atr_period": 14, "atr_multiplier": 3.0},
+            },
+            extra_strategy_params={"donchian_period": 55, "atr_period": 14, "atr_stop_multiplier": 2.0,
+                                   "max_loss_per_trade_pct_override": 5.0},
+        ),
+        # 長期 Donchian（クラシック Turtle: 55日）
+        _Variant(
+            "1d_donchian_55",
+            "donchian_breakout_15m_v0",
+            components=None,
+            extra_strategy_params={"donchian_period": 55, "atr_period": 14},
+        ),
+        _Variant(
+            "1d_donchian_55_chandelier",
+            "donchian_breakout_15m_v0",
+            components={
+                "exit_policy": {"type": "chandelier", "atr_period": 14, "atr_multiplier": 3.0},
+            },
+            extra_strategy_params={"donchian_period": 55, "atr_period": 14},
+        ),
+        _Variant(
+            "1d_v2_no_gate",
+            "ema_trend_pullback_15m_v2",
+            components={
+                "regime_gate": {"type": "volume_confirmed", "period": 20, "volume_multiplier": 0.0},
+                "exit_policy": {"type": "time_exit", "max_holding_bars": 20, "prefer_breakeven": False},
+            },
+            extra_strategy_params=_daily,
+        ),
+        _Variant(
+            "1d_v2_vol",
+            "ema_trend_pullback_15m_v2",
+            components={
+                "regime_gate": {"type": "volume_confirmed", "period": 20, "volume_multiplier": 0.4},
+                "exit_policy": {"type": "time_exit", "max_holding_bars": 20, "prefer_breakeven": False},
+            },
+            extra_strategy_params=_daily,
+        ),
+        _Variant(
+            "1d_v2_vol_atr",
+            "ema_trend_pullback_15m_v2",
+            components={
+                "regime_gate": {
+                    "type": "composite",
+                    "gates": [
+                        {"type": "volume_confirmed", "period": 20, "volume_multiplier": 0.4},
+                        {"type": "atr_pct_range", "period": 14, "min_atr_pct": 2.0, "max_atr_pct": 100.0},
+                    ],
+                },
+                "exit_policy": {"type": "time_exit", "max_holding_bars": 20, "prefer_breakeven": False},
+            },
+            extra_strategy_params=_daily,
+        ),
+        _Variant(
+            "1d_v2_vol_atr_tp2_5",
+            "ema_trend_pullback_15m_v2",
+            components={
+                "regime_gate": {
+                    "type": "composite",
+                    "gates": [
+                        {"type": "volume_confirmed", "period": 20, "volume_multiplier": 0.4},
+                        {"type": "atr_pct_range", "period": 14, "min_atr_pct": 2.0, "max_atr_pct": 100.0},
+                    ],
+                },
+                "exit_policy": {"type": "time_exit", "max_holding_bars": 30, "prefer_breakeven": False},
+            },
+            extra_strategy_params={**_daily, "take_profit_r_multiple": 2.5},
+        ),
     ]
 
 
@@ -819,7 +1032,11 @@ def _make_config(
     config["strategy"]["name"] = variant.strategy_name
     if variant.extra_strategy_params:
         for key, value in variant.extra_strategy_params.items():
-            config["strategy"][key] = value
+            if key == "max_loss_per_trade_pct_override":
+                config["risk"] = dict(config.get("risk", {}))
+                config["risk"]["max_loss_per_trade_pct"] = value
+            else:
+                config["strategy"][key] = value
     if variant.components is not None:
         config["strategy"]["components"] = variant.components
     return config
@@ -877,7 +1094,7 @@ def main() -> None:
         "--base-config",
         default="research/models/gmo_ema_pullback_15m_both_v0/config/current.json",
     )
-    parser.add_argument("--timeframe", required=True, choices=["15m", "1h", "2h", "4h"])
+    parser.add_argument("--timeframe", required=True, choices=["15m", "1h", "2h", "4h", "1d"])
     parser.add_argument("--pair", default="SOL/JPY")
     parser.add_argument("--windows", type=int, default=10)
     parser.add_argument("--window-bars", type=int, default=700)

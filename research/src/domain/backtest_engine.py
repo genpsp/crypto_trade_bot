@@ -162,6 +162,8 @@ _COMPONENT_BUNDLE_STRATEGIES = frozenset(
         "ema_trend_pullback_15m_v2",
         "regime_router_15m_v0",
         "btc_leadlag_15m_v0",
+        "donchian_breakout_15m_v0",
+        "supertrend_15m_v0",
     }
 )
 

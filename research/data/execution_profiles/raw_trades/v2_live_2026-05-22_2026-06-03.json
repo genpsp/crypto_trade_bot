@@ -1,0 +1,2065 @@
+[
+  {
+    "trade_id": "2026-05-22T12:00:00Z_gmo_ema_pullback_15m_both_v0_LONG",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "quote_amount_jpy": 8329.8,
+      "entry_time_iso": "2026-05-22T12:00:02.653946Z",
+      "entry_price": 13883.0,
+      "exit_trigger_price": 13790.0,
+      "exit_time_iso": "2026-05-22T14:18:35.184962Z",
+      "entry_trigger_price": 13857.0,
+      "status": "CLOSED",
+      "take_profit_price": 14050.4,
+      "stop_price": 13790.0,
+      "exit_price": 13783.5
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=LONG, entry=13857.0000, stop=13790.0000, tp=13977.6000, rsi=55.14, regime=NORMAL, size_x=1.00",
+      "ema_slow": 13833.021945224213,
+      "ema_fast": 13836.06766149057,
+      "entry_price": 13857.0,
+      "take_profit_price": 13977.6,
+      "stop_price": 13790.0,
+      "bar_close_time_iso": "2026-05-22T12:00:00Z"
+    },
+    "plan": {
+      "notional_jpy": 8314.2,
+      "summary": "Buy SOL with 8314.2 JPY (base=8723.88, regime=NORMAL, size_x=1.00), entry=13883.0, stop=13790.0, tp=14050.4",
+      "entry_price": 13883.0,
+      "r_multiple": 1.8,
+      "stop_price": 13790.0,
+      "take_profit_price": 14050.4
+    },
+    "direction": "LONG",
+    "updated_at": "2026-05-22T14:18:35.184996Z",
+    "trade_date": "2026-05-22",
+    "close_reason": "STOP_LOSS",
+    "created_at": "2026-05-22T12:00:01.805001Z",
+    "execution": {
+      "total_realized_pnl_jpy": -60.0,
+      "exit_reference_price": 13790.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 8270.0,
+        "execution_ids": [
+          "1578884867",
+          "1578884866"
+        ],
+        "realized_pnl_jpy": -60.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 4.0,
+        "avg_fill_price": 13783.5,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285136454
+          }
+        ]
+      },
+      "entry_reference_price": 13857.0,
+      "realized_pnl_jpy": -60.0,
+      "entry_result": {
+        "filled_quote_jpy": 8329.8,
+        "execution_ids": [
+          "1578823095"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13883.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285136454
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "EXECUTED",
+          "price": 13790.0,
+          "size_sol": 0.6,
+          "order_id": 8478040747,
+          "position_id": 285136454
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "EXECUTED",
+      "exit_leg_realized_pnl_jpy": -60.0,
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8478040742,
+      "processed_exit_execution_ids": [
+        "1578884866",
+        "1578884867"
+      ],
+      "stop_loss_order_id": 8478040747,
+      "exit_order_id": 8478040747,
+      "stop_loss_order": {
+        "size_sol": 0.6,
+        "price": 13790.0,
+        "order_id": 8478040747,
+        "position_id": 285136454
+      },
+      "exit_fee_jpy": 4.0,
+      "entry_order": {
+        "order_id": 8478040742
+      }
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-05-22T12:00:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-05-23T05:00:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "quote_amount_jpy": 8054.4,
+      "entry_time_iso": "2026-05-23T05:00:02.484685Z",
+      "entry_price": 13424.0,
+      "exit_trigger_price": 13223.0,
+      "exit_time_iso": "2026-05-23T07:46:30.511502Z",
+      "entry_trigger_price": 13423.0,
+      "status": "CLOSED",
+      "take_profit_price": 13290.8,
+      "stop_price": 13498.0,
+      "exit_price": 13220.0
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=13423.0000, stop=13498.0000, tp=13288.0000, rsi=35.65, regime=NORMAL, size_x=1.00",
+      "ema_fast": 13447.61838895394,
+      "ema_slow": 13527.336510579176,
+      "entry_price": 13423.0,
+      "take_profit_price": 13288.0,
+      "stop_price": 13498.0,
+      "bar_close_time_iso": "2026-05-23T05:00:00Z"
+    },
+    "plan": {
+      "notional_jpy": 8053.8,
+      "summary": "Sell SOL with 8053.8 JPY (base=8659.53, regime=NORMAL, size_x=1.00), entry=13424.0, stop=13498.0, tp=13290.8",
+      "entry_price": 13424.0,
+      "r_multiple": 1.8,
+      "stop_price": 13498.0,
+      "take_profit_price": 13290.8
+    },
+    "direction": "SHORT",
+    "updated_at": "2026-05-23T07:46:30.511528Z",
+    "trade_date": "2026-05-23",
+    "close_reason": "TAKE_PROFIT",
+    "created_at": "2026-05-23T05:00:01.800818Z",
+    "execution": {
+      "total_realized_pnl_jpy": 122.0,
+      "exit_reference_price": 13223.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 7932.0,
+        "execution_ids": [
+          "1579230732"
+        ],
+        "realized_pnl_jpy": 122.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13220.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285172281
+          }
+        ]
+      },
+      "entry_reference_price": 13423.0,
+      "realized_pnl_jpy": 122.0,
+      "entry_result": {
+        "filled_quote_jpy": 8054.4,
+        "execution_ids": [
+          "1579168717"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13424.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285172281
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "INACTIVE",
+          "size_sol": 0.6,
+          "price": 13498.0,
+          "order_id": 8480352392,
+          "position_id": 285172281
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "INACTIVE",
+      "exit_leg_realized_pnl_jpy": 122.0,
+      "exit_order": {
+        "order_id": 8480667125
+      },
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8480352390,
+      "take_profit_trigger_price": 13223.0,
+      "stop_loss_order_id": 8480352392,
+      "exit_order_id": 8480667125,
+      "stop_loss_order": {
+        "size_sol": 0.6,
+        "price": 13498.0,
+        "order_id": 8480352392,
+        "position_id": 285172281
+      },
+      "exit_fee_jpy": 3.0,
+      "entry_order": {
+        "order_id": 8480352390
+      },
+      "processed_exit_execution_ids": [
+        "1579230732"
+      ],
+      "take_profit_triggered_at_iso": "2026-05-23T07:46:29.793943Z"
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-05-23T05:00:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-05-25T12:30:00Z_gmo_ema_pullback_15m_both_v0_LONG",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "quote_amount_jpy": 8190.0,
+      "entry_time_iso": "2026-05-25T12:30:01.869993Z",
+      "entry_price": 13650.0,
+      "exit_trigger_price": 13600.0,
+      "exit_time_iso": "2026-05-25T19:39:28.624677Z",
+      "entry_trigger_price": 13645.0,
+      "status": "CLOSED",
+      "take_profit_price": 13740.0,
+      "stop_price": 13600.0,
+      "exit_price": 13600.0
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=LONG, entry=13645.0000, stop=13600.0000, tp=13726.0000, rsi=53.20, regime=NORMAL, size_x=1.00",
+      "ema_slow": 13623.339266413122,
+      "ema_fast": 13640.873477547986,
+      "entry_price": 13645.0,
+      "take_profit_price": 13726.0,
+      "stop_price": 13600.0,
+      "bar_close_time_iso": "2026-05-25T12:30:00Z"
+    },
+    "plan": {
+      "notional_jpy": 8187.0,
+      "summary": "Buy SOL with 8187.0 JPY (base=8775.36, regime=NORMAL, size_x=1.00), entry=13650.0, stop=13600.0, tp=13740.0",
+      "entry_price": 13650.0,
+      "r_multiple": 1.8,
+      "stop_price": 13600.0,
+      "take_profit_price": 13740.0
+    },
+    "trade_date": "2026-05-25",
+    "updated_at": "2026-05-25T19:39:28.624705Z",
+    "created_at": "2026-05-25T12:30:01.366398Z",
+    "close_reason": "STOP_LOSS",
+    "direction": "LONG",
+    "execution": {
+      "total_realized_pnl_jpy": -30.0,
+      "exit_reference_price": 13600.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 8160.0,
+        "execution_ids": [
+          "1580714691"
+        ],
+        "realized_pnl_jpy": -30.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13600.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285287104
+          }
+        ]
+      },
+      "entry_reference_price": 13645.0,
+      "realized_pnl_jpy": -30.0,
+      "entry_result": {
+        "filled_quote_jpy": 8190.0,
+        "execution_ids": [
+          "1580515836"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13650.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285287104
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "EXECUTED",
+          "price": 13600.0,
+          "size_sol": 0.6,
+          "order_id": 8487656230,
+          "position_id": 285287104
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "EXECUTED",
+      "exit_leg_realized_pnl_jpy": -30.0,
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8487656228,
+      "processed_exit_execution_ids": [
+        "1580714691"
+      ],
+      "stop_loss_order_id": 8487656230,
+      "exit_order_id": 8487656230,
+      "stop_loss_order": {
+        "size_sol": 0.6,
+        "price": 13600.0,
+        "order_id": 8487656230,
+        "position_id": 285287104
+      },
+      "exit_fee_jpy": 3.0,
+      "entry_order": {
+        "order_id": 8487656228
+      }
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-05-25T12:30:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-05-26T07:45:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "quote_amount_jpy": 8030.4,
+      "entry_time_iso": "2026-05-26T07:45:01.388337Z",
+      "entry_price": 13384.0,
+      "exit_trigger_price": 13477.0,
+      "exit_time_iso": "2026-05-26T10:19:03.143325Z",
+      "entry_trigger_price": 13381.0,
+      "status": "CLOSED",
+      "take_profit_price": 13216.6,
+      "stop_price": 13477.0,
+      "exit_price": 13480.0
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=13381.0000, stop=13477.0000, tp=13208.2000, rsi=41.98, regime=NORMAL, size_x=1.00",
+      "ema_slow": 13440.775337563526,
+      "ema_fast": 13426.484215313834,
+      "entry_price": 13381.0,
+      "take_profit_price": 13208.2,
+      "stop_price": 13477.0,
+      "bar_close_time_iso": "2026-05-26T07:45:00Z"
+    },
+    "plan": {
+      "notional_jpy": 8028.6,
+      "summary": "Sell SOL with 8028.6 JPY (base=8740.71, regime=NORMAL, size_x=1.00), entry=13384.0, stop=13477.0, tp=13216.6",
+      "entry_price": 13384.0,
+      "r_multiple": 1.8,
+      "stop_price": 13477.0,
+      "take_profit_price": 13216.6
+    },
+    "created_at": "2026-05-26T07:45:00.871625Z",
+    "updated_at": "2026-05-26T10:19:03.143354Z",
+    "trade_date": "2026-05-26",
+    "close_reason": "STOP_LOSS",
+    "direction": "SHORT",
+    "execution": {
+      "total_realized_pnl_jpy": -58.0,
+      "exit_reference_price": 13477.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 8088.0,
+        "execution_ids": [
+          "1581039069"
+        ],
+        "realized_pnl_jpy": -58.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13480.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285304606
+          }
+        ]
+      },
+      "entry_reference_price": 13381.0,
+      "realized_pnl_jpy": -58.0,
+      "entry_result": {
+        "filled_quote_jpy": 8030.4,
+        "execution_ids": [
+          "1580969966"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13384.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285304606
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "EXECUTED",
+          "size_sol": 0.6,
+          "price": 13477.0,
+          "order_id": 8490125929,
+          "position_id": 285304606
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "EXECUTED",
+      "exit_leg_realized_pnl_jpy": -58.0,
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8490125926,
+      "processed_exit_execution_ids": [
+        "1581039069"
+      ],
+      "stop_loss_order_id": 8490125929,
+      "exit_order_id": 8490125929,
+      "stop_loss_order": {
+        "size_sol": 0.6,
+        "price": 13477.0,
+        "order_id": 8490125929,
+        "position_id": 285304606
+      },
+      "exit_fee_jpy": 3.0,
+      "entry_order": {
+        "order_id": 8490125926
+      }
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-05-26T07:45:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-05-27T02:45:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "quote_amount_jpy": 7988.4,
+      "entry_time_iso": "2026-05-27T02:45:02.826784Z",
+      "entry_price": 13314.0,
+      "exit_trigger_price": 13389.0,
+      "exit_time_iso": "2026-05-27T08:06:28.279503Z",
+      "entry_trigger_price": 13321.0,
+      "status": "CLOSED",
+      "take_profit_price": 13179.0,
+      "stop_price": 13389.0,
+      "exit_price": 13400.0
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=13321.0000, stop=13389.0000, tp=13198.6000, rsi=42.44, regime=NORMAL, size_x=1.00",
+      "ema_fast": 13355.506093145257,
+      "ema_slow": 13360.312478573514,
+      "entry_price": 13321.0,
+      "take_profit_price": 13198.6,
+      "stop_price": 13389.0,
+      "bar_close_time_iso": "2026-05-27T02:45:00Z"
+    },
+    "plan": {
+      "notional_jpy": 7992.6,
+      "summary": "Sell SOL with 7992.6 JPY (base=8678.34, regime=NORMAL, size_x=1.00), entry=13314.0, stop=13389.0, tp=13179.0",
+      "entry_price": 13314.0,
+      "r_multiple": 1.8,
+      "stop_price": 13389.0,
+      "take_profit_price": 13179.0
+    },
+    "direction": "SHORT",
+    "updated_at": "2026-05-27T08:06:28.279543Z",
+    "created_at": "2026-05-27T02:45:02.251645Z",
+    "close_reason": "STOP_LOSS",
+    "trade_date": "2026-05-27",
+    "execution": {
+      "total_realized_pnl_jpy": -52.0,
+      "exit_reference_price": 13389.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 8040.0,
+        "execution_ids": [
+          "1581612342"
+        ],
+        "realized_pnl_jpy": -52.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13400.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285354240
+          }
+        ]
+      },
+      "entry_reference_price": 13321.0,
+      "realized_pnl_jpy": -52.0,
+      "entry_result": {
+        "filled_quote_jpy": 7988.4,
+        "execution_ids": [
+          "1581438321"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13314.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285354240
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "EXECUTED",
+          "size_sol": 0.6,
+          "price": 13389.0,
+          "order_id": 8493094482,
+          "position_id": 285354240
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "EXECUTED",
+      "exit_leg_realized_pnl_jpy": -52.0,
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8493094478,
+      "processed_exit_execution_ids": [
+        "1581612342"
+      ],
+      "stop_loss_order_id": 8493094482,
+      "exit_order_id": 8493094482,
+      "stop_loss_order": {
+        "size_sol": 0.6,
+        "price": 13389.0,
+        "order_id": 8493094482,
+        "position_id": 285354240
+      },
+      "exit_fee_jpy": 3.0,
+      "entry_order": {
+        "order_id": 8493094478
+      }
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-05-27T02:45:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-05-27T18:00:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "quote_amount_jpy": 7960.8,
+      "entry_time_iso": "2026-05-27T18:00:03.264330Z",
+      "entry_price": 13268.0,
+      "exit_trigger_price": 12953.0,
+      "exit_time_iso": "2026-05-28T03:18:11.167210Z",
+      "entry_trigger_price": 13263.0,
+      "status": "CLOSED",
+      "take_profit_price": 12990.5192,
+      "stop_price": 13422.156,
+      "exit_price": 12952.833333
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=13263.0000, stop=13422.1560, tp=12976.5192, rsi=42.36, regime=NORMAL, size_x=1.00",
+      "ema_slow": 13342.416279750996,
+      "ema_fast": 13328.296737675064,
+      "entry_price": 13263.0,
+      "take_profit_price": 12976.519199999999,
+      "stop_price": 13422.156,
+      "bar_close_time_iso": "2026-05-27T18:00:00Z"
+    },
+    "plan": {
+      "notional_jpy": 7957.8,
+      "summary": "Sell SOL with 7957.8 JPY (base=8620.92, regime=NORMAL, size_x=1.00), entry=13268.0, stop=13422.156, tp=12990.5192",
+      "entry_price": 13268.0,
+      "r_multiple": 1.8,
+      "stop_price": 13422.156,
+      "take_profit_price": 12990.5192
+    },
+    "direction": "SHORT",
+    "updated_at": "2026-05-28T03:18:11.167236Z",
+    "created_at": "2026-05-27T18:00:02.729112Z",
+    "close_reason": "TAKE_PROFIT",
+    "trade_date": "2026-05-28",
+    "execution": {
+      "total_realized_pnl_jpy": 189.0,
+      "exit_reference_price": 12953.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 7771.7,
+        "execution_ids": [
+          "1582126488",
+          "1582126485"
+        ],
+        "realized_pnl_jpy": 189.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 12952.833333,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285385304
+          }
+        ]
+      },
+      "entry_reference_price": 13263.0,
+      "realized_pnl_jpy": 189.0,
+      "entry_result": {
+        "filled_quote_jpy": 7960.8,
+        "execution_ids": [
+          "1581897673"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13268.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285385304
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "INACTIVE",
+          "price": 13422.0,
+          "size_sol": 0.6,
+          "order_id": 8495370303,
+          "position_id": 285385304
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "INACTIVE",
+      "exit_leg_realized_pnl_jpy": 189.0,
+      "exit_order": {
+        "order_id": 8496812070
+      },
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8495370297,
+      "take_profit_trigger_price": 12953.0,
+      "stop_loss_order_id": 8495370303,
+      "exit_order_id": 8496812070,
+      "stop_loss_order": {
+        "size_sol": 0.6,
+        "price": 13422.0,
+        "order_id": 8495370303,
+        "position_id": 285385304
+      },
+      "exit_fee_jpy": 3.0,
+      "entry_order": {
+        "order_id": 8495370297
+      },
+      "processed_exit_execution_ids": [
+        "1582126485",
+        "1582126488"
+      ],
+      "take_profit_triggered_at_iso": "2026-05-28T03:18:10.331967Z"
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-05-27T18:00:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-05-28T03:15:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "quote_amount_jpy": 7746.0,
+      "entry_time_iso": "2026-05-28T03:20:02.725832Z",
+      "entry_price": 12910.0,
+      "exit_trigger_price": 13064.0,
+      "exit_time_iso": "2026-05-28T17:20:14.032866Z",
+      "entry_trigger_price": 13052.0,
+      "status": "CLOSED",
+      "take_profit_price": 12631.144,
+      "stop_price": 13064.92,
+      "exit_price": 13076.0
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=13052.0000, stop=13185.0000, tp=12812.6000, rsi=33.21, regime=NORMAL, size_x=1.00",
+      "ema_slow": 13189.094600005163,
+      "ema_fast": 13104.90680440891,
+      "entry_price": 13052.0,
+      "take_profit_price": 12812.6,
+      "stop_price": 13185.0,
+      "bar_close_time_iso": "2026-05-28T03:15:00Z"
+    },
+    "plan": {
+      "notional_jpy": 7745.4,
+      "summary": "Sell SOL with 7745.4 JPY (base=8799.12, regime=NORMAL, size_x=1.00), entry=12910.0, stop=13064.92, tp=12631.144",
+      "entry_price": 12910.0,
+      "r_multiple": 1.8,
+      "stop_price": 13064.92,
+      "take_profit_price": 12631.144
+    },
+    "trade_date": "2026-05-28",
+    "updated_at": "2026-05-28T17:20:14.032897Z",
+    "created_at": "2026-05-28T03:20:02.259209Z",
+    "close_reason": "STOP_LOSS",
+    "direction": "SHORT",
+    "execution": {
+      "total_realized_pnl_jpy": -101.0,
+      "exit_reference_price": 13064.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 7846.0,
+        "execution_ids": [
+          "1582725681",
+          "1582725680"
+        ],
+        "realized_pnl_jpy": -101.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13076.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285407283
+          }
+        ]
+      },
+      "entry_reference_price": 12909.0,
+      "realized_pnl_jpy": -101.0,
+      "entry_result": {
+        "filled_quote_jpy": 7746.0,
+        "execution_ids": [
+          "1582126933"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 12910.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285407283
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "EXECUTED",
+          "size_sol": 0.6,
+          "price": 13064.0,
+          "order_id": 8496838344,
+          "position_id": 285407283
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "EXECUTED",
+      "exit_leg_realized_pnl_jpy": -101.0,
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8496838337,
+      "processed_exit_execution_ids": [
+        "1582725680",
+        "1582725681"
+      ],
+      "stop_loss_order_id": 8496838344,
+      "exit_order_id": 8496838344,
+      "stop_loss_order": {
+        "size_sol": 0.6,
+        "price": 13064.0,
+        "order_id": 8496838344,
+        "position_id": 285407283
+      },
+      "exit_fee_jpy": 3.0,
+      "entry_order": {
+        "order_id": 8496838337
+      }
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-05-28T03:15:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-05-29T03:00:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "quote_amount_jpy": 7786.2,
+      "entry_time_iso": "2026-05-29T03:00:03.802130Z",
+      "entry_price": 12977.0,
+      "exit_trigger_price": 13104.0,
+      "exit_time_iso": "2026-05-29T06:23:00.252586Z",
+      "entry_trigger_price": 12977.0,
+      "status": "CLOSED",
+      "take_profit_price": 12748.4,
+      "stop_price": 13104.0,
+      "exit_price": 13104.0
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=12977.0000, stop=13104.0000, tp=12748.4000, rsi=35.26, regime=NORMAL, size_x=1.00",
+      "ema_fast": 13046.340456203112,
+      "ema_slow": 13059.631779073297,
+      "entry_price": 12977.0,
+      "take_profit_price": 12748.4,
+      "stop_price": 13104.0,
+      "bar_close_time_iso": "2026-05-29T03:00:00Z"
+    },
+    "plan": {
+      "summary": "Sell SOL with 7786.2 JPY (base=8694.18, regime=NORMAL, size_x=1.00), entry=12977.0, stop=13104.0, tp=12748.4",
+      "notional_jpy": 7786.2,
+      "entry_price": 12977.0,
+      "take_profit_price": 12748.4,
+      "stop_price": 13104.0,
+      "r_multiple": 1.8
+    },
+    "trade_date": "2026-05-29",
+    "updated_at": "2026-05-29T06:23:00.252613Z",
+    "created_at": "2026-05-29T03:00:03.237625Z",
+    "close_reason": "STOP_LOSS",
+    "direction": "SHORT",
+    "execution": {
+      "total_realized_pnl_jpy": -77.0,
+      "exit_reference_price": 13104.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 7862.0,
+        "execution_ids": [
+          "1583075524"
+        ],
+        "realized_pnl_jpy": -77.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13104.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285465202
+          }
+        ]
+      },
+      "entry_reference_price": 12977.0,
+      "realized_pnl_jpy": -77.0,
+      "entry_result": {
+        "filled_quote_jpy": 7786.2,
+        "execution_ids": [
+          "1582979765"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 12977.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285465202
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "EXECUTED",
+          "size_sol": 0.6,
+          "price": 13104.0,
+          "order_id": 8500820195,
+          "position_id": 285465202
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "EXECUTED",
+      "exit_leg_realized_pnl_jpy": -77.0,
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8500820192,
+      "processed_exit_execution_ids": [
+        "1583075524"
+      ],
+      "stop_loss_order_id": 8500820195,
+      "exit_order_id": 8500820195,
+      "stop_loss_order": {
+        "size_sol": 0.6,
+        "price": 13104.0,
+        "order_id": 8500820195,
+        "position_id": 285465202
+      },
+      "exit_fee_jpy": 3.0,
+      "entry_order": {
+        "order_id": 8500820192
+      }
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-05-29T03:00:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-05-29T11:45:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "quote_amount_jpy": 7811.4,
+      "entry_time_iso": "2026-05-29T11:45:03.474221Z",
+      "entry_price": 13019.0,
+      "exit_trigger_price": 12800.0,
+      "exit_time_iso": "2026-05-29T14:26:18.249738Z",
+      "entry_trigger_price": 13022.0,
+      "status": "CLOSED",
+      "take_profit_price": 12819.2,
+      "stop_price": 13130.0,
+      "exit_price": 12800.0
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=13022.0000, stop=13130.0000, tp=12827.6000, rsi=40.10, regime=NORMAL, size_x=1.00",
+      "ema_fast": 13068.88518160816,
+      "ema_slow": 13069.316973989027,
+      "entry_price": 13022.0,
+      "take_profit_price": 12827.6,
+      "stop_price": 13130.0,
+      "bar_close_time_iso": "2026-05-29T11:45:00Z"
+    },
+    "plan": {
+      "notional_jpy": 7813.2,
+      "summary": "Sell SOL with 7813.2 JPY (base=8612.01, regime=NORMAL, size_x=1.00), entry=13019.0, stop=13130.0, tp=12819.2",
+      "entry_price": 13019.0,
+      "r_multiple": 1.8,
+      "stop_price": 13130.0,
+      "take_profit_price": 12819.2
+    },
+    "direction": "SHORT",
+    "updated_at": "2026-05-29T14:26:18.249763Z",
+    "created_at": "2026-05-29T11:45:03.086533Z",
+    "close_reason": "TAKE_PROFIT",
+    "trade_date": "2026-05-29",
+    "execution": {
+      "total_realized_pnl_jpy": 131.0,
+      "exit_reference_price": 12800.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 7680.0,
+        "execution_ids": [
+          "1583356098"
+        ],
+        "realized_pnl_jpy": 131.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 12800.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285475401
+          }
+        ]
+      },
+      "entry_reference_price": 13022.0,
+      "realized_pnl_jpy": 131.0,
+      "entry_result": {
+        "filled_quote_jpy": 7811.4,
+        "execution_ids": [
+          "1583265782"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13019.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285475401
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "INACTIVE",
+          "size_sol": 0.6,
+          "price": 13130.0,
+          "order_id": 8501929330,
+          "position_id": 285475401
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "INACTIVE",
+      "exit_leg_realized_pnl_jpy": 131.0,
+      "exit_order": {
+        "order_id": 8502426837
+      },
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8501929328,
+      "take_profit_trigger_price": 12800.0,
+      "stop_loss_order_id": 8501929330,
+      "exit_order_id": 8502426837,
+      "stop_loss_order": {
+        "size_sol": 0.6,
+        "price": 13130.0,
+        "order_id": 8501929330,
+        "position_id": 285475401
+      },
+      "exit_fee_jpy": 3.0,
+      "entry_order": {
+        "order_id": 8501929328
+      },
+      "processed_exit_execution_ids": [
+        "1583356098"
+      ],
+      "take_profit_triggered_at_iso": "2026-05-29T14:26:17.425041Z"
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-05-29T11:45:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-05-29T21:45:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "quote_amount_jpy": 7827.0,
+      "entry_time_iso": "2026-05-29T21:45:02.100192Z",
+      "entry_price": 13045.0,
+      "exit_trigger_price": 13151.0,
+      "exit_time_iso": "2026-05-30T02:12:10.894435Z",
+      "entry_trigger_price": 13037.0,
+      "status": "CLOSED",
+      "take_profit_price": 12854.2,
+      "stop_price": 13151.0,
+      "exit_price": 13194.666667
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=13037.0000, stop=13151.0000, tp=12831.8000, rsi=45.45, regime=NORMAL, size_x=1.00",
+      "ema_fast": 13067.462356139846,
+      "ema_slow": 13074.113759695465,
+      "entry_price": 13037.0,
+      "take_profit_price": 12831.8,
+      "stop_price": 13151.0,
+      "bar_close_time_iso": "2026-05-29T21:45:00Z"
+    },
+    "plan": {
+      "notional_jpy": 7822.2,
+      "summary": "Sell SOL with 7822.2 JPY (base=8737.74, regime=NORMAL, size_x=1.00), entry=13045.0, stop=13151.0, tp=12854.2",
+      "entry_price": 13045.0,
+      "r_multiple": 1.8,
+      "stop_price": 13151.0,
+      "take_profit_price": 12854.2
+    },
+    "trade_date": "2026-05-30",
+    "updated_at": "2026-05-30T02:12:10.894470Z",
+    "created_at": "2026-05-29T21:45:01.527708Z",
+    "close_reason": "STOP_LOSS",
+    "direction": "SHORT",
+    "execution": {
+      "total_realized_pnl_jpy": -91.0,
+      "exit_reference_price": 13151.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 7917.0,
+        "execution_ids": [
+          "1583635889",
+          "1583635888"
+        ],
+        "realized_pnl_jpy": -91.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13194.666667,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285506492
+          }
+        ]
+      },
+      "entry_reference_price": 13037.0,
+      "realized_pnl_jpy": -91.0,
+      "entry_result": {
+        "filled_quote_jpy": 7827.0,
+        "execution_ids": [
+          "1583555645"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13045.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285506492
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "EXECUTED",
+          "size_sol": 0.6,
+          "price": 13151.0,
+          "order_id": 8503726168,
+          "position_id": 285506492
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "EXECUTED",
+      "exit_leg_realized_pnl_jpy": -91.0,
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8503726166,
+      "processed_exit_execution_ids": [
+        "1583635888",
+        "1583635889"
+      ],
+      "stop_loss_order_id": 8503726168,
+      "exit_order_id": 8503726168,
+      "stop_loss_order": {
+        "size_sol": 0.6,
+        "price": 13151.0,
+        "order_id": 8503726168,
+        "position_id": 285506492
+      },
+      "exit_fee_jpy": 3.0,
+      "entry_order": {
+        "order_id": 8503726166
+      }
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-05-29T21:45:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-05-31T10:30:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "quote_amount_jpy": 7878.0,
+      "entry_time_iso": "2026-05-31T10:30:03.550299Z",
+      "entry_price": 13130.0,
+      "exit_trigger_price": 13209.0,
+      "exit_time_iso": "2026-05-31T13:22:28.504592Z",
+      "entry_trigger_price": 13128.0,
+      "status": "CLOSED",
+      "take_profit_price": 12987.8,
+      "stop_price": 13209.0,
+      "exit_price": 13210.0
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=13128.0000, stop=13209.0000, tp=12982.2000, rsi=37.52, regime=NORMAL, size_x=1.00",
+      "ema_slow": 13178.904993309436,
+      "ema_fast": 13165.604315808525,
+      "entry_price": 13128.0,
+      "take_profit_price": 12982.2,
+      "stop_price": 13209.0,
+      "bar_close_time_iso": "2026-05-31T10:30:00Z"
+    },
+    "plan": {
+      "notional_jpy": 7876.8,
+      "summary": "Sell SOL with 7876.8 JPY (base=8642.7, regime=NORMAL, size_x=1.00), entry=13130.0, stop=13209.0, tp=12987.8",
+      "entry_price": 13130.0,
+      "r_multiple": 1.8,
+      "stop_price": 13209.0,
+      "take_profit_price": 12987.8
+    },
+    "direction": "SHORT",
+    "updated_at": "2026-05-31T13:22:28.504624Z",
+    "created_at": "2026-05-31T10:30:02.460013Z",
+    "close_reason": "STOP_LOSS",
+    "trade_date": "2026-05-31",
+    "execution": {
+      "total_realized_pnl_jpy": -48.0,
+      "exit_reference_price": 13209.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 7926.0,
+        "execution_ids": [
+          "1584363447"
+        ],
+        "realized_pnl_jpy": -48.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13210.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285556787
+          }
+        ]
+      },
+      "entry_reference_price": 13128.0,
+      "realized_pnl_jpy": -48.0,
+      "entry_result": {
+        "filled_quote_jpy": 7878.0,
+        "execution_ids": [
+          "1584317820"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13130.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285556787
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "EXECUTED",
+          "price": 13209.0,
+          "size_sol": 0.6,
+          "order_id": 8507314243,
+          "position_id": 285556787
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "EXECUTED",
+      "exit_leg_realized_pnl_jpy": -48.0,
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8507314240,
+      "processed_exit_execution_ids": [
+        "1584363447"
+      ],
+      "stop_loss_order_id": 8507314243,
+      "exit_order_id": 8507314243,
+      "stop_loss_order": {
+        "size_sol": 0.6,
+        "price": 13209.0,
+        "order_id": 8507314243,
+        "position_id": 285556787
+      },
+      "exit_fee_jpy": 3.0,
+      "entry_order": {
+        "order_id": 8507314240
+      }
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-05-31T10:30:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-06-01T05:30:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "quote_amount_jpy": 7813.2,
+      "entry_time_iso": "2026-06-01T05:30:02.109070Z",
+      "entry_price": 13022.0,
+      "exit_trigger_price": 12724.0,
+      "exit_time_iso": "2026-06-01T13:52:29.605085Z",
+      "entry_trigger_price": 13026.0,
+      "status": "CLOSED",
+      "take_profit_price": 12740.7248,
+      "stop_price": 13178.264,
+      "exit_price": 12728.0
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=13026.0000, stop=13182.3120, tp=12744.6384, rsi=40.03, regime=NORMAL, size_x=1.00",
+      "ema_slow": 13101.666234663837,
+      "ema_fast": 13079.487432663294,
+      "entry_price": 13026.0,
+      "take_profit_price": 12744.6384,
+      "stop_price": 13182.312,
+      "bar_close_time_iso": "2026-06-01T05:30:00Z"
+    },
+    "plan": {
+      "notional_jpy": 7815.6,
+      "summary": "Sell SOL with 7815.6 JPY (base=8590.23, regime=NORMAL, size_x=1.00), entry=13022.0, stop=13178.264, tp=12740.7248",
+      "entry_price": 13022.0,
+      "r_multiple": 1.8,
+      "stop_price": 13178.264,
+      "take_profit_price": 12740.7248
+    },
+    "direction": "SHORT",
+    "updated_at": "2026-06-01T13:52:29.605111Z",
+    "trade_date": "2026-06-01",
+    "close_reason": "TAKE_PROFIT",
+    "created_at": "2026-06-01T05:30:01.498518Z",
+    "execution": {
+      "total_realized_pnl_jpy": 176.0,
+      "exit_reference_price": 12724.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 7636.8,
+        "execution_ids": [
+          "1585273690"
+        ],
+        "realized_pnl_jpy": 176.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 12728.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285589516
+          }
+        ]
+      },
+      "entry_reference_price": 13026.0,
+      "realized_pnl_jpy": 176.0,
+      "entry_result": {
+        "filled_quote_jpy": 7813.2,
+        "execution_ids": [
+          "1584913817"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 13022.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285589516
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "INACTIVE",
+          "price": 13178.0,
+          "size_sol": 0.6,
+          "order_id": 8509883087,
+          "position_id": 285589516
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "INACTIVE",
+      "exit_leg_realized_pnl_jpy": 176.0,
+      "exit_order": {
+        "order_id": 8511325441
+      },
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8509883085,
+      "take_profit_trigger_price": 12724.0,
+      "stop_loss_order_id": 8509883087,
+      "exit_order_id": 8511325441,
+      "stop_loss_order": {
+        "size_sol": 0.6,
+        "price": 13178.0,
+        "order_id": 8509883087,
+        "position_id": 285589516
+      },
+      "exit_fee_jpy": 3.0,
+      "entry_order": {
+        "order_id": 8509883085
+      },
+      "processed_exit_execution_ids": [
+        "1585273690"
+      ],
+      "take_profit_triggered_at_iso": "2026-06-01T13:52:28.771108Z"
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-06-01T05:30:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-06-02T05:00:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "quote_amount_jpy": 7698.0,
+      "entry_time_iso": "2026-06-02T05:00:01.642290Z",
+      "entry_price": 12830.0,
+      "exit_trigger_price": 12677.0,
+      "exit_time_iso": "2026-06-02T06:18:42.194000Z",
+      "entry_trigger_price": 12837.0,
+      "status": "CLOSED",
+      "take_profit_price": 12677.0,
+      "stop_price": 12915.0,
+      "exit_price": 12681.0
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=12837.0000, stop=12915.0000, tp=12696.6000, rsi=45.97, regime=NORMAL, size_x=1.00",
+      "ema_fast": 12872.08014777714,
+      "ema_slow": 12875.577441277628,
+      "entry_price": 12837.0,
+      "take_profit_price": 12696.6,
+      "stop_price": 12915.0,
+      "bar_close_time_iso": "2026-06-02T05:00:00Z"
+    },
+    "plan": {
+      "notional_jpy": 7702.2,
+      "summary": "Sell SOL with 7702.2 JPY (base=8759.52, regime=NORMAL, size_x=1.00), entry=12830.0, stop=12915.0, tp=12677.0",
+      "entry_price": 12830.0,
+      "r_multiple": 1.8,
+      "stop_price": 12915.0,
+      "take_profit_price": 12677.0
+    },
+    "trade_date": "2026-06-02",
+    "updated_at": "2026-06-02T06:18:42.194025Z",
+    "direction": "SHORT",
+    "close_reason": "TAKE_PROFIT",
+    "created_at": "2026-06-02T05:00:01.113463Z",
+    "execution": {
+      "total_realized_pnl_jpy": 89.0,
+      "exit_reference_price": 12677.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 7608.6,
+        "execution_ids": [
+          "1585818900"
+        ],
+        "realized_pnl_jpy": 89.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 12681.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285657545
+          }
+        ]
+      },
+      "entry_reference_price": 12837.0,
+      "realized_pnl_jpy": 89.0,
+      "entry_result": {
+        "filled_quote_jpy": 7698.0,
+        "execution_ids": [
+          "1585742888"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 12830.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285657545
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "INACTIVE",
+          "size_sol": 0.6,
+          "price": 12915.0,
+          "order_id": 8513906738,
+          "position_id": 285657545
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "INACTIVE",
+      "exit_leg_realized_pnl_jpy": 89.0,
+      "exit_order": {
+        "order_id": 8514199089
+      },
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8513906736,
+      "take_profit_trigger_price": 12677.0,
+      "stop_loss_order_id": 8513906738,
+      "exit_order_id": 8514199089,
+      "stop_loss_order": {
+        "size_sol": 0.6,
+        "price": 12915.0,
+        "order_id": 8513906738,
+        "position_id": 285657545
+      },
+      "exit_fee_jpy": 3.0,
+      "entry_order": {
+        "order_id": 8513906736
+      },
+      "processed_exit_execution_ids": [
+        "1585818900"
+      ],
+      "take_profit_triggered_at_iso": "2026-06-02T06:18:41.415825Z"
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-06-02T05:00:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-06-02T06:15:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "quote_amount_jpy": 7601.4,
+      "entry_time_iso": "2026-06-02T06:20:02.042826Z",
+      "entry_price": 12669.0,
+      "exit_trigger_price": 12385.0,
+      "exit_time_iso": "2026-06-02T14:23:54.061814Z",
+      "entry_trigger_price": 12679.0,
+      "status": "CLOSED",
+      "take_profit_price": 12395.3496,
+      "stop_price": 12821.028,
+      "exit_price": 12381.333333
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=12679.0000, stop=12831.1480, tp=12405.1336, rsi=33.73, regime=NORMAL, size_x=1.00",
+      "ema_fast": 12778.416982823615,
+      "ema_slow": 12841.996946840423,
+      "entry_price": 12679.0,
+      "take_profit_price": 12405.133600000001,
+      "stop_price": 12831.148,
+      "bar_close_time_iso": "2026-06-02T06:15:00Z"
+    },
+    "plan": {
+      "notional_jpy": 7610.4,
+      "summary": "Sell SOL with 7610.4 JPY (base=8841.69, regime=NORMAL, size_x=1.00), entry=12669.0, stop=12821.028, tp=12395.3496",
+      "entry_price": 12669.0,
+      "r_multiple": 1.8,
+      "stop_price": 12821.028,
+      "take_profit_price": 12395.3496
+    },
+    "trade_date": "2026-06-02",
+    "updated_at": "2026-06-02T14:23:54.061838Z",
+    "direction": "SHORT",
+    "close_reason": "TAKE_PROFIT",
+    "created_at": "2026-06-02T06:20:01.551854Z",
+    "execution": {
+      "total_realized_pnl_jpy": 172.0,
+      "exit_reference_price": 12385.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 7428.8,
+        "execution_ids": [
+          "1586203247",
+          "1586203246",
+          "1586203245"
+        ],
+        "realized_pnl_jpy": 172.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 4.0,
+        "avg_fill_price": 12381.333333,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285657991
+          }
+        ]
+      },
+      "entry_reference_price": 12684.0,
+      "realized_pnl_jpy": 172.0,
+      "entry_result": {
+        "filled_quote_jpy": 7601.4,
+        "execution_ids": [
+          "1585818911"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 12669.0,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285657991
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "INACTIVE",
+          "size_sol": 0.6,
+          "price": 12821.0,
+          "order_id": 8514199246,
+          "position_id": 285657991
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "INACTIVE",
+      "exit_leg_realized_pnl_jpy": 172.0,
+      "exit_order": {
+        "order_id": 8515829140
+      },
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8514199242,
+      "take_profit_trigger_price": 12385.0,
+      "stop_loss_order_id": 8514199246,
+      "exit_order_id": 8515829140,
+      "stop_loss_order": {
+        "size_sol": 0.6,
+        "price": 12821.0,
+        "order_id": 8514199246,
+        "position_id": 285657991
+      },
+      "exit_fee_jpy": 4.0,
+      "entry_order": {
+        "order_id": 8514199242
+      },
+      "processed_exit_execution_ids": [
+        "1586203245",
+        "1586203246",
+        "1586203247"
+      ],
+      "take_profit_triggered_at_iso": "2026-06-02T14:23:53.062658Z"
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-06-02T06:15:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-06-02T14:15:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.7,
+      "lots": [],
+      "quote_amount_jpy": 8680.7,
+      "entry_time_iso": "2026-06-02T14:25:03.621199Z",
+      "entry_price": 12401.0,
+      "exit_trigger_price": 12125.0,
+      "exit_time_iso": "2026-06-02T15:30:59.405848Z",
+      "entry_trigger_price": 12563.0,
+      "status": "CLOSED",
+      "take_profit_price": 12133.1384,
+      "stop_price": 12549.812,
+      "exit_price": 12114.0
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=12563.0000, stop=12630.0000, tp=12442.4000, rsi=37.72, regime=NORMAL, size_x=1.00",
+      "ema_fast": 12593.728580470655,
+      "ema_slow": 12657.44305021787,
+      "entry_price": 12563.0,
+      "take_profit_price": 12442.4,
+      "stop_price": 12630.0,
+      "bar_close_time_iso": "2026-06-02T14:15:00Z"
+    },
+    "plan": {
+      "notional_jpy": 8682.1,
+      "summary": "Sell SOL with 8682.1 JPY (base=9005.04, regime=NORMAL, size_x=1.00), entry=12401.0, stop=12549.812, tp=12133.1384",
+      "entry_price": 12401.0,
+      "r_multiple": 1.8,
+      "stop_price": 12549.812,
+      "take_profit_price": 12133.1384
+    },
+    "trade_date": "2026-06-02",
+    "updated_at": "2026-06-02T15:30:59.405874Z",
+    "direction": "SHORT",
+    "close_reason": "TAKE_PROFIT",
+    "created_at": "2026-06-02T14:25:03.215294Z",
+    "execution": {
+      "total_realized_pnl_jpy": 200.0,
+      "exit_reference_price": 12125.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 8479.8,
+        "execution_ids": [
+          "1586282859"
+        ],
+        "realized_pnl_jpy": 200.0,
+        "filled_base_sol": 0.7,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 12114.0,
+        "lots": [
+          {
+            "size_sol": 0.7,
+            "position_id": 285685793
+          }
+        ]
+      },
+      "entry_reference_price": 12403.0,
+      "realized_pnl_jpy": 200.0,
+      "entry_result": {
+        "filled_quote_jpy": 8680.7,
+        "execution_ids": [
+          "1586203506"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.7,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 12401.0,
+        "lots": [
+          {
+            "size_sol": 0.7,
+            "position_id": 285685793
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "INACTIVE",
+          "size_sol": 0.7,
+          "price": 12549.0,
+          "order_id": 8515843667,
+          "position_id": 285685793
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "INACTIVE",
+      "exit_leg_realized_pnl_jpy": 200.0,
+      "exit_order": {
+        "order_id": 8516239667
+      },
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8515843661,
+      "take_profit_trigger_price": 12125.0,
+      "stop_loss_order_id": 8515843667,
+      "exit_order_id": 8516239667,
+      "stop_loss_order": {
+        "size_sol": 0.7,
+        "price": 12549.0,
+        "order_id": 8515843667,
+        "position_id": 285685793
+      },
+      "exit_fee_jpy": 3.0,
+      "entry_order": {
+        "order_id": 8515843661
+      },
+      "processed_exit_execution_ids": [
+        "1586282859"
+      ],
+      "take_profit_triggered_at_iso": "2026-06-02T15:30:58.545658Z"
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-06-02T14:15:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-06-02T18:30:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.7,
+      "lots": [],
+      "quote_amount_jpy": 8530.2,
+      "entry_time_iso": "2026-06-02T18:30:03.150473Z",
+      "entry_price": 12186.0,
+      "exit_trigger_price": 11922.0,
+      "exit_time_iso": "2026-06-02T19:33:40.124307Z",
+      "entry_trigger_price": 12193.0,
+      "status": "CLOSED",
+      "take_profit_price": 11922.7824,
+      "stop_price": 12332.232,
+      "exit_price": 11929.0
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=12193.0000, stop=12339.3160, tp=11929.6312, rsi=34.32, regime=NORMAL, size_x=1.00",
+      "ema_fast": 12263.733781419638,
+      "ema_slow": 12409.045207113608,
+      "entry_price": 12193.0,
+      "take_profit_price": 11929.631199999998,
+      "stop_price": 12339.316,
+      "bar_close_time_iso": "2026-06-02T18:30:00Z"
+    },
+    "plan": {
+      "notional_jpy": 8535.1,
+      "summary": "Sell SOL with 8535.1 JPY (base=9197.1, regime=NORMAL, size_x=1.00), entry=12186.0, stop=12332.232, tp=11922.7824",
+      "entry_price": 12186.0,
+      "r_multiple": 1.8,
+      "stop_price": 12332.232,
+      "take_profit_price": 11922.7824
+    },
+    "trade_date": "2026-06-03",
+    "updated_at": "2026-06-02T19:33:40.124339Z",
+    "direction": "SHORT",
+    "close_reason": "TAKE_PROFIT",
+    "created_at": "2026-06-02T18:30:01.725694Z",
+    "execution": {
+      "total_realized_pnl_jpy": 179.0,
+      "exit_reference_price": 11922.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 8350.3,
+        "execution_ids": [
+          "1586520775"
+        ],
+        "realized_pnl_jpy": 179.0,
+        "filled_base_sol": 0.7,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 11929.0,
+        "lots": [
+          {
+            "size_sol": 0.7,
+            "position_id": 285707897
+          }
+        ]
+      },
+      "entry_reference_price": 12193.0,
+      "realized_pnl_jpy": 179.0,
+      "entry_result": {
+        "filled_quote_jpy": 8530.2,
+        "execution_ids": [
+          "1586414534"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.7,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 12186.0,
+        "lots": [
+          {
+            "size_sol": 0.7,
+            "position_id": 285707897
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "INACTIVE",
+          "size_sol": 0.7,
+          "price": 12332.0,
+          "order_id": 8517082305,
+          "position_id": 285707897
+        }
+      ],
+      "entry_fee_jpy": 3.0,
+      "stop_loss_order_status": "INACTIVE",
+      "exit_leg_realized_pnl_jpy": 179.0,
+      "exit_order": {
+        "order_id": 8517345357
+      },
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8517082301,
+      "take_profit_trigger_price": 11922.0,
+      "stop_loss_order_id": 8517082305,
+      "exit_order_id": 8517345357,
+      "stop_loss_order": {
+        "size_sol": 0.7,
+        "price": 12332.0,
+        "order_id": 8517082305,
+        "position_id": 285707897
+      },
+      "exit_fee_jpy": 3.0,
+      "entry_order": {
+        "order_id": 8517082301
+      },
+      "processed_exit_execution_ids": [
+        "1586520775"
+      ],
+      "take_profit_triggered_at_iso": "2026-06-02T19:33:39.228210Z"
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-06-02T18:30:00Z",
+    "mode": "LIVE"
+  },
+  {
+    "trade_id": "2026-06-03T03:15:00Z_gmo_ema_pullback_15m_both_v0_SHORT",
+    "state": "CLOSED",
+    "position": {
+      "quantity_sol": 0.6,
+      "lots": [],
+      "entry_time_iso": "2026-06-03T03:15:01.272285Z",
+      "quote_amount_jpy": 7111.971429,
+      "entry_price": 11853.285714,
+      "exit_trigger_price": 11589.0,
+      "exit_time_iso": "2026-06-03T03:49:55.343656Z",
+      "entry_trigger_price": 11851.0,
+      "status": "CLOSED",
+      "take_profit_price": 11607.199999,
+      "stop_price": 11990.0,
+      "exit_price": 11587.5
+    },
+    "model_id": "gmo_ema_pullback_15m_both_v0",
+    "config_version": 2,
+    "pair": "SOL/JPY",
+    "signal": {
+      "summary": "ENTER: 15m trend/pullback/reclaim with 4h trend gate, direction=SHORT, entry=11851.0000, stop=11990.0000, tp=11600.8000, rsi=41.67, regime=NORMAL, size_x=1.00",
+      "ema_fast": 11885.326275451187,
+      "ema_slow": 11988.098915782242,
+      "entry_price": 11851.0,
+      "take_profit_price": 11600.8,
+      "stop_price": 11990.0,
+      "bar_close_time_iso": "2026-06-03T03:15:00Z"
+    },
+    "plan": {
+      "notional_jpy": 8295.7,
+      "summary": "Sell SOL with 8295.7 JPY (base=9373.32, regime=NORMAL, size_x=1.00), entry=11853.2857, stop=11990.0, tp=11607.2",
+      "entry_price": 11853.285714,
+      "r_multiple": 1.8,
+      "stop_price": 11990.0,
+      "take_profit_price": 11607.199999
+    },
+    "trade_date": "2026-06-03",
+    "updated_at": "2026-06-03T03:49:55.343682Z",
+    "direction": "SHORT",
+    "close_reason": "TAKE_PROFIT",
+    "created_at": "2026-06-03T03:15:00.701611Z",
+    "execution": {
+      "total_realized_pnl_jpy": 185.0,
+      "exit_reference_price": 11589.0,
+      "entry_submission_state": "CONFIRMED",
+      "exit_result": {
+        "filled_quote_jpy": 6952.5,
+        "execution_ids": [
+          "1586993257",
+          "1586993256"
+        ],
+        "realized_pnl_jpy": 158.0,
+        "filled_base_sol": 0.6,
+        "status": "CONFIRMED",
+        "fee_jpy": 3.0,
+        "avg_fill_price": 11587.5,
+        "lots": [
+          {
+            "size_sol": 0.6,
+            "position_id": 285745729
+          }
+        ]
+      },
+      "entry_reference_price": 11851.0,
+      "realized_pnl_jpy": 185.0,
+      "entry_result": {
+        "filled_quote_jpy": 8297.3,
+        "execution_ids": [
+          "1586927059",
+          "1586927058"
+        ],
+        "realized_pnl_jpy": 0.0,
+        "filled_base_sol": 0.7,
+        "status": "CONFIRMED",
+        "fee_jpy": 4.0,
+        "avg_fill_price": 11853.285714,
+        "lots": [
+          {
+            "size_sol": 0.1,
+            "position_id": 285745728
+          },
+          {
+            "size_sol": 0.6,
+            "position_id": 285745729
+          }
+        ]
+      },
+      "stop_loss_orders": [
+        {
+          "status": "INACTIVE",
+          "size_sol": 0.1,
+          "price": 11990.0,
+          "order_id": 8519399003,
+          "position_id": 285745728
+        },
+        {
+          "status": "INACTIVE",
+          "size_sol": 0.6,
+          "price": 11990.0,
+          "order_id": 8519399004,
+          "position_id": 285745729
+        }
+      ],
+      "stop_loss_order_status": "INACTIVE",
+      "exit_error": "partial close detected: expected 0.7 SOL, got 0.1 SOL",
+      "entry_fee_jpy": 4.0,
+      "exit_order": {
+        "order_id": 8519580936
+      },
+      "exit_submission_state": "CONFIRMED",
+      "take_profit_order_status": "INACTIVE",
+      "entry_order_id": 8519398998,
+      "exit_leg_realized_pnl_jpy": 158.0,
+      "take_profit_trigger_price": 11589.0,
+      "stop_loss_order_id": 8519399003,
+      "exit_order_id": 8519580936,
+      "stop_loss_order": {
+        "price": 11990.0,
+        "size_sol": 0.1,
+        "order_id": 8519399003,
+        "position_id": 285745728
+      },
+      "exit_fee_jpy": 4.0,
+      "entry_order": {
+        "order_id": 8519398998
+      },
+      "processed_exit_execution_ids": [
+        "1586993255",
+        "1586993256",
+        "1586993257"
+      ],
+      "take_profit_triggered_at_iso": "2026-06-03T03:49:54.015849Z",
+      "protective_exit_error": "partial close requires protective exit re-arm"
+    },
+    "variant_id": "v2_dir_session_vol_time120",
+    "bar_close_time_iso": "2026-06-03T03:15:00Z",
+    "mode": "LIVE"
+  }
+]

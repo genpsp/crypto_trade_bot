@@ -57,6 +57,7 @@ def evaluate_donchian_breakout_15m_v0(
 ) -> StrategyDecision:
     period = int(strategy.get("donchian_period", 20))
     atr_period = int(strategy.get("atr_period", 14))
+    atr_stop_mult = strategy.get("atr_stop_multiplier")  # None = use opposite band (default)
 
     if len(bars) < max(period, atr_period) + 2:
         return build_no_signal(
@@ -95,7 +96,7 @@ def evaluate_donchian_breakout_15m_v0(
                 reason="EMA_TREND_FILTER_FAILED",
                 diagnostics={"donchian_direction": "LONG"},
             )
-        stop_price = lower  # opposite band
+        stop_price = (entry_price - float(atr_stop_mult) * atr_value) if atr_stop_mult is not None else lower
         entry_direction_str = "LONG"
         if stop_price >= entry_price:
             return build_no_signal(
@@ -110,7 +111,7 @@ def evaluate_donchian_breakout_15m_v0(
                 reason="EMA_TREND_FILTER_FAILED",
                 diagnostics={"donchian_direction": "SHORT"},
             )
-        stop_price = upper
+        stop_price = (entry_price + float(atr_stop_mult) * atr_value) if atr_stop_mult is not None else upper
         entry_direction_str = "SHORT"
         if stop_price <= entry_price:
             return build_no_signal(
