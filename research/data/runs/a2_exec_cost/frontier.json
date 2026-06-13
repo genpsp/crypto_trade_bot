@@ -1,0 +1,572 @@
+{
+  "gmo_half_spread_bps": 4.3,
+  "gmo_taker_bps": 7.0,
+  "venues": {
+    "GMO_JPY": {
+      "aligned_bars": 37879,
+      "first": "2025-03-27T21:00:00Z",
+      "last": "2026-05-20T14:00:00Z",
+      "configs": {
+        "xs_rev_L4_H4": {
+          "breakeven_bps": 1.32,
+          "frontier": [
+            {
+              "cost_bps": 0.0,
+              "ann_sharpe": 7.069,
+              "dsr_p": 0.0,
+              "total_ret_pct": 2858.5,
+              "roll_pos_pct": 100.0,
+              "rebalances": 9468
+            },
+            {
+              "cost_bps": 0.5,
+              "ann_sharpe": 4.394,
+              "dsr_p": 0.0027,
+              "total_ret_pct": 686.6,
+              "roll_pos_pct": 100.0,
+              "rebalances": 9468
+            },
+            {
+              "cost_bps": 1.0,
+              "ann_sharpe": 1.718,
+              "dsr_p": 0.4811,
+              "total_ret_pct": 109.1,
+              "roll_pos_pct": 62.0,
+              "rebalances": 9468
+            },
+            {
+              "cost_bps": 1.5,
+              "ann_sharpe": -0.956,
+              "dsr_p": 0.9968,
+              "total_ret_pct": -44.4,
+              "roll_pos_pct": 38.0,
+              "rebalances": 9468
+            },
+            {
+              "cost_bps": 2.0,
+              "ann_sharpe": -3.626,
+              "dsr_p": 1.0,
+              "total_ret_pct": -85.2,
+              "roll_pos_pct": 15.0,
+              "rebalances": 9468
+            },
+            {
+              "cost_bps": 3.0,
+              "ann_sharpe": -8.947,
+              "dsr_p": 1.0,
+              "total_ret_pct": -99.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 9468
+            },
+            {
+              "cost_bps": 4.3,
+              "ann_sharpe": -15.81,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 9468
+            },
+            {
+              "cost_bps": 7.0,
+              "ann_sharpe": -29.742,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 9468
+            }
+          ]
+        },
+        "xs_rev_L4_H16": {
+          "breakeven_bps": 0.91,
+          "frontier": [
+            {
+              "cost_bps": 0.0,
+              "ann_sharpe": 1.203,
+              "dsr_p": 0.6858,
+              "total_ret_pct": 60.5,
+              "roll_pos_pct": 69.0,
+              "rebalances": 2367
+            },
+            {
+              "cost_bps": 0.5,
+              "ann_sharpe": 0.543,
+              "dsr_p": 0.8786,
+              "total_ret_pct": 16.7,
+              "roll_pos_pct": 54.0,
+              "rebalances": 2367
+            },
+            {
+              "cost_bps": 1.0,
+              "ann_sharpe": -0.117,
+              "dsr_p": 0.9681,
+              "total_ret_pct": -15.2,
+              "roll_pos_pct": 54.0,
+              "rebalances": 2367
+            },
+            {
+              "cost_bps": 1.5,
+              "ann_sharpe": -0.778,
+              "dsr_p": 0.9945,
+              "total_ret_pct": -38.3,
+              "roll_pos_pct": 54.0,
+              "rebalances": 2367
+            },
+            {
+              "cost_bps": 2.0,
+              "ann_sharpe": -1.438,
+              "dsr_p": 0.9994,
+              "total_ret_pct": -55.2,
+              "roll_pos_pct": 31.0,
+              "rebalances": 2367
+            },
+            {
+              "cost_bps": 3.0,
+              "ann_sharpe": -2.759,
+              "dsr_p": 1.0,
+              "total_ret_pct": -76.3,
+              "roll_pos_pct": 23.0,
+              "rebalances": 2367
+            },
+            {
+              "cost_bps": 4.3,
+              "ann_sharpe": -4.474,
+              "dsr_p": 1.0,
+              "total_ret_pct": -89.7,
+              "roll_pos_pct": 0.0,
+              "rebalances": 2367
+            },
+            {
+              "cost_bps": 7.0,
+              "ann_sharpe": -8.02,
+              "dsr_p": 1.0,
+              "total_ret_pct": -98.2,
+              "roll_pos_pct": 0.0,
+              "rebalances": 2367
+            }
+          ]
+        },
+        "xs_rev_L16_H4": {
+          "breakeven_bps": 1.04,
+          "frontier": [
+            {
+              "cost_bps": 0.0,
+              "ann_sharpe": 2.836,
+              "dsr_p": 0.1166,
+              "total_ret_pct": 260.6,
+              "roll_pos_pct": 85.0,
+              "rebalances": 9465
+            },
+            {
+              "cost_bps": 0.5,
+              "ann_sharpe": 1.467,
+              "dsr_p": 0.5841,
+              "total_ret_pct": 84.0,
+              "roll_pos_pct": 62.0,
+              "rebalances": 9465
+            },
+            {
+              "cost_bps": 1.0,
+              "ann_sharpe": 0.099,
+              "dsr_p": 0.9483,
+              "total_ret_pct": -6.1,
+              "roll_pos_pct": 54.0,
+              "rebalances": 9465
+            },
+            {
+              "cost_bps": 1.5,
+              "ann_sharpe": -1.268,
+              "dsr_p": 0.9989,
+              "total_ret_pct": -52.1,
+              "roll_pos_pct": 38.0,
+              "rebalances": 9465
+            },
+            {
+              "cost_bps": 2.0,
+              "ann_sharpe": -2.634,
+              "dsr_p": 1.0,
+              "total_ret_pct": -75.6,
+              "roll_pos_pct": 15.0,
+              "rebalances": 9465
+            },
+            {
+              "cost_bps": 3.0,
+              "ann_sharpe": -5.355,
+              "dsr_p": 1.0,
+              "total_ret_pct": -93.6,
+              "roll_pos_pct": 0.0,
+              "rebalances": 9465
+            },
+            {
+              "cost_bps": 4.3,
+              "ann_sharpe": -8.864,
+              "dsr_p": 1.0,
+              "total_ret_pct": -98.9,
+              "roll_pos_pct": 0.0,
+              "rebalances": 9465
+            },
+            {
+              "cost_bps": 7.0,
+              "ann_sharpe": -15.982,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 9465
+            }
+          ]
+        },
+        "xs_rev_L16_H16": {
+          "breakeven_bps": 0.39,
+          "frontier": [
+            {
+              "cost_bps": 0.0,
+              "ann_sharpe": 0.517,
+              "dsr_p": 0.8838,
+              "total_ret_pct": 15.2,
+              "roll_pos_pct": 62.0,
+              "rebalances": 2366
+            },
+            {
+              "cost_bps": 0.5,
+              "ann_sharpe": -0.153,
+              "dsr_p": 0.9707,
+              "total_ret_pct": -16.6,
+              "roll_pos_pct": 54.0,
+              "rebalances": 2366
+            },
+            {
+              "cost_bps": 1.0,
+              "ann_sharpe": -0.823,
+              "dsr_p": 0.9952,
+              "total_ret_pct": -39.6,
+              "roll_pos_pct": 38.0,
+              "rebalances": 2366
+            },
+            {
+              "cost_bps": 1.5,
+              "ann_sharpe": -1.493,
+              "dsr_p": 0.9995,
+              "total_ret_pct": -56.3,
+              "roll_pos_pct": 15.0,
+              "rebalances": 2366
+            },
+            {
+              "cost_bps": 2.0,
+              "ann_sharpe": -2.162,
+              "dsr_p": 1.0,
+              "total_ret_pct": -68.3,
+              "roll_pos_pct": 15.0,
+              "rebalances": 2366
+            },
+            {
+              "cost_bps": 3.0,
+              "ann_sharpe": -3.497,
+              "dsr_p": 1.0,
+              "total_ret_pct": -83.4,
+              "roll_pos_pct": 8.0,
+              "rebalances": 2366
+            },
+            {
+              "cost_bps": 4.3,
+              "ann_sharpe": -5.226,
+              "dsr_p": 1.0,
+              "total_ret_pct": -92.8,
+              "roll_pos_pct": 8.0,
+              "rebalances": 2366
+            },
+            {
+              "cost_bps": 7.0,
+              "ann_sharpe": -8.787,
+              "dsr_p": 1.0,
+              "total_ret_pct": -98.8,
+              "roll_pos_pct": 0.0,
+              "rebalances": 2366
+            }
+          ]
+        }
+      }
+    },
+    "BINANCE_USDT": {
+      "aligned_bars": 140411,
+      "first": "2022-06-01T00:00:00Z",
+      "last": "2026-06-02T14:30:00Z",
+      "configs": {
+        "xs_rev_L4_H4": {
+          "breakeven_bps": 0.39,
+          "frontier": [
+            {
+              "cost_bps": 0.0,
+              "ann_sharpe": 1.312,
+              "dsr_p": 0.1889,
+              "total_ret_pct": 1376.9,
+              "roll_pos_pct": 85.0,
+              "rebalances": 35101
+            },
+            {
+              "cost_bps": 0.5,
+              "ann_sharpe": -0.374,
+              "dsr_p": 0.9934,
+              "total_ret_pct": -86.9,
+              "roll_pos_pct": 31.0,
+              "rebalances": 35101
+            },
+            {
+              "cost_bps": 1.0,
+              "ann_sharpe": -2.059,
+              "dsr_p": 1.0,
+              "total_ret_pct": -99.9,
+              "roll_pos_pct": 8.0,
+              "rebalances": 35101
+            },
+            {
+              "cost_bps": 1.5,
+              "ann_sharpe": -3.744,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 35101
+            },
+            {
+              "cost_bps": 2.0,
+              "ann_sharpe": -5.428,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 35101
+            },
+            {
+              "cost_bps": 3.0,
+              "ann_sharpe": -8.788,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 35101
+            },
+            {
+              "cost_bps": 4.3,
+              "ann_sharpe": -13.138,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 35101
+            },
+            {
+              "cost_bps": 7.0,
+              "ann_sharpe": -22.068,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 35101
+            }
+          ]
+        },
+        "xs_rev_L4_H16": {
+          "breakeven_bps": 1.67,
+          "frontier": [
+            {
+              "cost_bps": 0.0,
+              "ann_sharpe": 1.47,
+              "dsr_p": 0.1195,
+              "total_ret_pct": 1907.7,
+              "roll_pos_pct": 92.0,
+              "rebalances": 8775
+            },
+            {
+              "cost_bps": 0.5,
+              "ann_sharpe": 1.031,
+              "dsr_p": 0.3751,
+              "total_ret_pct": 531.6,
+              "roll_pos_pct": 85.0,
+              "rebalances": 8775
+            },
+            {
+              "cost_bps": 1.0,
+              "ann_sharpe": 0.592,
+              "dsr_p": 0.7089,
+              "total_ret_pct": 98.6,
+              "roll_pos_pct": 85.0,
+              "rebalances": 8775
+            },
+            {
+              "cost_bps": 1.5,
+              "ann_sharpe": 0.153,
+              "dsr_p": 0.923,
+              "total_ret_pct": -37.5,
+              "roll_pos_pct": 54.0,
+              "rebalances": 8775
+            },
+            {
+              "cost_bps": 2.0,
+              "ann_sharpe": -0.286,
+              "dsr_p": 0.9894,
+              "total_ret_pct": -80.4,
+              "roll_pos_pct": 31.0,
+              "rebalances": 8775
+            },
+            {
+              "cost_bps": 3.0,
+              "ann_sharpe": -1.164,
+              "dsr_p": 1.0,
+              "total_ret_pct": -98.1,
+              "roll_pos_pct": 15.0,
+              "rebalances": 8775
+            },
+            {
+              "cost_bps": 4.3,
+              "ann_sharpe": -2.304,
+              "dsr_p": 1.0,
+              "total_ret_pct": -99.9,
+              "roll_pos_pct": 0.0,
+              "rebalances": 8775
+            },
+            {
+              "cost_bps": 7.0,
+              "ann_sharpe": -4.665,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 8775
+            }
+          ]
+        },
+        "xs_rev_L16_H4": {
+          "breakeven_bps": 0.28,
+          "frontier": [
+            {
+              "cost_bps": 0.0,
+              "ann_sharpe": 0.474,
+              "dsr_p": 0.7831,
+              "total_ret_pct": 40.6,
+              "roll_pos_pct": 62.0,
+              "rebalances": 35098
+            },
+            {
+              "cost_bps": 0.5,
+              "ann_sharpe": -0.372,
+              "dsr_p": 0.9933,
+              "total_ret_pct": -87.1,
+              "roll_pos_pct": 31.0,
+              "rebalances": 35098
+            },
+            {
+              "cost_bps": 1.0,
+              "ann_sharpe": -1.217,
+              "dsr_p": 1.0,
+              "total_ret_pct": -98.8,
+              "roll_pos_pct": 15.0,
+              "rebalances": 35098
+            },
+            {
+              "cost_bps": 1.5,
+              "ann_sharpe": -2.062,
+              "dsr_p": 1.0,
+              "total_ret_pct": -99.9,
+              "roll_pos_pct": 8.0,
+              "rebalances": 35098
+            },
+            {
+              "cost_bps": 2.0,
+              "ann_sharpe": -2.907,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 8.0,
+              "rebalances": 35098
+            },
+            {
+              "cost_bps": 3.0,
+              "ann_sharpe": -4.592,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 35098
+            },
+            {
+              "cost_bps": 4.3,
+              "ann_sharpe": -6.775,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 35098
+            },
+            {
+              "cost_bps": 7.0,
+              "ann_sharpe": -11.26,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 35098
+            }
+          ]
+        },
+        "xs_rev_L16_H16": {
+          "breakeven_bps": null,
+          "frontier": [
+            {
+              "cost_bps": 0.0,
+              "ann_sharpe": -0.004,
+              "dsr_p": 0.959,
+              "total_ret_pct": -60.6,
+              "roll_pos_pct": 46.0,
+              "rebalances": 8774
+            },
+            {
+              "cost_bps": 0.5,
+              "ann_sharpe": -0.434,
+              "dsr_p": 0.9953,
+              "total_ret_pct": -87.8,
+              "roll_pos_pct": 31.0,
+              "rebalances": 8774
+            },
+            {
+              "cost_bps": 1.0,
+              "ann_sharpe": -0.863,
+              "dsr_p": 0.9997,
+              "total_ret_pct": -96.2,
+              "roll_pos_pct": 23.0,
+              "rebalances": 8774
+            },
+            {
+              "cost_bps": 1.5,
+              "ann_sharpe": -1.293,
+              "dsr_p": 1.0,
+              "total_ret_pct": -98.8,
+              "roll_pos_pct": 23.0,
+              "rebalances": 8774
+            },
+            {
+              "cost_bps": 2.0,
+              "ann_sharpe": -1.722,
+              "dsr_p": 1.0,
+              "total_ret_pct": -99.6,
+              "roll_pos_pct": 15.0,
+              "rebalances": 8774
+            },
+            {
+              "cost_bps": 3.0,
+              "ann_sharpe": -2.581,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 15.0,
+              "rebalances": 8774
+            },
+            {
+              "cost_bps": 4.3,
+              "ann_sharpe": -3.695,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 8774
+            },
+            {
+              "cost_bps": 7.0,
+              "ann_sharpe": -6.002,
+              "dsr_p": 1.0,
+              "total_ret_pct": -100.0,
+              "roll_pos_pct": 0.0,
+              "rebalances": 8774
+            }
+          ]
+        }
+      }
+    }
+  }
+}

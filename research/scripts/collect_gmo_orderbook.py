@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PUBLIC_API = "https://api.coin.z.com/public"
+# 現物 SOL は maker rebate -0.03%（MM 対象）/ SOL_JPY はレバレッジ maker 0%
 SYMBOL = "SOL_JPY"
 
 
@@ -112,7 +113,7 @@ def compute_trade_stats(trades: list[dict], window_secs: int = 60) -> dict:
 
 def get_output_path(output_dir: Path) -> Path:
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    return output_dir / f"gmo_soljpy_ob_{date_str}.csv"
+    return output_dir / f"gmo_{SYMBOL.lower()}_ob_{date_str}.csv"
 
 
 OB_FIELDS: list[str] = []  # 初回スナップショット時に決定
@@ -132,10 +133,14 @@ def append_row(path: Path, row: dict) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--symbol", default="SOL_JPY", help="GMO symbol (現物=SOL, レバレッジ=SOL_JPY)")
     parser.add_argument("--output-dir", default="research/data/raw/orderbook")
     parser.add_argument("--interval", type=int, default=15, help="polling interval (seconds)")
     parser.add_argument("--depth", type=int, default=10, help="orderbook depth levels")
     args = parser.parse_args()
+
+    global SYMBOL
+    SYMBOL = args.symbol
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

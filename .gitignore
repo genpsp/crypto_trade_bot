@@ -24,3 +24,5 @@ research/data/raw/funding/
 research/data/raw/funding_long/
 research/data/altdata/
 research/notebooks/.ipynb_checkpoints/
+# 板収集出力はローカル研究アーティファクト
+research/data/raw/orderbook/
