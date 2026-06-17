@@ -61,6 +61,15 @@ class DummyExecution:
         return 100.0
 
 
+class RaisingMarkPriceExecution:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def get_mark_price(self, pair: str) -> float:
+        _ = pair
+        raise self.error
+
+
 class DummyLock:
     def __init__(self) -> None:
         self.locked = False
@@ -458,6 +467,96 @@ class RunCycleSlippageSkipTest(unittest.TestCase):
         self.assertEqual("trade_exit_slippage_skip", run["trade_id"])
         self.assertGreaterEqual(len(persistence.saved_runs), 1)
         self.assertEqual("SKIPPED", persistence.saved_runs[-1]["result"])
+
+    def _build_open_trade(self) -> TradeRecord:
+        return {
+            "trade_id": "trade_exit_mark_price",
+            "model_id": "ema_pullback_15m_both_v0",
+            "bar_close_time_iso": "2026-02-25T09:45:00Z",
+            "pair": "SOL/USDC",
+            "direction": "LONG",
+            "state": "CONFIRMED",
+            "config_version": 2,
+            "execution": {},
+            "position": {
+                "status": "OPEN",
+                "quantity_sol": 0.4,
+                "entry_price": 99.0,
+                "stop_price": 97.0,
+                "take_profit_price": 101.0,
+                "entry_time_iso": "2026-02-25T09:46:00Z",
+            },
+            "created_at": "2026-02-25T09:46:00Z",
+            "updated_at": "2026-02-25T09:46:00Z",
+        }
+
+    def test_transient_mark_price_failure_is_skipped_and_not_persisted(self) -> None:
+        config = _build_config()
+        bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)
+        bars = [
+            OhlcvBar(
+                open_time=bar_close - timedelta(minutes=15),
+                close_time=bar_close,
+                open=99.5,
+                high=100.5,
+                low=99.0,
+                close=100.0,
+                volume=1000.0,
+            )
+        ]
+        persistence = DummyPersistence(config, open_trade=self._build_open_trade())
+        transient_error = RuntimeError(
+            "Jupiter quote request failed: Jupiter quote failed: "
+            "HTTPSConnectionPool(host='lite-api.jup.ag', port=443): Read timed out. (read timeout=8)"
+        )
+        deps = RunCycleDependencies(
+            execution=RaisingMarkPriceExecution(transient_error),
+            lock=DummyLock(),
+            logger=DummyLogger(),
+            market_data=DummyMarketData(bars),
+            persistence=persistence,
+            model_id="ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
+        )
+
+        run = run_cycle(deps)
+
+        self.assertEqual("SKIPPED", run["result"])
+        self.assertEqual("SKIPPED: transient mark price unavailable", run["summary"])
+        self.assertIn("Read timed out", run["reason"])
+        self.assertEqual(0, len(persistence.saved_runs))
+
+    def test_non_transient_mark_price_failure_still_fails(self) -> None:
+        config = _build_config()
+        bar_close = datetime(2026, 2, 25, 10, 0, tzinfo=UTC)
+        bars = [
+            OhlcvBar(
+                open_time=bar_close - timedelta(minutes=15),
+                close_time=bar_close,
+                open=99.5,
+                high=100.5,
+                low=99.0,
+                close=100.0,
+                volume=1000.0,
+            )
+        ]
+        persistence = DummyPersistence(config, open_trade=self._build_open_trade())
+        fatal_error = RuntimeError("Invalid mark price quote: outAmountAtomic=0")
+        deps = RunCycleDependencies(
+            execution=RaisingMarkPriceExecution(fatal_error),
+            lock=DummyLock(),
+            logger=DummyLogger(),
+            market_data=DummyMarketData(bars),
+            persistence=persistence,
+            model_id="ema_pullback_15m_both_v0",
+            now_provider=lambda: datetime(2026, 2, 25, 10, 7, tzinfo=UTC),
+        )
+
+        run = run_cycle(deps)
+
+        self.assertEqual("FAILED", run["result"])
+        self.assertEqual("FAILED: unhandled run_cycle error", run["summary"])
+        self.assertGreaterEqual(len(persistence.saved_runs), 1)
 
     def test_loss_streak_reduces_daily_trade_cap_and_skips_entry(self) -> None:
         config = _build_config()

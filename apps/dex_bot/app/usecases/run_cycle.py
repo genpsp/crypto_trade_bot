@@ -60,6 +60,22 @@ _EXECUTION_ERROR_SKIP_MARKERS = (
     "exit slippage exceeded",
     "exit route/liquidity unavailable",
 )
+# Jupiter quote API の一時的なタイムアウト/5xx は次サイクルで自動復帰するため
+# EXIT_CHECK の mark price 取得失敗時は FAILED ではなく SKIPPED 扱いにしてノイズを抑える
+_TRANSIENT_MARK_PRICE_ERROR_MARKERS = (
+    "jupiter quote request failed",
+    "timed out",
+    "timeout",
+    "connection aborted",
+    "connection reset",
+    "connection error",
+    "temporarily unavailable",
+    "max retries exceeded",
+    "http 429",
+    "http 502",
+    "http 503",
+    "http 504",
+)
 
 
 @dataclass
@@ -130,6 +146,11 @@ def _count_trades_for_jst_day(*, persistence: PersistencePort, pair: str, day_st
     if callable(counter):
         return int(counter(pair, day_start_iso, day_end_iso))
     return persistence.count_trades_for_utc_day(pair, day_start_iso, day_end_iso)
+
+
+def _is_transient_mark_price_error(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(marker in normalized for marker in _TRANSIENT_MARK_PRICE_ERROR_MARKERS)
 
 
 def _is_execution_error_skip_summary(summary: str) -> bool:
@@ -211,7 +232,22 @@ def run_cycle(dependencies: RunCycleDependencies) -> RunRecord:
             open_trade = persistence.find_open_trade(runtime_config["pair"])
         if open_trade:
             run["trade_id"] = open_trade["trade_id"]
-            mark_price = execution.get_mark_price(runtime_config["pair"])
+            try:
+                mark_price = execution.get_mark_price(runtime_config["pair"])
+            except Exception as mark_error:
+                mark_error_message = to_error_message(mark_error)
+                if not _is_transient_mark_price_error(mark_error_message):
+                    raise
+                # 一時的な quote 取得失敗はポジション状態を壊さず次サイクルで復帰するため
+                # アラート/記録を出さない SKIPPED に落とす
+                run["result"] = "SKIPPED"
+                run["summary"] = "SKIPPED: transient mark price unavailable"
+                run["reason"] = mark_error_message
+                logger.warn(
+                    "mark price unavailable; skipping exit check this cycle",
+                    {"model_id": model_id, "error": mark_error_message},
+                )
+                return run
             trigger_reason = "NONE"
             trade_direction = open_trade.get("direction", runtime_config["direction"])
             stop_price = open_trade["position"]["stop_price"]
