@@ -25,6 +25,7 @@ DEFAULT_STORM_SIZE_MULTIPLIER = 0.50
 STRATEGY_OPTIONAL_INT_FIELDS: dict[str, int] = {
     "pullback_lookback_bars": 1,
     "short_breakdown_lookback_bars": 1,
+    "long_breakout_lookback_bars": 1,
     "rsi_period": 1,
     "long_weak_trend_confirm_timeframe_minutes": 1,
     "atr_period": 1,

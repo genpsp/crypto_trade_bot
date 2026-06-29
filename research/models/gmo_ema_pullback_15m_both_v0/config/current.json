@@ -13,6 +13,7 @@
     "pullback_lookback_bars": 6,
     "max_distance_from_ema_fast_pct": 0.9,
     "short_breakdown_lookback_bars": 6,
+    "long_breakout_lookback_bars": 5,
     "rsi_period": 14,
     "rsi_long_lower_bound": 50.0,
     "rsi_long_upper_bound": 68.0,
@@ -79,8 +80,8 @@
     "take_profit_r_multiple": 1.8
   },
   "meta": {
-    "config_version": 2,
-    "variant_id": "v2_dir_session_vol_time120",
-    "note": "v2 cutover 2026-05-22: post-mortem-derived components (directional_session + volume_confirmed >= 0.4 + time_exit 120 bars). Phase 1 mean +5.57 / pos_rate 69.2%, stochastic_v1 50-seed p05=+62.13%. direction=BOTH (re-enables SHORT halted in Phase 0 retreat). leverage_multiplier=1.0 retained from pre-cutover LIVE. See docs/runbook/gmo_v2_cutover.md."
+    "config_version": 3,
+    "variant_id": "v3_long_breakout5",
+    "note": "v3 2026-06-29: LONG breakout 確認ガード long_breakout_lookback_bars=5 を追加（SHORT breakdown の鏡）。2026年6月の LONG 連敗（遅行 4h cross による偽リクレイム whipsaw）対策。full-history backtest で LONG の勝率 41->44%、最大DD -16.3->-9.4、ret/DD 3.23->5.26、2026 H1 LONG -1.7%->+12.2%。lookback 5-10 は頑健プラトー。SHORT は不変。v2 基盤（directional_session + volume_confirmed>=0.4 + time_exit 120）は継承。"
   }
 }

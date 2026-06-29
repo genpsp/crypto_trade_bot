@@ -57,6 +57,14 @@ ATR_STOP_MULTIPLIER = 1.5
 LONG_ATR_PCT_MAX = 0.7
 # LOW_VOL 帯では holdout で勝率が落ちるため、下限カットオフを任意で設定できる（0 = 無効）
 LONG_ATR_PCT_MIN = 0.0
+# LONG 改善ガード群（既定はすべて無効＝v0 数値を保存）
+# breakout 確認: entry が直近 N 本高値を上抜けたことを要求（0 = 無効, SHORT breakdown の鏡）
+LONG_BREAKOUT_LOOKBACK_BARS = 0
+# 4h freshness: 上位足が実際にまだ上昇中であることを要求（SHORT drift/slope の鏡, -inf = 無効）
+LONG_UPPER_CLOSE_DRIFT_MIN_PCT = -math.inf
+LONG_UPPER_FAST_SLOPE_MIN_PCT = -math.inf
+# LONG 上位足トレンドの最小 gap（遅行 cross の弱トレンド天井掴みを除外, 0 = 無効, SHORT min gap の鏡）
+LONG_UPPER_TREND_MIN_GAP_PCT = 0.0
 SHORT_ATR_PCT_MIN = 0.0
 SHORT_ATR_PCT_MAX = math.inf
 UPPER_TREND_TIMEFRAME_MINUTES = 240
@@ -255,6 +263,26 @@ def evaluate_ema_trend_pullback_15m_v0(
     atr_stop_multiplier = _strategy_float(strategy, "atr_stop_multiplier", ATR_STOP_MULTIPLIER)
     long_atr_pct_max = _strategy_float(strategy, "long_atr_pct_max", LONG_ATR_PCT_MAX)
     long_atr_pct_min = _strategy_float(strategy, "long_atr_pct_min", LONG_ATR_PCT_MIN)
+    long_breakout_lookback_bars = _strategy_int(
+        strategy,
+        "long_breakout_lookback_bars",
+        LONG_BREAKOUT_LOOKBACK_BARS,
+    )
+    long_upper_close_drift_min_pct = _strategy_float(
+        strategy,
+        "long_upper_close_drift_min_pct",
+        LONG_UPPER_CLOSE_DRIFT_MIN_PCT,
+    )
+    long_upper_fast_slope_min_pct = _strategy_float(
+        strategy,
+        "long_upper_fast_slope_min_pct",
+        LONG_UPPER_FAST_SLOPE_MIN_PCT,
+    )
+    long_upper_trend_min_gap_pct = _strategy_float(
+        strategy,
+        "long_upper_trend_min_gap_pct",
+        LONG_UPPER_TREND_MIN_GAP_PCT,
+    )
     short_atr_pct_min = _strategy_float(strategy, "short_atr_pct_min", SHORT_ATR_PCT_MIN)
     short_atr_pct_max = _strategy_float(strategy, "short_atr_pct_max", SHORT_ATR_PCT_MAX)
     upper_trend_timeframe_minutes = _strategy_int(
@@ -402,6 +430,54 @@ def evaluate_ema_trend_pullback_15m_v0(
                 ema_slow=ema_slow,
                 diagnostics=diagnostics,
             )
+    if entry_direction == "LONG":
+        # 上位足の最小 gap: 遅行 cross による弱トレンド天井掴みを除外（SHORT min gap の鏡）
+        if (
+            long_upper_trend_min_gap_pct > 0
+            and upper_trend_gap_pct is not None
+            and upper_trend_gap_pct < long_upper_trend_min_gap_pct
+        ):
+            return build_no_signal(
+                (
+                    "NO_SIGNAL: upper timeframe uptrend is too weak for long "
+                    f"(gap={upper_trend_gap_pct:.4f})"
+                ),
+                "LONG_UPPER_TREND_TOO_WEAK",
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                diagnostics=diagnostics,
+            )
+        # 4h freshness: 上位足が実際にまだ上昇中であることを要求（SHORT drift/slope の鏡）
+        if (
+            math.isfinite(long_upper_close_drift_min_pct)
+            and upper_close_drift_pct_3 is not None
+            and upper_close_drift_pct_3 < long_upper_close_drift_min_pct
+        ):
+            return build_no_signal(
+                (
+                    "NO_SIGNAL: long upper close drift is rolling over "
+                    f"(drift_3={upper_close_drift_pct_3:.4f})"
+                ),
+                "LONG_UPPER_CLOSE_DRIFT_TOO_NEGATIVE",
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                diagnostics=diagnostics,
+            )
+        if (
+            math.isfinite(long_upper_fast_slope_min_pct)
+            and upper_fast_slope_pct is not None
+            and upper_fast_slope_pct < long_upper_fast_slope_min_pct
+        ):
+            return build_no_signal(
+                (
+                    "NO_SIGNAL: long upper fast slope is rolling over "
+                    f"(slope={upper_fast_slope_pct:.4f})"
+                ),
+                "LONG_UPPER_FAST_SLOPE_TOO_NEGATIVE",
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                diagnostics=diagnostics,
+            )
     if entry_direction == "SHORT":
         if upper_trend_gap_pct is None or upper_trend_gap_pct < short_upper_trend_min_gap_pct:
             return build_no_signal(
@@ -539,6 +615,25 @@ def evaluate_ema_trend_pullback_15m_v0(
                     f"(close={entry_price:.4f} >= ref_low={short_breakdown_reference_low:.4f})"
                 ),
                 "SHORT_BREAKDOWN_NOT_CONFIRMED",
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                diagnostics=diagnostics,
+            )
+
+    # LONG breakout 確認: entry が直近 N 本高値を上抜けたことを要求（偽リクレイム即反転を除外, SHORT breakdown の鏡）
+    if entry_direction == "LONG" and long_breakout_lookback_bars > 0:
+        long_breakout_start_index = max(0, latest_index - long_breakout_lookback_bars)
+        long_breakout_reference_high = max(highs[long_breakout_start_index:latest_index])
+        long_breakout_confirmed = entry_price > long_breakout_reference_high
+        diagnostics["long_breakout_reference_high"] = long_breakout_reference_high
+        diagnostics["long_breakout_confirmed"] = long_breakout_confirmed
+        if not long_breakout_confirmed:
+            return build_no_signal(
+                (
+                    "NO_SIGNAL: long breakout is not confirmed "
+                    f"(close={entry_price:.4f} <= ref_high={long_breakout_reference_high:.4f})"
+                ),
+                "LONG_BREAKOUT_NOT_CONFIRMED",
                 ema_fast=ema_fast,
                 ema_slow=ema_slow,
                 diagnostics=diagnostics,

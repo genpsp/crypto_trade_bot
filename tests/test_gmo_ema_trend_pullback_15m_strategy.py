@@ -213,6 +213,122 @@ class GmoEmaTrendPullback15mStrategyTest(unittest.TestCase):
         self.assertEqual("NO_SIGNAL", decision.type)
         self.assertEqual("LONG_ATR_REGIME_TOO_HOT", decision.reason)
 
+    # --- LONG 改善ガード（default-off ノブ）の回帰テスト ---
+
+    def _evaluate_long(
+        self,
+        strategy: StrategyConfig,
+        *,
+        highs: list[float],
+        regime_metrics: tuple[float, float] = (0.25, 1.2),
+    ):
+        # ema_fast(101.0) > ema_slow(100.5), entry=101.2 で reclaim, index0 で pullback,
+        # atr=0.3 で NORMAL（ATR上限を越えない）という LONG エントリーの土台
+        long_context = EmaMarketContext(
+            closes=[100.0, 100.2, 100.4, 100.6, 100.8, 101.0, 101.2],
+            highs=highs,
+            lows=[99.7, 99.9, 100.1, 100.3, 100.5, 100.7, 100.9],
+            ema_fast_by_bar=[100.0, 100.1, 100.2, 100.4, 100.6, 100.8, 101.0],
+            ema_fast=101.0,
+            ema_slow=100.5,
+            entry_price=101.2,
+            previous_close=101.0,
+            previous_ema_fast=100.8,
+        )
+        with (
+            patch(
+                "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0.calculate_minimum_bars",
+                return_value=1,
+            ),
+            patch(
+                "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0._evaluate_upper_timeframe_trend",
+                return_value=("UP", 101.0, 100.0, 80),
+            ),
+            patch(
+                "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0._calculate_upper_trend_regime_metrics",
+                return_value=regime_metrics,
+            ),
+            patch(
+                "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0.build_ema_market_context",
+                return_value=long_context,
+            ),
+            patch(
+                "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0.atr_series",
+                return_value=[0.3],
+            ),
+            patch(
+                "apps.gmo_bot.domain.strategy.models.ema_trend_pullback_15m_v0.rsi_series",
+                return_value=[60.0],
+            ),
+        ):
+            return evaluate_ema_trend_pullback_15m_v0(
+                bars=self.bars,
+                strategy=strategy,
+                risk=self.risk,
+                exit=self.exit,
+                execution=self.execution,
+            )
+
+    def _long_strategy(self) -> StrategyConfig:
+        strategy = dict(self.strategy)
+        # 7本コンテキストに合わせて swing 参照を短縮
+        strategy["swing_lookback_bars"] = 6
+        return strategy
+
+    def test_long_baseline_context_enters(self) -> None:
+        # ガード未設定なら従来どおり ENTER（土台が有効であることの確認）
+        decision = self._evaluate_long(
+            self._long_strategy(),
+            highs=[100.3, 100.5, 100.7, 100.9, 101.0, 101.1, 101.5],
+        )
+        self.assertEqual("ENTER", decision.type)
+        self.assertEqual("LONG", decision.diagnostics["entry_direction"])
+
+    def test_no_signal_when_long_breakout_is_not_confirmed(self) -> None:
+        # 直近6本に entry(101.2) 以上の高値 101.3 があり breakout 未確認
+        strategy = self._long_strategy()
+        strategy["long_breakout_lookback_bars"] = 6
+        decision = self._evaluate_long(
+            strategy,
+            highs=[100.3, 100.5, 100.7, 100.9, 101.3, 101.1, 101.5],
+        )
+        self.assertEqual("NO_SIGNAL", decision.type)
+        self.assertEqual("LONG_BREAKOUT_NOT_CONFIRMED", decision.reason)
+
+    def test_enter_when_long_breakout_is_confirmed(self) -> None:
+        # 直近6本の高値がすべて entry 未満 → breakout 確認 → ENTER
+        strategy = self._long_strategy()
+        strategy["long_breakout_lookback_bars"] = 6
+        decision = self._evaluate_long(
+            strategy,
+            highs=[100.3, 100.5, 100.7, 100.9, 101.0, 101.1, 101.5],
+        )
+        self.assertEqual("ENTER", decision.type)
+        self.assertTrue(decision.diagnostics["long_breakout_confirmed"])
+
+    def test_no_signal_when_long_upper_trend_gap_too_small(self) -> None:
+        # 4h gap=1.0% に対し最小 gap 2.0% を課すと弱トレンドとして除外
+        strategy = self._long_strategy()
+        strategy["long_upper_trend_min_gap_pct"] = 2.0
+        decision = self._evaluate_long(
+            strategy,
+            highs=[100.3, 100.5, 100.7, 100.9, 101.0, 101.1, 101.5],
+        )
+        self.assertEqual("NO_SIGNAL", decision.type)
+        self.assertEqual("LONG_UPPER_TREND_TOO_WEAK", decision.reason)
+
+    def test_no_signal_when_long_upper_close_drift_rolls_over(self) -> None:
+        # 4h close drift が負（天井からの巻き戻し）なら freshness ガードで除外
+        strategy = self._long_strategy()
+        strategy["long_upper_close_drift_min_pct"] = 0.0
+        decision = self._evaluate_long(
+            strategy,
+            highs=[100.3, 100.5, 100.7, 100.9, 101.0, 101.1, 101.5],
+            regime_metrics=(0.25, -0.4),
+        )
+        self.assertEqual("NO_SIGNAL", decision.type)
+        self.assertEqual("LONG_UPPER_CLOSE_DRIFT_TOO_NEGATIVE", decision.reason)
+
 
 if __name__ == "__main__":
     unittest.main()
