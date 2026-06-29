@@ -156,6 +156,22 @@ class _PartialStopExecution(_FakeExecution):
         return super().get_executions(order_id)
 
 
+class _FullStopExecution(_FakeExecution):
+    def get_executions(self, order_id: int):
+        if order_id == 789:
+            return [
+                {
+                    "executionId": 4,
+                    "positionId": 10,
+                    "size": "0.5",
+                    "price": "13890",
+                    "fee": "3",
+                    "lossGain": "-55",
+                }
+            ]
+        return super().get_executions(order_id)
+
+
 def _build_trade() -> dict:
     return {
         "trade_id": "trade_1",
@@ -260,6 +276,51 @@ class GmoExitOrderMonitorTest(unittest.TestCase):
 
         self.assertAlmostEqual(13875.0, trade["execution"]["exit_reference_price"])
         self.assertAlmostEqual(13875.0, trade["position"].get("exit_trigger_price", 13875.0))
+
+    def test_stop_loss_execution_event_notifies_closed_trade(self) -> None:
+        trade = _build_trade()
+        execution = _FullStopExecution()
+        persistence = _FakePersistence(trade)
+        notifications: list[dict[str, object]] = []
+        monitor = GmoExitOrderMonitor(
+            api_client=object(),
+            logger=_FakeLogger(),
+            context_provider=lambda: [
+                ExitMonitorContext(
+                    model_id="gmo_ema_pullback_15m_both_v0",
+                    pair="SOL/JPY",
+                    execution=execution,
+                    persistence=persistence,
+                    lock=object(),
+                )
+            ],
+            on_trade_closed=lambda context, closed_trade: notifications.append(
+                {
+                    "model_id": context.model_id,
+                    "pair": context.pair,
+                    "trade_id": closed_trade.get("trade_id"),
+                    "close_reason": closed_trade.get("close_reason"),
+                    "state": closed_trade.get("state"),
+                }
+            ),
+        )
+
+        monitor._handle_event({"channel": "executionEvents", "orderId": "789"})
+
+        self.assertEqual("CLOSED", trade["state"])
+        self.assertEqual("STOP_LOSS", trade["close_reason"])
+        self.assertEqual(
+            [
+                {
+                    "model_id": "gmo_ema_pullback_15m_both_v0",
+                    "pair": "SOL/JPY",
+                    "trade_id": "trade_1",
+                    "close_reason": "STOP_LOSS",
+                    "state": "CLOSED",
+                }
+            ],
+            notifications,
+        )
 
     def test_stop_order_expired_rearms_before_emergency_close(self) -> None:
         trade = _build_trade()
@@ -385,6 +446,7 @@ class GmoExitOrderMonitorTest(unittest.TestCase):
         trade["position"]["lots"] = [{"position_id": 10, "size_sol": 0.6}]
         execution = _PartialStopExecution()
         persistence = _FakePersistence(trade)
+        notifications: list[dict[str, object]] = []
         monitor = GmoExitOrderMonitor(
             api_client=object(),
             logger=_FakeLogger(),
@@ -397,9 +459,13 @@ class GmoExitOrderMonitorTest(unittest.TestCase):
                     lock=object(),
                 )
             ],
+            on_trade_closed=lambda context, closed_trade: notifications.append(
+                {"model_id": context.model_id, "trade_id": closed_trade.get("trade_id")}
+            ),
         )
 
         monitor._handle_event({"channel": "executionEvents", "orderId": "789"})
+        self.assertEqual([], notifications)
         self.assertEqual("CONFIRMED", trade["state"])
         self.assertAlmostEqual(0.3, trade["position"]["quantity_sol"])
         self.assertEqual("EXECUTED", trade["execution"]["stop_loss_order_status"])

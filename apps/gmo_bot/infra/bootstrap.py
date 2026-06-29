@@ -20,13 +20,13 @@ from apps.gmo_bot.adapters.persistence.firestore_repo import FirestoreRepository
 from apps.gmo_bot.app.ports.execution_port import ExecutionPort
 from apps.gmo_bot.app.usecases.run_cycle import RunCycleDependencies, run_cycle
 from apps.gmo_bot.domain.model.types import BotConfig, TradeRecord
-from apps.gmo_bot.domain.utils.coercion import as_dict as _coerce_as_dict, to_float as _coerce_to_float
 from apps.gmo_bot.infra.alerting import (
     SlackAlertConfig,
     SlackNotifier,
     is_execution_error_result,
     is_market_data_maintenance_result,
 )
+from apps.gmo_bot.infra.alerting.trade_close_notification import notify_gmo_trade_closed
 from apps.gmo_bot.infra.config.env import load_env
 from apps.gmo_bot.infra.execution.exit_order_monitor import ExitMonitorContext, GmoExitOrderMonitor
 from apps.gmo_bot.infra.config.firestore_config_repo import (
@@ -108,22 +108,6 @@ def bootstrap() -> AppRuntime:
     market_data = OhlcvProvider(client=api_client, redis=redis)
     paper_execution: ExecutionPort = PaperExecutionAdapter(logger)
     live_execution: ExecutionPort = GmoMarginExecutionAdapter(api_client, logger)
-    exit_monitor = GmoExitOrderMonitor(
-        api_client=api_client,
-        logger=logger,
-        context_provider=lambda: [
-            ExitMonitorContext(
-                model_id=context.model_id,
-                pair=context.pair,
-                execution=context.execution,
-                persistence=context.persistence,
-                lock=context.lock,
-            )
-            for context in _active_model_contexts()
-            if hasattr(context.execution, "cancel_order") and hasattr(context.execution, "get_executions")
-        ],
-    )
-
     model_contexts: dict[str, ModelRuntimeContext] = {}
     runtime_specs: dict[str, ModelRuntimeSpec] = {}
     runtime_pause_state: bool | None = None
@@ -323,68 +307,6 @@ def bootstrap() -> AppRuntime:
             )
         failure_streaks_by_model[model_id] = 0
 
-    # 9.2: helpers come from the shared coercion module (imported at top of file).
-    _to_float = _coerce_to_float
-    _as_dict = _coerce_as_dict
-
-    def _compute_gmo_close_metrics(trade: TradeRecord) -> tuple[float | None, float, float | None]:
-        position = _as_dict(trade.get("position"))
-        execution = _as_dict(trade.get("execution"))
-        exit_result = _as_dict(execution.get("exit_result"))
-
-        # Close notifications should describe the just-confirmed exit leg, not the
-        # cumulative trade PnL. Partial closes can leave cumulative PnL negative
-        # even when the final exit is TAKE_PROFIT, which is confusing in Slack.
-        realized_pnl = _to_float(execution.get("exit_leg_realized_pnl_jpy"))
-        if realized_pnl is None:
-            realized_pnl = _to_float(exit_result.get("realized_pnl_jpy"))
-        event_fee = _to_float(exit_result.get("fee_jpy"))
-
-        entry_quote = _to_float(position.get("quote_amount_jpy"))
-        exit_quote = _to_float(exit_result.get("filled_quote_jpy"))
-        quantity = _to_float(position.get("quantity_sol"))
-        filled_base = _to_float(exit_result.get("filled_base_sol"))
-        has_partial_size_mismatch = (
-            realized_pnl is None
-            and quantity is not None
-            and filled_base is not None
-            and abs(filled_base - quantity) > 1e-9
-        )
-        if (
-            has_partial_size_mismatch
-        ):
-            exit_quote = None
-        if exit_quote is None and not has_partial_size_mismatch:
-            exit_price = _to_float(position.get("exit_price"))
-            if quantity is not None and exit_price is not None:
-                exit_quote = quantity * exit_price
-
-        gross_pnl: float | None = realized_pnl
-        direction = str(trade.get("direction") or "LONG")
-        if gross_pnl is None and entry_quote is not None and exit_quote is not None:
-            gross_pnl = entry_quote - exit_quote if direction == "SHORT" else exit_quote - entry_quote
-
-        fee = event_fee
-        if fee is None:
-            fee = _to_float(execution.get("exit_fee_jpy"))
-        if fee is None and gross_pnl is None:
-            fee = (_to_float(execution.get("entry_fee_jpy")) or 0.0) + (_to_float(execution.get("exit_fee_jpy")) or 0.0)
-        fee = fee or 0.0
-        net_pnl = gross_pnl - fee if gross_pnl is not None else None
-        return gross_pnl, fee, net_pnl
-
-    def _compute_gmo_cumulative_close_metrics(trade: TradeRecord) -> tuple[float | None, float | None]:
-        execution = _as_dict(trade.get("execution"))
-        cumulative_gross_pnl = _to_float(execution.get("total_realized_pnl_jpy"))
-        if cumulative_gross_pnl is None:
-            cumulative_gross_pnl = _to_float(execution.get("realized_pnl_jpy"))
-        if cumulative_gross_pnl is None:
-            return None, None
-        cumulative_fee = (_to_float(execution.get("entry_fee_jpy")) or 0.0) + (
-            _to_float(execution.get("exit_fee_jpy")) or 0.0
-        )
-        return cumulative_gross_pnl, cumulative_gross_pnl - cumulative_fee
-
     def _maybe_notify_trade_closed(context: ModelRuntimeContext, result: dict[str, str | None]) -> None:
         if result.get("result") != "CLOSED":
             return
@@ -397,28 +319,34 @@ def bootstrap() -> AppRuntime:
             logger.warn("closed trade notification skipped because trade snapshot is missing", {"trade_id": trade_id})
             return
 
-        close_reason = str(trade.get("close_reason") or "")
-        if close_reason not in ("TAKE_PROFIT", "STOP_LOSS"):
-            return
-
-        position = _as_dict(trade.get("position"))
-        gross_pnl, fee, net_pnl = _compute_gmo_close_metrics(trade)
-        cumulative_gross_pnl, cumulative_net_pnl = _compute_gmo_cumulative_close_metrics(trade)
-        notifier.notify_trade_closed(
+        notify_gmo_trade_closed(
+            notifier,
             model_id=context.model_id,
-            trade_id=trade_id,
-            pair=str(trade.get("pair") or context.pair),
-            direction=str(trade.get("direction") or ""),
-            close_reason=close_reason,
-            entry_price=_to_float(position.get("entry_price")),
-            exit_price=_to_float(position.get("exit_price")),
-            gross_pnl=gross_pnl,
-            fee=fee,
-            net_pnl=net_pnl,
-            quote_ccy="JPY",
-            cumulative_gross_pnl=cumulative_gross_pnl,
-            cumulative_net_pnl=cumulative_net_pnl,
+            default_pair=context.pair,
+            trade=trade,
         )
+
+    exit_monitor = GmoExitOrderMonitor(
+        api_client=api_client,
+        logger=logger,
+        context_provider=lambda: [
+            ExitMonitorContext(
+                model_id=context.model_id,
+                pair=context.pair,
+                execution=context.execution,
+                persistence=context.persistence,
+                lock=context.lock,
+            )
+            for context in _active_model_contexts()
+            if hasattr(context.execution, "cancel_order") and hasattr(context.execution, "get_executions")
+        ],
+        on_trade_closed=lambda context, trade: notify_gmo_trade_closed(
+            notifier,
+            model_id=context.model_id,
+            default_pair=context.pair,
+            trade=trade,
+        ),
+    )
 
     def _refresh_runtime_specs() -> None:
         nonlocal runtime_pause_state, last_runtime_refresh_at, warned_no_enabled_models

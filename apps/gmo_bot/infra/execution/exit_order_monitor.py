@@ -44,9 +44,11 @@ class GmoExitOrderMonitor:
         api_client: Any,
         logger: Any,
         context_provider: Callable[[], list[ExitMonitorContext]],
+        on_trade_closed: Callable[[ExitMonitorContext, dict[str, Any]], None] | None = None,
     ):
         self.logger = logger
         self.context_provider = context_provider
+        self.on_trade_closed = on_trade_closed
         self.ws_client = GmoPrivateWebSocketClient(client=api_client, logger=logger, on_event=self._handle_event)
 
     def start(self) -> None:
@@ -96,6 +98,19 @@ class GmoExitOrderMonitor:
         )
         if result.status == "CLOSED":
             self._cancel_sibling_order(context, trade, sibling_order_id=sibling_order_id, sibling_status_key=sibling_status_key)
+            if self.on_trade_closed is not None:
+                try:
+                    self.on_trade_closed(context, trade)
+                except Exception as error:
+                    self.logger.error(
+                        "gmo exit order close notification failed",
+                        {
+                            "trade_id": trade.get("trade_id"),
+                            "order_id": order_id,
+                            "close_reason": close_reason,
+                            "error": str(error),
+                        },
+                    )
         self.logger.info(
             "gmo exit order execution processed",
             {
